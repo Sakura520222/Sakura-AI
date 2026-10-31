@@ -14,6 +14,7 @@ import {
 } from "../../components/workflow/Workflow";
 import type { Envelope } from "../../components/workflow/types";
 import {
+  CurrencySelect,
   Field,
   Money,
   MutationError,
@@ -97,7 +98,9 @@ export default function PricingAdmin() {
       <Section
         title={
           editing
-            ? t("基于版本 {0} 新建报价", "New price from version {0}", [editing.version])
+            ? t("基于版本 {0} 新建报价", "New price from version {0}", [
+                editing.version,
+              ])
             : t("发布模型报价", "Publish model pricing")
         }
       >
@@ -211,6 +214,10 @@ function PriceEditor({
   );
   const [unit, setUnit] = useState(String(price?.config.unit ?? "tokens"));
   const [advanced, setAdvanced] = useState(false);
+  const [fieldDefaults, setFieldDefaults] = useState<Record<string, unknown>>(
+    price?.config ?? {},
+  );
+  const [rawDraft, setRawDraft] = useState("");
   const [invalid, setInvalid] = useState(false);
   const account = context.accounts.find(
     (item) => `account:${item.id}` === source,
@@ -282,44 +289,68 @@ function PriceEditor({
           ],
         ]
       : [["unit_price", t("每单位价格", "Price per unit")]];
+  function readFields(form: FormData): Record<string, unknown> {
+    const config: Record<string, unknown> = { unit };
+    for (const key of [
+      "currency",
+      "settlement_currency",
+      "fx_rate",
+      "markup",
+      "credits_per_currency_unit",
+      ...rateFields.map(([key]) => key),
+    ]) {
+      const value = String(form.get(key) ?? "").trim();
+      if (value) config[key] = value;
+    }
+    if (unit !== "tokens") config.meter = String(form.get("meter"));
+    else
+      for (const key of [
+        "cache_read_supported",
+        "cache_creation_supported",
+        "reasoning_supported",
+      ]) {
+        const value = String(form.get(key) ?? "");
+        if (value) config[key] = value === "true";
+      }
+    return config;
+  }
+
+  function parseDraft(text: string): Record<string, unknown> {
+    const config = JSON.parse(text);
+    if (
+      !config ||
+      Array.isArray(config) ||
+      typeof config !== "object" ||
+      Object.values(config).some((value) => typeof value === "number")
+    )
+      throw new Error("invalid");
+    return config;
+  }
+
+  function changeMode(toggle: HTMLInputElement) {
+    if (!toggle.form) return;
+    try {
+      if (toggle.checked) {
+        setRawDraft(
+          JSON.stringify(readFields(new FormData(toggle.form)), null, 2),
+        );
+      } else {
+        const config = parseDraft(rawDraft);
+        setFieldDefaults(config);
+        setUnit(String(config.unit ?? unit));
+      }
+      setInvalid(false);
+      setAdvanced(toggle.checked);
+    } catch {
+      setInvalid(true);
+    }
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     try {
-      let config: Record<string, unknown>;
-      if (advanced) {
-        config = JSON.parse(String(form.get("config")));
-        if (
-          !config ||
-          Array.isArray(config) ||
-          typeof config !== "object" ||
-          Object.values(config).some((value) => typeof value === "number")
-        )
-          throw new Error("invalid");
-      } else {
-        config = { unit };
-        for (const key of [
-          "currency",
-          "settlement_currency",
-          "fx_rate",
-          "markup",
-          "credits_per_currency_unit",
-          ...rateFields.map(([key]) => key),
-        ]) {
-          const value = String(form.get(key) ?? "").trim();
-          if (value) config[key] = value;
-        }
-        if (unit !== "tokens") config.meter = String(form.get("meter"));
-        else
-          for (const key of [
-            "cache_read_supported",
-            "cache_creation_supported",
-            "reasoning_supported",
-          ]) {
-            const value = String(form.get(key) ?? "");
-            if (value) config[key] = value === "true";
-          }
-      }
+      const config = advanced ? parseDraft(rawDraft) : readFields(form);
       if ((!account?.enabled && !auxiliary) || (!auxiliary && !model))
         throw new Error("invalid");
       const body = {
@@ -459,7 +490,7 @@ function PriceEditor({
         <input
           type="checkbox"
           checked={advanced}
-          onChange={(event) => setAdvanced(event.target.checked)}
+          onChange={(event) => changeMode(event.currentTarget)}
         />{" "}
         {t("高级 JSON 编辑", "Advanced JSON editor")}
       </label>
@@ -473,7 +504,8 @@ function PriceEditor({
           <textarea
             name="config"
             className="billing-json"
-            defaultValue={price ? JSON.stringify(price.config, null, 2) : ""}
+            value={rawDraft}
+            onChange={(event) => setRawDraft(event.target.value)}
             required
           />
         </Field>
@@ -484,20 +516,11 @@ function PriceEditor({
             ["settlement_currency", t("结算币种", "Settlement currency")],
           ].map(([key, label]) => (
             <Field key={key} label={label}>
-              <select
+              <CurrencySelect
                 name={key}
-                required
-                defaultValue={
-                  context.currencies.includes(String(price?.config[key] ?? ""))
-                    ? String(price?.config[key])
-                    : ""
-                }
-              >
-                <option value="">{t("选择币种", "Choose currency")}</option>
-                {context.currencies.map((value) => (
-                  <option key={value}>{value}</option>
-                ))}
-              </select>
+                current={String(fieldDefaults[key] ?? "")}
+                codes={context.currencies}
+              />
             </Field>
           ))}
           {[
@@ -523,7 +546,7 @@ function PriceEditor({
                     "reasoning_price",
                   ].includes(key)
                 }
-                defaultValue={String(price?.config[key] ?? "")}
+                defaultValue={String(fieldDefaults[key] ?? "")}
               />
             </Field>
           ))}
@@ -540,7 +563,7 @@ function PriceEditor({
                 <select
                   name={key}
                   defaultValue={
-                    price?.config[key] == null ? "" : String(price.config[key])
+                    fieldDefaults[key] == null ? "" : String(fieldDefaults[key])
                   }
                 >
                   <option value="">
@@ -555,7 +578,7 @@ function PriceEditor({
             <Field label={t("实际用量字段", "Reported usage meter")}>
               <select
                 name="meter"
-                defaultValue={String(price?.config.meter ?? unit)}
+                defaultValue={String(fieldDefaults.meter ?? unit)}
               >
                 {context.units
                   .filter((value) => value !== "tokens")

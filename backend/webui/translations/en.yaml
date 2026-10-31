@@ -3531,6 +3531,7 @@ webui_v2:
   m_0f1e60f2c9c8: Refresh models
   m_0f3a32cb59c3: API endpoint
   m_0fdfe2265827: No update job is active. A fresh preflight is still required before another update can be submitted.
+  m_0fea6d61c705: Unsupported historical currency ({0})
   m_0ffec27b9ccf: Collection
   m_101d422a8332: Existing authenticators and passkeys are retained. Users required to enroll must complete security setup first.
   m_10d2982bb8c0: Version details
@@ -3822,7 +3823,6 @@ webui_v2:
   m_3ebe5067520b: Add protection to your sign-in
   m_3edd17413755: No tasks yet
   m_3f4d6cbde5b6: Default
-  m_3f820270bbd3: Concurrency limit (optional)
   m_3fb2517a80c0: Add AI account
   m_3fd708ab4ba3: Model calls
   m_403b81ea18d1: Repository not found
@@ -4113,6 +4113,7 @@ webui_v2:
   m_7362dd47ed49: Actual model usage
   m_73c98e4d9e2a: Delete preference {0}
   m_745a837aee45: Unverified
+  m_74a6a386d7c4: Per-user business execution limit
   m_7501c36a43be: Relevant code
   m_75223a4886f9: Join repository community?
   m_7563a1f9785a: Pull request
@@ -4207,6 +4208,7 @@ webui_v2:
   m_867c99fbb0b8: Reason
   m_86a0d29c5798: Delete task
   m_86a0f15d04a8: View {0} repositories
+  m_86b3a2290396: PR, Issue, Agent and Repo Scan share this limit. Queued and running executions count until the task ends. Leave blank for no plan limit.
   m_86b5f2790b9e: The update request outcome is not confirmed. Checking Host Updater; do not submit it again.
   m_86d6cde52e73: Export backup
   m_86fc17f5ceb8: Progress
@@ -4472,6 +4474,7 @@ webui_v2:
   m_b2239eb15dbf: Full access
   m_b248fc2d6f93: Publication starts delivery to eligible subscribers.
   m_b256ce517707: Transactions
+  m_b25a24f8f8e8: 'Concurrent task limit: {0}'
   m_b26f47024382: Uncommitted local changes will also be removed.
   m_b28ae5b7c12b: All tasks
   m_b2a7673242a1: Verification code

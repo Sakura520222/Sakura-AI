@@ -1094,6 +1094,13 @@ function PlansPanel() {
                 />
               </strong>
               <span>{exactCredits(plan.credit_grant)} Credits</span>
+              {plan.concurrency_limit != null && (
+                <span>
+                  {t("同时任务上限：{0}", "Concurrent task limit: {0}", [
+                    plan.concurrency_limit,
+                  ])}
+                </span>
+              )}
               {plan.duration_days && (
                 <span>
                   {plan.duration_days} {t("天", "days")}

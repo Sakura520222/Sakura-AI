@@ -1,7 +1,6 @@
 """Currency choices are shared by billing forms, JSON and configuration."""
 
 import json
-from html.parser import HTMLParser
 from types import SimpleNamespace
 
 import httpx
@@ -29,45 +28,22 @@ from backend.webui.routes.config import (
     _DynamicConfigValidationError,
     _validate_dynamic_config_value,
 )
-from tests.test_billing_credits_api import TEST_PRICE
-from tests.test_billing_credits_api import billing_client as billing_client_fixture
-from tests.test_billing_pricing_editor import (
+from tests.billing_webui_fixtures import (
     pricing_app as pricing_app_fixture,
 )
-from tests.test_billing_pricing_editor import (
+from tests.billing_webui_fixtures import (
     pricing_fields,
     seed_language,
 )
-from tests.test_billing_pricing_editor import (
+from tests.billing_webui_fixtures import (
     sql_runtime as runtime_fixture,
 )
+from tests.test_billing_credits_api import TEST_PRICE
+from tests.test_billing_credits_api import billing_client as billing_client_fixture
 
 pricing_app = pricing_app_fixture
 sql_runtime = runtime_fixture
 billing_client = billing_client_fixture
-
-
-class Selects(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.current = None
-        self.options = {}
-        self.currency_inputs = []
-
-    def handle_starttag(self, tag, attrs):
-        values = dict(attrs)
-        name = values.get("name", "")
-        if tag == "input" and (name == "currency" or name.endswith("_currency")):
-            self.currency_inputs.append(name)
-        if tag == "select":
-            self.current = name
-            self.options.setdefault(name, [])
-        elif tag == "option" and self.current is not None:
-            self.options[self.current].append(values.get("value"))
-
-    def handle_endtag(self, tag):
-        if tag == "select":
-            self.current = None
 
 
 @pytest.mark.parametrize("field", ["currency", "settlement_currency"])
@@ -162,30 +138,22 @@ async def test_global_currency_render_keeps_unknown_history_and_supported_lowerc
 
 
 @pytest.mark.asyncio
-async def test_pricing_and_plan_currency_controls_are_selects(pricing_app):
-    app, factory, _token = pricing_app
-    await seed_language(factory)
+async def test_editor_apis_share_the_currency_catalog(pricing_app):
+    app, _, _ = pricing_app
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
-        cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        for path, names in (
-            ("/billing/admin/pricing", ("currency", "settlement_currency")),
-            ("/billing/admin/plans", ("currency",)),
+        for path in (
+            "/api/v1/billing/context",
+            "/api/v1/billing/admin/pricing-context",
         ):
             response = await client.get(path)
             assert response.status_code == 200, response.text
-            controls = Selects()
-            controls.feed(response.text)
-            assert controls.currency_inputs == []
-            for name in names:
-                codes = controls.options[name]
-                assert codes[:3] == ["", "USD", "CNY"]
-                assert set(codes) - {""} == set(CURRENCY_MINOR_EXPONENTS)
-            if path.endswith("pricing"):
-                assert "chat" in controls.options["call_kind"]
-                assert "chat_stream" not in controls.options["call_kind"]
+            codes = response.json()["currencies"]
+            assert codes[:2] == ["USD", "CNY"]
+            assert set(codes) == set(CURRENCY_MINOR_EXPONENTS)
+        assert "chat" in response.json()["call_kinds"]
+        assert "chat_stream" not in response.json()["call_kinds"]
 
 
 @pytest.mark.asyncio
@@ -218,7 +186,7 @@ async def test_unknown_currency_cannot_be_posted_around_selector(pricing_app, mo
 
 
 @pytest.mark.asyncio
-async def test_pending_payment_evidence_uses_optional_currency_selects(pricing_app):
+async def test_pending_payment_evidence_rejects_unknown_currency(pricing_app):
     app, factory, token = pricing_app
     await seed_language(factory)
     async with factory() as db:
@@ -236,13 +204,9 @@ async def test_pending_payment_evidence_uses_optional_currency_selects(pricing_a
         base_url="http://test",
         cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
     ) as client:
-        response = await client.get("/billing/admin/pricing")
-        assert response.status_code == 200
-        controls = Selects()
-        controls.feed(response.text)
-        assert controls.currency_inputs == []
-        for name in ("checkout_currency", "refund_currency"):
-            assert controls.options[name][:3] == ["", "USD", "CNY"]
+        response = await client.get("/api/v1/billing/admin/payment-events")
+        assert response.status_code == 200, response.text
+        assert event_id in [row["id"] for row in response.json()["items"]]
         response = await client.post(
             f"/billing/admin/payment-events/{event_id}/resolve",
             data={
@@ -280,13 +244,14 @@ async def test_plan_page_can_show_unsupported_historical_currency_without_rewrit
         base_url="http://test",
         cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
     ) as client:
-        response = await client.get("/billing/admin/plans")
-        assert response.status_code == 200
-        assert "ZZZ 321" in response.text
-        assert "Integer currency minor units" in response.text
-        controls = Selects()
-        controls.feed(response.text)
-        assert set(controls.options["currency"]) - {""} == set(CURRENCY_MINOR_EXPONENTS)
+        response = await client.get("/api/v1/billing/admin/plans")
+        assert response.status_code == 200, response.text
+        row = next(row for row in response.json() if row["id"] == plan_id)
+        assert (row["currency"], row["price_cents"], row["formatted_price"]) == (
+            "ZZZ",
+            321,
+            None,
+        )
     async with factory() as db:
         unchanged = await db.get(Plan, plan_id)
         assert unchanged.currency == "ZZZ" and unchanged.price_cents == 321

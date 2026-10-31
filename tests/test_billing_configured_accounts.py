@@ -10,10 +10,10 @@ from backend.models.admin_action_log import AdminActionLog
 from backend.models.billing_models import BillingPriceProfile
 from backend.models.database import AppConfig
 from backend.services import billing_account_pricing_service as sources
+from tests.billing_webui_fixtures import pricing_app as pricing_app_fixture
+from tests.billing_webui_fixtures import pricing_fields, seed_language
 from tests.test_billing_credits_api import TEST_PRICE
 from tests.test_billing_credits_api import billing_client as billing_client_fixture
-from tests.test_billing_pricing_editor import pricing_app as pricing_app_fixture
-from tests.test_billing_pricing_editor import pricing_fields, seed_language
 from tests.test_billing_usage_attribution import sql_runtime as sql_runtime_fixture
 
 pricing_app = pricing_app_fixture
@@ -73,13 +73,12 @@ async def test_editor_and_discovery_use_saved_accounts_and_do_not_expose_credent
         base_url="http://test",
         cookies={"access_token": "isolated-token"},
     ) as client:
-        page = await client.get("/billing/admin/pricing")
+        page = await client.get("/api/v1/billing/admin/pricing-context")
         assert page.status_code == 200
-        assert 'name="account_id"' in page.text
-        assert "Channel A" in page.text and "Channel B" in page.text
-        assert 'name="provider_id"' not in page.text
+        choices = {account['id']: account for account in page.json()['accounts']}
+        assert choices['acc_a']['name'] == 'Channel A' and choices['acc_b']['name'] == 'Channel B'
         assert "SECRET_" not in page.text and "private.invalid" not in page.text
-        response = await client.get("/billing/admin/pricing/accounts/acc_a/models")
+        response = await client.get("/api/v1/billing/admin/pricing/accounts/acc_a/models")
         assert response.status_code == 200
         assert response.json()["data"]["models"] == ["shared", "only-a", "fresh-a"]
         assert response.json()["data"]["account_id"] == "acc_a"
@@ -87,9 +86,9 @@ async def test_editor_and_discovery_use_saved_accounts_and_do_not_expose_credent
             "SECRET_" not in response.text and "upstream-message" not in response.text
         )
         assert "private.invalid" not in response.text
-        await client.get("/billing/admin/pricing/accounts/acc_a/models")
+        await client.get("/api/v1/billing/admin/pricing/accounts/acc_a/models")
         assert len(calls) == 1
-        await client.get("/billing/admin/pricing/accounts/acc_a/models?refresh=true")
+        await client.get("/api/v1/billing/admin/pricing/accounts/acc_a/models?refresh=true")
     assert len(calls) == 2
     assert calls[0]["api_key"] == "SECRET_acc_a"
     assert calls[0]["model"] == "shared"
@@ -109,13 +108,13 @@ async def test_discovery_failure_preserves_only_selected_saved_models(
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.get("/billing/admin/pricing/accounts/acc_b/models")
+        response = await client.get("/api/v1/billing/admin/pricing/accounts/acc_b/models")
         assert response.json()["data"]["models"] == ["shared", "only-b"]
         assert response.json()["data"]["discovery_failed"] is True
         assert "SECRET_" not in response.text
         assert "only-a" not in response.text
-        missing = await client.get("/billing/admin/pricing/accounts/unknown/models")
-        disabled = await client.get("/billing/admin/pricing/accounts/acc_off/models")
+        missing = await client.get("/api/v1/billing/admin/pricing/accounts/unknown/models")
+        disabled = await client.get("/api/v1/billing/admin/pricing/accounts/acc_off/models")
         assert missing.status_code == disabled.status_code == 404
 
 

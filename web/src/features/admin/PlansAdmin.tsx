@@ -12,7 +12,7 @@ import {
   LoadingState,
   Section,
 } from "../../components/workflow/Workflow";
-import { Field, Money, MutationError } from "../billing/BillingCommon";
+import { CurrencySelect, Field, Money, MutationError } from "../billing/BillingCommon";
 import {
   exactCredits,
   moneyToMinor,
@@ -192,6 +192,8 @@ function PlanEditor({
   const { t } = useLocale();
   const client = useQueryClient();
   const [currency, setCurrency] = useState(plan?.currency ?? "");
+  const selectedCurrency = currency.trim().toUpperCase();
+  const currencyChanged = !plan || selectedCurrency !== plan.currency.trim().toUpperCase();
   const [type, setType] = useState(plan?.plan_type ?? "one_time");
   const [invalid, setInvalid] = useState(false);
   const context = useQuery({
@@ -214,14 +216,10 @@ function PlanEditor({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     try {
+      const amount = String(form.get("amount"));
       const body: Record<string, unknown> = {
         name: String(form.get("name")),
         plan_type: type,
-        currency,
-        price_cents: moneyToMinor(
-          String(form.get("amount")),
-          context.data?.currency_minor_exponents[currency] ?? -1,
-        ),
         credit_grant: validateCreditInput(String(form.get("credit_grant"))),
         duration_days:
           type === "subscription"
@@ -241,6 +239,10 @@ function PlanEditor({
           body[key] = parseIntegerInput(String(value));
       }
       body.rate_limits = Object.keys(rates).length ? rates : null;
+      if (currencyChanged || amount !== (plan?.formatted_price ?? '')) {
+        body.currency = selectedCurrency;
+        body.price_cents = moneyToMinor(amount, context.data?.currency_minor_exponents[selectedCurrency] ?? -1);
+      }
       mutation.mutate(body);
       setInvalid(false);
     } catch {
@@ -271,29 +273,20 @@ function PlanEditor({
           </select>
         </Field>
         <Field label={t("币种", "Currency")}>
-          <select
-            required
-            value={context.data?.currencies.includes(currency) ? currency : ""}
-            onChange={(event) => setCurrency(event.target.value)}
-          >
-            <option value="">{t("选择币种", "Choose currency")}</option>
-            {context.data?.currencies.map((code) => (
-              <option key={code}>{code}</option>
-            ))}
-          </select>
+          <CurrencySelect name="currency" current={currency} codes={context.data?.currencies ?? []} onChange={setCurrency} required={currencyChanged} />
         </Field>
         <Field
           label={t("价格", "Price")}
           help={
             currency
-              ? `${currency} · ${context.data?.currency_minor_exponents[currency] ?? "?"} ${t("位小数", "decimal places")}`
+              ? `${currency} · ${context.data?.currency_minor_exponents[selectedCurrency] ?? "?"} ${t("位小数", "decimal places")}`
               : undefined
           }
         >
           <input
             name="amount"
             inputMode="decimal"
-            required
+            required={currencyChanged}
             defaultValue={plan?.formatted_price ?? ""}
           />
         </Field>
@@ -317,7 +310,7 @@ function PlanEditor({
             />
           </Field>
         )}
-        <Field label={t("并发限制（可选）", "Concurrency limit (optional)")}>
+        <Field label={t('每用户业务执行上限', 'Per-user business execution limit')} help={t('PR、Issue、Agent 和仓库扫描共享此上限。排队和运行均计入，任务结束后释放。留空表示不限制。', 'PR, Issue, Agent and Repo Scan share this limit. Queued and running executions count until the task ends. Leave blank for no plan limit.')}>
           <input
             name="concurrency_limit"
             type="number"
