@@ -1,0 +1,32 @@
+.public-document {
+  width: min(100% - 40px, 1040px);
+  margin: 40px auto 80px;
+  line-height: 1.75;
+}
+.public-document > .wf-markdown {
+  max-width: 800px;
+  margin: auto;
+}
+.public-document h1 {
+  font-size: 2rem;
+  letter-spacing: -0.04em;
+}
+.public-document h2 {
+  margin-top: 2em;
+  font-size: 1.15rem;
+}
+.invoice-address {
+  display: block;
+  overflow-wrap: anywhere;
+  user-select: all;
+  padding: 16px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 1rem;
+}
+.invoice-amount {
+  font-size: 2rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}

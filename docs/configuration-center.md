@@ -1,23 +1,20 @@
 # Unified configuration centre / 统一配置中心
 
-Issue #677 is rebased onto `develop` at `5bf656f6` (checked 2026-10-14), including
-the #646 notification centre's endpoint, subscription and delivery controls.
-#622 consolidated navigation domains; #638 remains an open React migration epic.
-This baseline has no `web/`, React Settings, Vite, or frontend test project. The
-shipping centre therefore uses the existing shell with framework-independent ES
-modules. Future React Settings can reuse its API, metadata, typed contract and
-field state machine; there is no second configuration centre to maintain.
+The React application is the default WebUI. Settings live at
+`/app/settings/{category}` and reuse the typed API, metadata and durable revision
+contract. Previous settings URLs redirect to the matching category. See
+[WebUI 2.0](webui-2.md) for build and development instructions.
 
 ## Entry points and ownership
 
 | Previous URL | New category | Ownership and storage |
 | --- | --- | --- |
-| `/settings/` | `/settings-center/personal` | Current user; WebUIConfig and UserConfig |
-| `/config/ai` | `/settings-center/ai` | Super admin; account/binding services and AppConfig |
-| `/config` | `/settings-center/review` | Super admin; scalars and registered strategy sections |
+| `/settings/` | `/app/settings/personal` | Current user; WebUIConfig and UserConfig |
+| `/config/ai` | `/app/settings/ai` | Super admin; account/binding services and AppConfig |
+| `/config` | `/app/settings/review` | Super admin; scalars and registered strategy sections |
 | Strategy/label anchors | Review, Issue, Agent, Labels | Existing section JSON overrides |
-| `/system-config/` | `/settings-center/system` | Super admin; system validation and deployment settings |
-| `/config/backup` | `/settings-center/backup` | Super admin; existing backup services |
+| `/system-config/` | `/app/settings/system` | Super admin; system validation and deployment settings |
+| `/config/backup` | `/app/settings/backup` | Super admin; existing backup services |
 
 The sidebar has one Settings entry. Only the selected category's values and DOM
 are loaded. Search uses a role-filtered, value-free index of names, descriptions
@@ -30,16 +27,16 @@ forms; model thinking uses a mode selector. Incomplete rows stay local until
 valid, including when an earlier save completes. Existing values and unknown
 historical properties survive unrelated form edits. Built-in map names stay fixed
 because omitted built-ins inherit their defaults rather than deleting them.
-The dedicated plugin page also uses typed MCP, Hook, argument, header and scope
+The plugin panel also uses typed MCP, Hook, argument, header and scope
 forms. Its optional raw JSON editor is initially hidden; saving still requires
 the existing explicit submit, authorization, CSRF and masked-credential checks.
 
 | Desktop / 桌面 | Mobile / 手机 |
 | --- | --- |
-| ![AI fallback form on desktop](images/settings-fallback-desktop.png) | ![AI fallback form on mobile](images/settings-fallback-mobile.png) |
+| ![React settings on desktop](images/webui-settings-desktop.png) | ![React settings on mobile](images/webui-settings-mobile.png) |
 
 Old GET routes redirect with their query parameters; old section bookmarks map to
-categories/groups. POST/API routes remain and use shared persistence services.
+categories/groups. The versioned JSON APIs use the shared persistence services.
 Missing scalar fields remain unchanged, including booleans: legacy clients must
 explicitly submit `false` to turn a switch off. The obsolete long configuration
 form and dynamic-card template have been removed. Accounts, 2FA, Passkeys,
@@ -51,7 +48,7 @@ continues sharing system/section validation.
 
 `backend/services/config_metadata.py` is the inventory adapter. It derives fields
 from Settings definitions, existing registries, section defaults and model
-metadata. `backend/webui/assets/settings/contract.d.ts` documents the browser
+metadata. `web/src/api/configuration.d.ts` documents the browser
 projection. Sensitive `value`, `default` and `inheritedValue` are always null;
 `editorSchema` describes complex controls and `optionLabels` localizes enum
 display text without changing the stored values. Schema hints derive from

@@ -402,7 +402,7 @@ class PaymentService:
             raise PaymentError(f"Invalid status: {new_status}")
 
         for key, value in kwargs.items():
-            if key in self.REDEEM_CODE_UPDATE_FIELDS and value is not None:
+            if key in self.REDEEM_CODE_UPDATE_FIELDS and (value is not None or key == "expires_at"):
                 setattr(code, key, value)
         await self.session.flush()
         logger.bind(redeem_code_id=code_id).info("Redeem code updated")

@@ -421,6 +421,10 @@ class BootstrapMiddleware:
 
         path = scope["path"]
 
+        if path == "/app/setup" or path.startswith("/app/assets/"):
+            await self.app(scope, receive, send)
+            return
+
         # 根路径重定向到 /setup
         if path == "/":
             await RedirectResponse(url="/setup", status_code=302)(scope, receive, send)

@@ -2,7 +2,7 @@
 
 # 🌸 Sakura AI
 
-<img src="res/cover_1.png" alt="Sakura AI Cover" width="100%">
+<a href="res/cover-google.png"><img src="res/cover-google.png" alt="Sakura AI cover" width="936" height="468"></a>
 
 > AI-powered intelligent GitHub Pull Request code review and Issue analysis bot with proactive codebase exploration capabilities
 
@@ -300,6 +300,8 @@ The main menu's **View previous runtime logs** entry reads persisted logs. For l
 
 ### Source Development
 
+Release source archives include the matching frontend dist. Git installations automatically download and verify the matching prebuilt frontend when the application starts; Node.js and manual npm builds are not required. Restart after updating the source and Python dependencies. Frontend contributors can use the [WebUI development guide](docs/webui-2.md).
+
 > Source-development platforms: Windows 11 x86_64, Linux x86_64/arm64 with glibc >= 2.28 (non-musl; Alpine is unsupported), or Apple Silicon macOS 14+. Intel Macs, macOS <=13, musl/Alpine, and glibc <2.28 cannot install the dependencies because upstream onnxruntime ships no Python 3.14 wheel for them (and no sdist); the pip path is limited the same way.
 
 **With uv (recommended)**:
@@ -339,15 +341,40 @@ python -m backend.main
 
 ## Screenshots
 
-<div align="center">
+Click a screenshot to view the full image.
 
-<img src="res/发送正在审查中和自动打标.png" width="1901" alt="Review in progress">
-
-<img src="res/Issues分析.png" width="1707" alt="Issue analysis">
-
-<img src="res/WebUI.png" width="1707" alt="WebUI dashboard">
-
-</div>
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <p><strong>Overview</strong><br><sub>Review status and activity trends</sub></p>
+      <a href="docs/images/showcase/overview.jpg"><img src="docs/images/showcase/overview.jpg" alt="Overview" width="468" height="296"></a>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <p><strong>Sign in</strong><br><sub>GitHub and passkey access</sub></p>
+      <a href="docs/images/showcase/login.jpg"><img src="docs/images/showcase/login.jpg" alt="Sign in" width="468" height="296"></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <p><strong>AI & models</strong><br><sub>Accounts, models and invocation settings</sub></p>
+      <a href="docs/images/showcase/ai-settings.jpg"><img src="docs/images/showcase/ai-settings.jpg" alt="AI & models" width="468" height="296"></a>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <p><strong>Review settings</strong><br><sub>Grouped settings and field editing</sub></p>
+      <a href="docs/images/showcase/review-settings.jpg"><img src="docs/images/showcase/review-settings.jpg" alt="Review settings" width="468" height="296"></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <p><strong>Agent workspace</strong><br><sub>Task management and execution</sub></p>
+      <a href="docs/images/showcase/agent.jpg"><img src="docs/images/showcase/agent.jpg" alt="Agent workspace" width="468" height="296"></a>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <p><strong>Preferences</strong><br><sub>Language, appearance and account settings</sub></p>
+      <a href="docs/images/showcase/preferences.jpg"><img src="docs/images/showcase/preferences.jpg" alt="Preferences" width="468" height="296"></a>
+    </td>
+  </tr>
+</table>
 
 ---
 
@@ -358,7 +385,7 @@ GitHub (PR / Issue / OAuth)
         │ Webhook / OAuth / API
         ▼
 FastAPI Web Server ── Webhook Handler · PR Analyzer · Comment Service
-        │              WebUI (Jinja2 + HTMX + Alpine.js) · SSE Push
+        │              WebUI (React + TypeScript + Vite) · SSE Push
         ▼
 AI Review Engine ── read_file · list_dir · search_files · git_info · commits
                    search_web · RAG · Code Index · read_sakura_docs/memory
@@ -366,7 +393,7 @@ AI Review Engine ── read_file · list_dir · search_files · git_info · com
 Data Storage ── MySQL (Business) · Redis (Queue/PubSub) · ChromaDB (Vectors)
 ```
 
-**Tech Stack**: FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · Multi-protocol AI (OpenAI / Anthropic / Gemini / compatible) · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
+**Tech Stack**: FastAPI (Python 3.14+) · React + TypeScript + Vite + Tailwind CSS · Multi-protocol AI (OpenAI / Anthropic / Gemini / compatible) · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
 
 Full architecture diagram, data flow, code structure, and interactive knowledge graph are in the [Architecture Guide](docs/ARCHITECTURE.md) (Chinese).
 

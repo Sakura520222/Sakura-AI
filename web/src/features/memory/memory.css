@@ -1,0 +1,64 @@
+.memory-layout {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 28px;
+}
+.memory-layout aside {
+  border-right: 1px solid var(--border);
+  padding-right: 20px;
+  min-width: 0;
+}
+.memory-layout aside label {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.memory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.memory-layout nav {
+  display: grid;
+  gap: 4px;
+}
+.memory-layout nav button {
+  padding: 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.memory-layout nav button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.memory-layout section {
+  min-width: 0;
+}
+.memory-editor {
+  width: 100%;
+  min-height: 60vh;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.7;
+}
+@media (max-width: 900px) {
+  .memory-layout {
+    grid-template-columns: 1fr;
+  }
+  .memory-layout aside {
+    border-right: 0;
+    padding-right: 0;
+  }
+  .memory-layout nav {
+    max-height: 200px;
+    overflow: auto;
+  }
+  .memory-editor {
+    min-height: 50vh;
+  }
+}

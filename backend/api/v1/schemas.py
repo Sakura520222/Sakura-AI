@@ -178,6 +178,11 @@ class IssueAnalysisResponse(BaseModel):
     comment_url: str | None = None
     labels_applied: int | None = None
     applied_label_names: str | None = None
+    analysis_version: int | None = None
+    issue_state: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    estimated_cost: int | None = None
     created_at: datetime | None = None
     completed_at: datetime | None = None
 

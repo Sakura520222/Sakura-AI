@@ -1,0 +1,129 @@
+.repository-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.repository-row:last-child {
+  border: 0;
+}
+.repository-row > svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.repository-identity {
+  flex: 1;
+  min-width: 0;
+}
+.repository-counts {
+  display: flex;
+  gap: 22px;
+  font-size: 12px;
+}
+.repository-counts a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.repository-counts a:hover {
+  color: var(--accent);
+}
+.repository-private {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.repository-count {
+  font-size: 12px;
+}
+.repository-overview {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.4fr;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.repository-overview > * {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px;
+  border-right: 1px solid var(--border);
+  color: var(--text);
+  position: relative;
+  text-decoration: none;
+}
+.repository-overview > :last-child {
+  border: 0;
+}
+.repository-overview span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.repository-overview strong {
+  font-size: 26px;
+  font-weight: 600;
+}
+.repository-overview .repository-date {
+  font-size: 18px;
+}
+.repository-overview svg {
+  position: absolute;
+  right: 24px;
+  top: 24px;
+  color: var(--muted);
+}
+.repository-operation {
+  padding: 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.repository-operation:last-child {
+  border: 0;
+}
+.repository-operation > svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.repository-operation > div {
+  flex: 1;
+}
+.repository-operation h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+.repository-operation p {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 7px 0 0;
+  line-height: 1.6;
+}
+@media (max-width: 650px) {
+  .repository-row {
+    gap: 10px;
+    padding: 16px;
+    flex-wrap: wrap;
+  }
+  .repository-counts {
+    margin-left: 30px;
+    order: 3;
+    flex-basis: 100%;
+  }
+  .repository-overview {
+    grid-template-columns: 1fr;
+  }
+  .repository-overview > * {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .repository-operation {
+    padding: 18px;
+    flex-wrap: wrap;
+  }
+  .repository-operation > div {
+    min-width: 160px;
+  }
+}

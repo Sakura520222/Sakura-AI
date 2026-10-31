@@ -1,9 +1,0 @@
-{% if current_user and current_user.role == 'super_admin' and category == 'system' %}
-<div class="mb-4 rounded-lg border border-sakura-200 bg-sakura-50/60 p-3 dark:border-sakura-800 dark:bg-sakura-950/30">
-    <p class="text-xs text-gray-600 dark:text-gray-300">{{ _('config.billing_setup_help') }}</p>
-    <div class="mt-3 flex flex-wrap gap-2">
-        <a href="/billing/admin/pricing" class="rounded-lg bg-sakura-600 px-3 py-2 text-sm text-white">{{ _('billing.model_pricing') }}</a>
-        <a href="/billing/admin/plans" class="rounded-lg border border-sakura-300 px-3 py-2 text-sm">{{ _('billing.plan_pricing') }}</a>
-    </div>
-</div>
-{% endif %}
