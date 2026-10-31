@@ -388,12 +388,13 @@ export function safeExternalUrl(
   value: string | null | undefined,
 ): string | undefined {
   if (!value) return undefined;
-  if (
-    value.startsWith("/") &&
-    !value.startsWith("//") &&
-    !/[\\\u0000-\u0020]/.test(value)
-  )
+  if (value.startsWith("/")) {
+    if (value.startsWith("//") || value.includes("\\")) return undefined;
+    for (const character of value) {
+      if (character.charCodeAt(0) <= 0x20) return undefined;
+    }
     return value;
+  }
   try {
     const url = new URL(value);
     return url.protocol === "https:" && !url.username && !url.password

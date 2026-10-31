@@ -16,7 +16,7 @@ from backend.services.billing_service import BillingService
 from backend.webui.auth import WEBUI_TOKEN_COOKIE_NAME
 from backend.webui.deps import get_db
 from backend.webui.routes import agent_team as routes
-from tests.test_billing_pricing_editor import pricing_app as app_fixture
+from tests.billing_webui_fixtures import pricing_app as app_fixture
 from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
 
 pricing_app = app_fixture

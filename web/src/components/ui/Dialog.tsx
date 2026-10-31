@@ -1,6 +1,6 @@
 import * as Primitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { useLocale } from "../../app/locale";
 
 export function Dialog({
@@ -17,11 +17,28 @@ export function Dialog({
   children: ReactNode;
 }) {
   const { t } = useLocale();
+  const opener = useRef<HTMLElement | null>(null);
   return (
     <Primitive.Root open={open} onOpenChange={onOpenChange}>
       <Primitive.Portal>
         <Primitive.Overlay className="dialog-overlay" />
-        <Primitive.Content className="dialog-content">
+        <Primitive.Content
+          className="dialog-content"
+          onOpenAutoFocus={() => {
+            opener.current =
+              document.activeElement instanceof HTMLElement
+                ? document.activeElement
+                : null;
+          }}
+          onCloseAutoFocus={(event) => {
+            // These controlled dialogs can be opened without a Radix Trigger.
+            if (opener.current?.isConnected) {
+              event.preventDefault();
+              opener.current.focus({ preventScroll: true });
+            }
+            opener.current = null;
+          }}
+        >
           <div className="dialog-heading">
             <Primitive.Title>{title}</Primitive.Title>
             <Primitive.Close

@@ -4,18 +4,16 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
-from fastapi import Request
 from sqlalchemy import select
 
-from backend.api.v1 import deps as api_deps
-from backend.api.v1.billing import router as api_router
+from backend.api.v1 import billing_webui
 from backend.core import config as core_config
 from backend.models.billing_models import BillingTransaction
 from backend.models.payment_models import Plan
 from backend.webui import deps
 from backend.webui.i18n import i18n
-from tests.test_billing_pricing_editor import pricing_app as pricing_fixture
-from tests.test_billing_pricing_editor import seed_language
+from tests.billing_webui_fixtures import pricing_app as pricing_fixture
+from tests.billing_webui_fixtures import seed_language
 from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
 
 sql_runtime = runtime_fixture
@@ -29,16 +27,8 @@ def disabled_payments_app(pricing_app, monkeypatch):
     async def disabled():
         return False
 
-    async def api_identity(request: Request):
-        return {
-            "user_id": 1,
-            "sub": "owner1",
-            "role": request.headers.get("x-test-role", "super_admin"),
-        }
-
     monkeypatch.setattr(deps, "is_payment_enabled", disabled)
-    monkeypatch.setattr(api_deps, "get_api_current_user", api_identity)
-    app.include_router(api_router, prefix="/api/v1")
+    monkeypatch.setattr(billing_webui, "get_dynamic_config", lambda key: disabled())
     assert deps.require_payment_enabled not in app.dependency_overrides
     return app, factory, csrf_token
 
@@ -69,7 +59,7 @@ async def test_plan_configuration_is_available_without_enabling_payments(
         base_url="http://test",
         cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
     ) as client:
-        response = await client.get("/billing/admin/plans")
+        response = await client.get("/api/v1/billing/admin/plans")
         assert response.status_code == 200, response.text
         response = await client.post(
             "/billing/admin/plans", data=plan_fields(csrf_token)
@@ -120,7 +110,7 @@ async def test_plan_configuration_still_requires_superadmin(
         cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
         headers={"x-test-role": role},
     ) as client:
-        response = await client.get("/billing/admin/plans")
+        response = await client.get("/api/v1/billing/admin/plans")
         assert response.status_code == 403, response.text
         response = await client.post(
             "/billing/admin/plans", data=plan_fields(csrf_token)
@@ -184,7 +174,7 @@ async def test_disabled_payment_guard_preserves_purchase_refund_and_csrf_boundar
             )
             assert response.status_code == 403, response.text
         for method, path, kwargs, expected_status in (
-            ("GET", "/billing/", {}, 200),
+            ("GET", "/api/v1/billing/context", {}, 200),
             (
                 "POST",
                 "/billing/purchase/1",

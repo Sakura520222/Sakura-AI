@@ -323,6 +323,10 @@
     "当前没有活跃更新任务。关闭记录后，仍需重新预检才能提交更新。",
     "No update job is active. A fresh preflight is still required before another update can be submitted."
   ],
+  "[\"不支持的历史币种（{0}）\",\"Unsupported historical currency ({0})\"]": [
+    "不支持的历史币种（{0}）",
+    "Unsupported historical currency ({0})"
+  ],
   "[\"集合\",\"Collection\"]": [
     "集合",
     "Collection"
@@ -1487,10 +1491,6 @@
     "默认",
     "Default"
   ],
-  "[\"并发限制（可选）\",\"Concurrency limit (optional)\"]": [
-    "并发限制（可选）",
-    "Concurrency limit (optional)"
-  ],
   "[\"添加 AI 账号\",\"Add AI account\"]": [
     "添加 AI 账号",
     "Add AI account"
@@ -2651,6 +2651,10 @@
     "待验证",
     "Unverified"
   ],
+  "[\"每用户业务执行上限\",\"Per-user business execution limit\"]": [
+    "每用户业务执行上限",
+    "Per-user business execution limit"
+  ],
   "[\"相关代码\",\"Relevant code\"]": [
     "相关代码",
     "Relevant code"
@@ -3026,6 +3030,10 @@
   "[\"查看 {0} 个仓库\",\"View {0} repositories\"]": [
     "查看 {0} 个仓库",
     "View {0} repositories"
+  ],
+  "[\"PR、Issue、Agent 和仓库扫描共享此上限。排队和运行均计入，任务结束后释放。留空表示不限制。\",\"PR, Issue, Agent and Repo Scan share this limit. Queued and running executions count until the task ends. Leave blank for no plan limit.\"]": [
+    "PR、Issue、Agent 和仓库扫描共享此上限。排队和运行均计入，任务结束后释放。留空表示不限制。",
+    "PR, Issue, Agent and Repo Scan share this limit. Queued and running executions count until the task ends. Leave blank for no plan limit."
   ],
   "[\"尚未确认更新请求的结果。正在查询 Host Updater，请勿重复提交。\",\"The update request outcome is not confirmed. Checking Host Updater; do not submit it again.\"]": [
     "尚未确认更新请求的结果。正在查询 Host Updater，请勿重复提交。",
@@ -4086,6 +4094,10 @@
   "[\"流水\",\"Transactions\"]": [
     "流水",
     "Transactions"
+  ],
+  "[\"同时任务上限：{0}\",\"Concurrent task limit: {0}\"]": [
+    "同时任务上限：{0}",
+    "Concurrent task limit: {0}"
   ],
   "[\"本地未提交的修改也会被删除。\",\"Uncommitted local changes will also be removed.\"]": [
     "本地未提交的修改也会被删除。",

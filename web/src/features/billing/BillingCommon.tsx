@@ -63,6 +63,51 @@ export function Money({
     </span>
   );
 }
+export function CurrencySelect({
+  name,
+  current,
+  codes,
+  onChange,
+  required = true,
+}: {
+  name: string;
+  current: string;
+  codes: string[];
+  required?: boolean;
+  onChange?: (value: string) => void;
+}) {
+  const { t } = useLocale();
+  const canonical = current.trim().toUpperCase();
+  const value = codes.includes(canonical) ? canonical : "";
+  const unknown = Boolean(current && !value);
+  return (
+    <select
+      required={required}
+      name={name}
+      {...(onChange
+        ? {
+            value,
+            onChange: (event: React.ChangeEvent<HTMLSelectElement>) =>
+              onChange(event.target.value),
+          }
+        : { defaultValue: value })}
+    >
+      <option value="" disabled={unknown}>
+        {unknown
+          ? t(
+              "不支持的历史币种（{0}）",
+              "Unsupported historical currency ({0})",
+              [current],
+            )
+          : t("选择币种", "Choose currency")}
+      </option>
+      {codes.map((code) => (
+        <option key={code}>{code}</option>
+      ))}
+    </select>
+  );
+}
+
 export function Field({
   label,
   children,
