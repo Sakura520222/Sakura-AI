@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { api } from '../../api/client';
 import { LocaleProvider } from '../../app/locale';
@@ -11,7 +12,10 @@ import NotificationsPage, { safeDetailPath } from './NotificationsPage';
 vi.mock('../../api/client', async importOriginal => ({ ...(await importOriginal<object>()), api: vi.fn() }));
 function renderPanel(page = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><LocaleProvider initial="en"><ConfirmProvider>{page ? <NotificationsPage /> : <NotificationsPanel />}</ConfirmProvider></LocaleProvider></QueryClientProvider>);
+  const content = page
+    ? <MemoryRouter initialEntries={['/notifications']}><NotificationsPage /></MemoryRouter>
+    : <NotificationsPanel />;
+  return render(<QueryClientProvider client={client}><LocaleProvider initial="en"><ConfirmProvider>{content}</ConfirmProvider></LocaleProvider></QueryClientProvider>);
 }
 beforeEach(() => { vi.mocked(api).mockReset(); localStorage.clear(); });
 
