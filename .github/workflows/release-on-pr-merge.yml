@@ -701,12 +701,25 @@ jobs:
           rm -rf "${RUNNER_TEMP}/release_facts" 2>/dev/null || true
           echo "✅ 临时文件已清理"
 
+  publish-webui-assets:
+    name: 构建并发布前端 dist
+    needs: generate-release
+    if: needs.generate-release.result == 'success'
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/webui-build.yml
+    with:
+      source_ref: refs/tags/v${{ needs.generate-release.outputs.version }}
+      release_tag: v${{ needs.generate-release.outputs.version }}
+
   build-and-upload-assets:
     name: 打包并上传附件
     runs-on: ubuntu-latest
-    needs: generate-release
-    if: always() && needs.generate-release.result == 'success'
+    needs: [generate-release, publish-webui-assets]
+    if: needs.generate-release.result == 'success' && needs.publish-webui-assets.result == 'success'
     permissions:
+      actions: read
       contents: write
 
     steps:
@@ -716,6 +729,12 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           ref: refs/tags/v${{ needs.generate-release.outputs.version }}
+
+      - name: 获取同版本预构建前端
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.publish-webui-assets.outputs.artifact_name }}
+          path: web/dist
 
       - name: 验证项目结构
         run: |
@@ -875,6 +894,12 @@ jobs:
           find "$RELEASE_DIR/backend" -type f -name '*.pyc' -delete
           echo "- backend/ (核心应用代码)" >> packaging_manifest.txt
 
+          # Source archives work immediately, without Node.js or npm on the user's host.
+          test -s web/dist/index.html
+          test -s web/dist/webui-build.json
+          cp -r web "$RELEASE_DIR/"
+          echo "- web/ (同版本前端源码与预构建 dist)" >> packaging_manifest.txt
+
           # 运行时配置目录（connection.json 由 Setup Wizard 在部署时写入）
           # 策略与标签默认值已迁移至 backend/core/config_section_defaults.py，
           # 用户覆盖存储在 app_config 配置节中，不随 source archive 打包。
@@ -1004,9 +1029,10 @@ jobs:
 
   publish-stable-image:
     name: 发布稳定镜像
-    needs: generate-release
-    if: needs.generate-release.result == 'success'
+    needs: [generate-release, publish-webui-assets]
+    if: needs.generate-release.result == 'success' && needs.publish-webui-assets.result == 'success'
     permissions:
+      actions: read
       contents: read
       packages: write
     uses: ./.github/workflows/docker-publish.yml
@@ -1015,6 +1041,7 @@ jobs:
       channel: stable
       version: ${{ needs.generate-release.outputs.version }}
       sync_dockerhub: true
+      webui_artifact: ${{ needs.publish-webui-assets.outputs.artifact_name }}
     secrets: inherit
 
   publish-stable-sandbox:
@@ -1035,12 +1062,14 @@ jobs:
     name: 发布更新清单
     needs:
       - generate-release
+      - publish-webui-assets
       - publish-updater-assets
       - publish-stable-image
       - publish-stable-sandbox
     if: >-
       always() &&
       needs.generate-release.result == 'success' &&
+      needs.publish-webui-assets.result == 'success' &&
       needs.publish-updater-assets.result == 'success' &&
       needs.publish-stable-image.result == 'success' &&
       needs.publish-stable-sandbox.result == 'success'

@@ -51,6 +51,7 @@ async def list_issues(
     status: str = Query("", description="按状态过滤"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
+    repo_owner: str = "",
 ):
     """Issue 分析列表（分页、搜索、过滤）"""
     query = select(IssueAnalysis)
@@ -75,6 +76,9 @@ async def list_issues(
     if repo_name:
         query = query.where(IssueAnalysis.repo_name == repo_name)
         count_query = count_query.where(IssueAnalysis.repo_name == repo_name)
+    if repo_owner:
+        query = query.where(IssueAnalysis.repo_owner == repo_owner)
+        count_query = count_query.where(IssueAnalysis.repo_owner == repo_owner)
     if category:
         query = query.where(IssueAnalysis.category == category)
         count_query = count_query.where(IssueAnalysis.category == category)

@@ -15,6 +15,7 @@
 | [部署指南](DEPLOYMENT.md) | Docker、源码、GitHub App、数据库、Updater 与 Agent 沙箱 |
 | [配置参考](CONFIGURATION.md) | WebUI 配置项、优先级与生效方式 |
 | [统一配置中心](configuration-center.md) | 配置项组织、默认值、变更生效与回滚机制 |
+| [WebUI 2.0](webui-2.md) | React 工作台、前端构建、迁移与验证方式 |
 
 ## 主要功能
 

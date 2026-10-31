@@ -2,7 +2,7 @@
 
 # 🌸 Sakura AI
 
-<img src="res/cover_1.png" alt="Sakura AI Cover" width="100%">
+<a href="res/cover-google.png"><img src="res/cover-google.png" alt="Sakura AI 封面" width="936" height="468"></a>
 
 > 基于 AI 的智能 GitHub Pull Request 代码审查与 Issue 分析机器人，具备主动探索代码库的能力
 
@@ -300,6 +300,8 @@ docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
 
 ### 源码开发
 
+发布源码包已包含对应版本的前端 dist。通过 Git 安装或更新后，启动程序会自动下载并校验匹配的预构建前端；不需要安装 Node.js 或手动运行 npm。更新源码和 Python 依赖后重启应用即可。只有修改前端源码时才需要本地前端工具链，见 [WebUI 开发说明](docs/webui-2.md)。
+
 > 源码开发平台：Windows 11 x86_64、Linux x86_64/arm64（glibc ≥ 2.28，非 musl；Alpine 不支持）或 Apple Silicon macOS 14+。Intel Mac、macOS ≤13、musl/Alpine 与 glibc <2.28 因上游 onnxruntime 未发布对应 Python 3.14 wheel（且无 sdist）无法安装依赖，pip 方式同样受限。
 
 **uv 方式（推荐）**：
@@ -339,15 +341,40 @@ python -m backend.main
 
 ## 效果展示
 
-<div align="center">
+点击图片可查看原图。
 
-<img src="res/发送正在审查中和自动打标.png" width="1901" alt="审查进行中">
-
-<img src="res/Issues分析.png" width="1707" alt="Issue分析">
-
-<img src="res/WebUI.png" width="1707" alt="WebUI管理界面">
-
-</div>
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <p><strong>控制台概览</strong><br><sub>审查状态与运行趋势</sub></p>
+      <a href="docs/images/showcase/overview.jpg"><img src="docs/images/showcase/overview.jpg" alt="控制台概览" width="468" height="296"></a>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <p><strong>登录</strong><br><sub>GitHub 与通行密钥</sub></p>
+      <a href="docs/images/showcase/login.jpg"><img src="docs/images/showcase/login.jpg" alt="登录" width="468" height="296"></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <p><strong>AI 与模型</strong><br><sub>账号、模型与调用配置</sub></p>
+      <a href="docs/images/showcase/ai-settings.jpg"><img src="docs/images/showcase/ai-settings.jpg" alt="AI 与模型" width="468" height="296"></a>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <p><strong>审查配置</strong><br><sub>分类设置与字段编辑</sub></p>
+      <a href="docs/images/showcase/review-settings.jpg"><img src="docs/images/showcase/review-settings.jpg" alt="审查配置" width="468" height="296"></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <p><strong>Agent 工作台</strong><br><sub>任务管理与执行入口</sub></p>
+      <a href="docs/images/showcase/agent.jpg"><img src="docs/images/showcase/agent.jpg" alt="Agent 工作台" width="468" height="296"></a>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <p><strong>个人偏好</strong><br><sub>语言、外观与账号设置</sub></p>
+      <a href="docs/images/showcase/preferences.jpg"><img src="docs/images/showcase/preferences.jpg" alt="个人偏好" width="468" height="296"></a>
+    </td>
+  </tr>
+</table>
 
 ---
 
@@ -358,7 +385,7 @@ GitHub (PR / Issue / OAuth)
         │ Webhook / OAuth / API
         ▼
 FastAPI Web Server ── Webhook Handler · PR 分析器 · 评论服务
-        │              WebUI (Jinja2 + HTMX + Alpine.js) · SSE 实时推送
+        │              WebUI (React + TypeScript + Vite) · SSE 实时推送
         ▼
 AI 审查引擎 ── read_file · list_dir · search_files · git_info · commits
               search_web · RAG · 代码索引 · read_sakura_docs/memory
@@ -366,7 +393,7 @@ AI 审查引擎 ── read_file · list_dir · search_files · git_info · comm
 数据存储 ── MySQL (业务) · Redis (队列/PubSub) · ChromaDB (向量)
 ```
 
-**技术栈**：FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · 多协议 AI（OpenAI / Anthropic / Gemini / 兼容） · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
+**技术栈**：FastAPI (Python 3.14+) · React + TypeScript + Vite + Tailwind CSS · 多协议 AI（OpenAI / Anthropic / Gemini / 兼容） · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
 
 完整架构图、数据流、代码结构与交互式知识图谱详见 [技术架构](docs/ARCHITECTURE.md)。
 

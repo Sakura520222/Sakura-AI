@@ -1,0 +1,65 @@
+name: WebUI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [main, develop, 'feature/**', 'release/**', 'hotfix/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-main-dist:
+    name: Publish prebuilt dist for source updates
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'sakura-ai-bot[bot]'
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/webui-build.yml
+    with:
+      source_ref: ${{ github.sha }}
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked
+      - run: npm ci --prefix web
+      - name: Check generated API contracts
+        run: |
+          uv run --no-sync python -m scripts.export_webui_schema
+          npm run api:types --prefix web
+          git diff --exit-code -- web/openapi.json web/src/api/generated.ts
+      - name: Frontend quality and production build
+        run: |
+          uv run --no-sync python -m scripts.sync_webui_translations --check
+          npm run lint --prefix web
+          npm test --prefix web
+          npm run build --prefix web
+          npm run bundle:report --prefix web
+      - name: Install browser
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Exercise isolated browser workflows
+        run: npm run e2e --prefix web
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: webui-browser-and-bundle
+          path: |
+            web/test-results/
+            web/artifacts/
+            web/bundle-report.md
+          if-no-files-found: ignore

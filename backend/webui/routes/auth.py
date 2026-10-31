@@ -105,24 +105,11 @@ def _oauth_error(
     has_oauth: bool = True,
     status_code: int = 400,
 ):
-    """统一的 OAuth 错误页面响应"""
-    lang = resolve_language(request)
-    from backend.webui.i18n import make_translation_func
-
-    return templates.TemplateResponse(
-        request,
-        "login.html",
-        {
-            "request": request,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "error": error_msg,
-            "app_version": APP_VERSION,
-            "has_oauth": has_oauth,
-            "lang": lang,
-            "_": make_translation_func(lang),
-            "user_prefs": {"language": lang},
-        },
-        status_code=status_code,
+    """Return to the native login screen without reflecting provider errors."""
+    return RedirectResponse(
+        "/app/login?error=oauth_failed",
+        status_code=302,
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -220,7 +207,9 @@ async def login_page(request: Request):
         payload = decode_access_token(token)
         if payload:
             if await refresh_login_claims(payload):
-                return toast_redirect("/", "toast.auto_logged_in", lang=detect_language())
+                return toast_redirect(
+                    "/", "toast.auto_logged_in", lang=detect_language()
+                )
             stale_session = True
 
     settings = get_settings()
@@ -277,7 +266,7 @@ async def github_login(request: Request):
     params = {
         "client_id": settings.github_oauth_client_id,
         "redirect_uri": settings.github_oauth_redirect_uri,
-            "scope": "read:user user:email",
+        "scope": "read:user user:email",
         "state": state,
     }
 
@@ -321,7 +310,9 @@ async def github_callback(
     except AuthProviderError as exc:
         if exc.status_code is not None and exc.status_code != 200:
             if "token" in str(exc).lower():
-                logger.error("GitHub OAuth token exchange failed: status={}", exc.status_code)
+                logger.error(
+                    "GitHub OAuth token exchange failed: status={}", exc.status_code
+                )
                 return _oauth_error(request, "获取访问令牌失败，请重试")
             logger.error("GitHub OAuth user request failed: status={}", exc.status_code)
             return _oauth_error(request, "获取用户信息失败，请重试", status_code=502)
@@ -348,7 +339,7 @@ async def github_callback(
     github_username = account.username
     try:
         github_id = int(account.provider_user_id)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         github_id = None
     avatar_url = account.avatar_url or ""
 
@@ -386,7 +377,10 @@ async def github_callback(
     if has_mfa_method:
         mfa_token = create_mfa_pending_token(token_data)
         logger.info(f"GitHub OAuth 需要二次验证: {github_username} (role={user.role})")
-        response = RedirectResponse(url="/auth/2fa", status_code=302)
+        response = RedirectResponse(
+            url="/app/login?step=mfa" if redirect_target == "/app/" else "/auth/2fa",
+            status_code=302,
+        )
         _set_mfa_pending_cookie(response, mfa_token)
         response.delete_cookie(WEBUI_TOKEN_COOKIE_NAME)
         return response

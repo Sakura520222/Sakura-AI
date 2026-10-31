@@ -24,6 +24,60 @@ from backend.core.setup_service import setup_service
 router = APIRouter(prefix="/setup", tags=["Setup"])
 
 
+@router.post("/browser/verify")
+@limiter.limit("5/minute")
+async def verify_browser_setup(request: Request):
+    if not is_bootstrap_mode() or not has_setup_database_token(request):
+        return error_response("Setup authorization required", status_code=403)
+    return JSONResponse({"success": True}, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/browser")
+async def browser_setup_state(request: Request):
+    from backend.core.config import get_settings
+
+    if not is_bootstrap_mode():
+        return {"state": "completed"}
+    if not has_setup_database_token(request):
+        return error_response("Setup authorization required", status_code=403)
+    settings = get_settings()
+    return {
+        "state": "in_progress",
+        "missing_fields": await get_missing_fields(),
+        "configured": {
+            key: bool(getattr(settings, key.lower(), None))
+            for key in (
+                "DATABASE_URL",
+                "REDIS_URL",
+                "GITHUB_APP_ID",
+                "GITHUB_PRIVATE_KEY",
+                "GITHUB_OAUTH_CLIENT_ID",
+                "GITHUB_OAUTH_CLIENT_SECRET",
+                "GITHUB_OAUTH_REDIRECT_URI",
+            )
+        },
+    }
+
+
+@router.post("/browser/backup")
+async def browser_setup_backup(request: Request):
+    from backend.webui.routes.setup import inspect_config_backup
+
+    if not is_bootstrap_mode() or not has_setup_database_token(request):
+        return error_response("Setup authorization required", status_code=403)
+    return await inspect_config_backup(request)
+
+
+@router.post("/browser/complete")
+@limiter.limit("3/minute")
+async def browser_setup_complete(request: Request):
+    from backend.webui.routes.setup import complete_setup as complete_browser
+
+    if not is_bootstrap_mode() or not has_setup_database_token(request):
+        return error_response("Setup authorization required", status_code=403)
+    return await complete_browser(request)
+
+
 class TestConnectionRequest(BaseModel):
     """连接测试请求"""
 

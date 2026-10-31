@@ -11,6 +11,7 @@ from backend.core.time_service import (
     datetime_local_fold,
     filename_timestamp,
     format_rfc3339,
+    from_unix_timestamp,
     parse_datetime_local,
     parse_rfc3339,
     resolve_timezone,
@@ -27,6 +28,17 @@ class FakeClock:
 
     def monotonic(self) -> float:
         return self.ticks
+
+
+def test_metadata_epoch_conversion_is_aware_utc_and_preserves_zero_and_fraction():
+    assert from_unix_timestamp(0) == datetime(1970, 1, 1, tzinfo=UTC)
+    assert from_unix_timestamp(1.25) == datetime(1970, 1, 1, 0, 0, 1, 250000, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("value", [True, "1", float("nan"), float("inf"), float("-inf")])
+def test_metadata_epoch_conversion_rejects_ambiguous_or_nonfinite_values(value):
+    with pytest.raises(ValueError):
+        from_unix_timestamp(value)
 
 
 def test_resolve_timezone_accepts_system_utc_and_iana(monkeypatch):

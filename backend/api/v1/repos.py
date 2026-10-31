@@ -1,6 +1,7 @@
 """API v1 仓库管理端点"""
 
 from fastapi import APIRouter, Depends
+from fastapi.encoders import jsonable_encoder
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,7 +37,7 @@ async def list_repos(
         logger.opt(exception=True).error(f"API 获取仓库列表失败: {e}")
         return error_response("获取仓库列表失败", status_code=500)
 
-    return success_response(data=installations)
+    return success_response(data=jsonable_encoder(installations))
 
 
 @router.post("/{repo_name:path}/index-docs")
