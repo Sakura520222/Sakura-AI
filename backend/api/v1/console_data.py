@@ -18,7 +18,8 @@ from backend.models.database import SakuraMemoryState
 from backend.services.vector_store import get_vector_store
 from backend.webui.deps import get_db, require_csrf_header
 from backend.webui.helpers.admin_log import log_admin_action
-from backend.webui.routes import sakura_memory as memory, vector_db as storage
+from backend.webui.routes import sakura_memory as memory
+from backend.webui.routes import vector_db as storage
 
 router = APIRouter(
     prefix="/console", tags=["Console Data"], route_class=PrivateAPIRoute
