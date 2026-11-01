@@ -20,13 +20,25 @@ from backend.webui.routes import spa
 
 
 @pytest.fixture
-def app(tmp_path, monkeypatch):
+def dist(tmp_path):
+    """The fake version-matched frontend build served by the patched resolver."""
+    return tmp_path / "dist"
+
+
+@pytest.fixture
+def app(dist, monkeypatch):
     app = FastAPI()
     app.include_router(webui.router, prefix="/api/v1")
     app.include_router(repos.router, prefix="/api/v1")
     app.include_router(spa.router)
     app.add_middleware(WebUITokenRenewalMiddleware)
-    monkeypatch.setattr(spa, "WEB_DIST", tmp_path / "dist")
+
+    async def serve_local_distribution(_repo: str):
+        # spa.py resolves the build through webui_distribution; pin the
+        # resolver to a throwaway directory instead of the GitHub artifact.
+        return dist
+
+    monkeypatch.setattr(spa, "get_distribution", serve_local_distribution)
     return app
 
 
@@ -121,8 +133,14 @@ def test_bootstrap_reads_saved_preferences_and_safely_recovers_invalid_values(
 
 def test_bootstrap_uses_frozen_application_timezone(app, client, monkeypatch):
     authorize(app)
-    monkeypatch.setattr(webui, "get_time_service", lambda: SimpleNamespace(resolved_timezone="Pacific/Kiritimati"))
-    assert client.get("/api/v1/webui/bootstrap").json()["timezone"] == "Pacific/Kiritimati"
+    monkeypatch.setattr(
+        webui,
+        "get_time_service",
+        lambda: SimpleNamespace(resolved_timezone="Pacific/Kiritimati"),
+    )
+    assert (
+        client.get("/api/v1/webui/bootstrap").json()["timezone"] == "Pacific/Kiritimati"
+    )
 
 
 def test_bootstrap_retains_mfa_enrollment_guard(app, client, monkeypatch):
@@ -165,17 +183,15 @@ def test_logout_requires_csrf_and_clears_expired_session_without_renewal(app, cl
     assert "queued-old-token" not in " ".join(cookies)
 
 
-def test_spa_deep_links_assets_and_missing_build(app, client):
+def test_spa_deep_links_assets_and_missing_build(dist, app, client):
     authorize(app)
     response = client.get("/app/settings/ai")
     assert response.status_code == 503
     assert response.headers["cache-control"] == "no-store"
-    spa.WEB_DIST.mkdir()
-    (spa.WEB_DIST / "index.html").write_text(
-        "<main>React shell</main>", encoding="utf-8"
-    )
-    (spa.WEB_DIST / "assets").mkdir()
-    (spa.WEB_DIST / "assets" / "app-123.js").write_text("export {};", encoding="utf-8")
+    dist.mkdir()
+    (dist / "index.html").write_text("<main>React shell</main>", encoding="utf-8")
+    (dist / "assets").mkdir()
+    (dist / "assets" / "app-123.js").write_text("export {};", encoding="utf-8")
     response = client.get("/app/settings/ai")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
@@ -191,14 +207,14 @@ def test_spa_deep_links_assets_and_missing_build(app, client):
 @pytest.mark.parametrize(
     "path", ["..%2findex.html", "..%5cindex.html", ".hidden", "%2fetc%2fpasswd"]
 )
-def test_assets_cannot_escape_build_assets(app, client, path):
-    spa.WEB_DIST.mkdir()
-    (spa.WEB_DIST / "index.html").write_text("private boundary", encoding="utf-8")
+def test_assets_cannot_escape_build_assets(dist, app, client, path):
+    dist.mkdir()
+    (dist / "index.html").write_text("private boundary", encoding="utf-8")
     assert client.get(f"/app/assets/{path}").status_code == 404
 
 
-def test_asset_symlinks_cannot_escape_build(app, client, tmp_path):
-    assets = spa.WEB_DIST / "assets"
+def test_asset_symlinks_cannot_escape_build(dist, app, client, tmp_path):
+    assets = dist / "assets"
     assets.mkdir(parents=True)
     outside = tmp_path / "outside.js"
     outside.write_text("private", encoding="utf-8")

@@ -92,7 +92,7 @@ function AnnouncementDetail({
     queryKey: ["announcement", id],
     queryFn: ({ signal }) => api<Announcement>(`${base}/${id}`, { signal }),
   });
-  const read = useMutation({
+  const { mutate: markRead } = useMutation({
     mutationFn: () => api(`${base}/${id}/read`, { method: "POST" }),
     onSuccess: () =>
       void client.invalidateQueries({ queryKey: ["announcements"] }),
@@ -100,9 +100,9 @@ function AnnouncementDetail({
   useEffect(() => {
     if (query.data && !marked.current) {
       marked.current = true;
-      read.mutate();
+      markRead();
     }
-  }, [query.data, read.mutate]);
+  }, [query.data, markRead]);
   if (query.isPending) return <LoadingState />;
   if (query.isError) return <ErrorState retry={() => void query.refetch()} />;
   return (

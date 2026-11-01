@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from backend.webui.routes import repos
+from backend.api.v1 import repos
 
 
 class _Rows:

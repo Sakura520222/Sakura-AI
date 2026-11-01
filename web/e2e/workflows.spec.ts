@@ -8,8 +8,8 @@ test('public sign-in keeps the original brand and reports a rejected MFA code', 
     await route.fulfill({ status: 400, json: { success: false, data: null } });
   });
   await page.goto('/app/login');
-  await expect(page.locator('.public-auth-brand .sakura-brand-mark')).toHaveText('🌸');
-  await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', 'data:,');
+  await expect(page.locator('.login-brand .sakura-brand-mark')).toHaveText('🌸');
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', /\/app\/assets\/favicon-[\w-]+\.svg$/);
   await page.getByLabel('验证码或恢复码').fill('123456');
   await page.getByRole('button', { name: '验证并登录' }).click();
   await expect(page.getByRole('alert')).toHaveText(/登录验证失败/);
@@ -62,7 +62,7 @@ test('virtual passkey registration and sign-in use real browser assertions', asy
     await expect(page.getByRole('heading', { name: 'Browser test passkey', exact: true })).toBeVisible();
     await context.clearCookies();
     await page.goto('http://localhost:8768/app/login');
-    await expect(page.getByRole('heading', { name: '登录 Sakura AI' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /登录你的.*工作空间/ })).toBeVisible();
     const response = page.waitForResponse(value => value.url().endsWith('/api/v1/webui/auth/passkeys/verify'));
     await page.getByRole('button', { name: '使用通行密钥', exact: true }).click();
     expect((await response).ok()).toBeTruthy();

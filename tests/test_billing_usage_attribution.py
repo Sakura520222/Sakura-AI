@@ -1035,7 +1035,7 @@ async def test_human_followup_snapshots_authenticated_payer_and_rate_admission(
     import json
     from unittest.mock import AsyncMock
 
-    from backend.webui.routes import agent_team
+    from backend.services.agent_team import api_operations as agent_team
 
     factory, engine, _ = sql_runtime
     await fund_and_price(factory)

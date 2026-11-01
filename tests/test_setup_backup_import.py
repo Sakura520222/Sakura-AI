@@ -252,9 +252,7 @@ async def test_complete_setup_restores_backup_before_explicit_setup_values(monke
                 None,
             ),
             BackupRecord("github_oauth_client_id", "backup-client-id", None),
-            BackupRecord(
-                "github_oauth_client_secret", "backup-client-secret", None
-            ),
+            BackupRecord("github_oauth_client_secret", "backup-client-secret", None),
             BackupRecord(
                 "github_oauth_redirect_uri",
                 "https://backup.example.test/auth/callback",
@@ -393,17 +391,6 @@ async def test_restore_failure_does_not_mark_setup_completed(monkeypatch):
     mark_completed.assert_not_awaited()
 
 
-def test_setup_template_submits_backup_only_with_final_completion():
-    source = setup_route.templates.env.loader.get_source(
-        setup_route.templates.env,
-        "setup_wizard.html",
-    )[0]
-
-    assert "/setup/api/backup/inspect" in source
-    assert "map.CONFIG_BACKUP = this.backupContent" in source
-    assert "map.EMBEDDING_API_KEY = this.form.embedding_api_key" in source
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "oauth_values",
@@ -429,7 +416,9 @@ async def test_complete_setup_requires_usable_github_oauth_before_side_effects(
     monkeypatch.setattr(service, "restore_backup_for_setup", restore_backup)
     monkeypatch.setattr(service, "save_configs_to_db", save_configs)
     monkeypatch.setattr(service, "create_admin_user", create_admin)
-    monkeypatch.setattr("backend.core.setup_service.mark_setup_completed", mark_completed)
+    monkeypatch.setattr(
+        "backend.core.setup_service.mark_setup_completed", mark_completed
+    )
 
     result = await service.complete_setup(
         {
@@ -470,7 +459,9 @@ async def test_complete_setup_accepts_persisted_runtime_oauth_values(monkeypatch
     monkeypatch.setattr(service, "init_database", AsyncMock())
     monkeypatch.setattr(service, "save_configs_to_db", save_configs)
     monkeypatch.setattr(service, "create_admin_user", AsyncMock())
-    monkeypatch.setattr("backend.core.setup_service.mark_setup_completed", lambda *_: None)
+    monkeypatch.setattr(
+        "backend.core.setup_service.mark_setup_completed", lambda *_: None
+    )
 
     result = await service.complete_setup(
         {

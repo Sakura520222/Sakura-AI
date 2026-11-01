@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from backend.api.v1 import config, config_center
+from backend.api.v1 import config, config_center, notifications
 from backend.api.v1.deps import require_api_auth, require_api_super_admin
 from backend.core.config import get_settings
 from backend.models.database import (
@@ -21,15 +21,13 @@ from backend.models.database import (
     UserConfig,
     WebUIConfig,
 )
+from backend.services import system_maintenance
 from backend.webui.deps import (
     get_db,
     get_user_preferences,
     require_auth,
     require_super_admin,
 )
-from backend.webui.routes import agent_plugins, notifications, settings, system_config
-from backend.webui.routes import config as legacy_config
-from backend.webui.routes import config_center as pages
 
 temporary = tempfile.TemporaryDirectory(prefix="sakura-settings-e2e-")
 engine = create_async_engine(
@@ -81,20 +79,12 @@ async def lifespan(app):
 
     with (
         patch.object(
-            agent_plugins.AgentSkillService, "list_skills", AsyncMock(return_value=[])
-        ),
-        patch.object(
-            legacy_config,
-            "read_sandbox_capability_status",
-            AsyncMock(return_value={"available": False, "egress_capability": "none"}),
-        ),
-        patch.object(
-            system_config,
+            system_maintenance,
             "_schedule_application_restart",
             side_effect=RuntimeError("Disabled in E2E fixture"),
         ),
         patch.object(
-            system_config.database_reset_service,
+            system_maintenance.database_reset_service,
             "reset",
             AsyncMock(side_effect=RuntimeError("Disabled in E2E fixture")),
         ),
@@ -106,11 +96,6 @@ async def lifespan(app):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(notifications.router)
-app.include_router(pages.router)
-app.include_router(legacy_config.router)
-app.include_router(settings.router)
-app.include_router(system_config.router)
-app.include_router(agent_plugins.router)
 app.include_router(config_center.router, prefix="/api/v1")
 app.include_router(config.router, prefix="/api/v1")
 

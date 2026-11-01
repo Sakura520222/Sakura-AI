@@ -13,17 +13,16 @@ from backend.models.database import IssueAnalysis
 from backend.models.webhook_execution_models import WebhookExecutionReceipt
 from backend.services.issues import reanalysis_admission as service
 from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
+from tests.test_review_issue_reanalysis_billing import REANALYZE_URL, seed
 from tests.test_review_issue_reanalysis_billing import reanalysis_app as app_fixture
-from tests.test_review_issue_reanalysis_billing import seed, url
 
 sql_runtime = runtime_fixture
 reanalysis_app = app_fixture
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 async def test_carrier_and_receipt_are_committed_before_submit(
-    reanalysis_app, monkeypatch, surface
+    reanalysis_app, monkeypatch
 ):
     app, factory = reanalysis_app
     await seed(factory, funded=True)
@@ -49,7 +48,7 @@ async def test_carrier_and_receipt_are_committed_before_submit(
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.post(url(surface))
+        response = await client.post(REANALYZE_URL)
         assert response.status_code == 200 and response.json()["success"]
         data = response.json().get("data", response.json())
         task_id = data["task_id"]
@@ -82,7 +81,7 @@ async def test_process_exit_after_admission_leaves_retryable_persisted_status(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         with pytest.raises(SimulatedExit):
-            await client.post(url("api"))
+            await client.post(REANALYZE_URL)
     async with factory() as db:
         receipt = (await db.execute(select(WebhookExecutionReceipt))).scalar_one()
         assert receipt.status == "retryable"
@@ -114,7 +113,7 @@ async def test_committed_unstarted_task_retries_same_identity_without_new_reserv
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         with pytest.raises(SimulatedExit):
-            await client.post(url("api"))
+            await client.post(REANALYZE_URL)
         async with factory() as db:
             receipt = (await db.execute(select(WebhookExecutionReceipt))).scalar_one()
             task_id = receipt.source["task_id"]
@@ -170,7 +169,7 @@ async def test_unknown_handoff_can_be_fenced_and_cancelled_without_running_late_
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.post(url("api"))
+        response = await client.post(REANALYZE_URL)
         assert response.status_code == 503
     async with factory() as db:
         admin = await db.get(TelegramUser, 2)
@@ -219,7 +218,7 @@ async def test_duplicate_worker_claim_and_processing_cancel_use_durable_fence(
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        assert (await client.post(url("api"))).status_code == 200
+        assert (await client.post(REANALYZE_URL)).status_code == 200
     async with factory() as db:
         (await db.get(TelegramUser, 2)).role = "super_admin"
         await db.commit()
@@ -293,7 +292,7 @@ async def test_cancel_while_waiting_for_capacity_closes_prepared_row_and_reserve
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        assert (await client.post(url("api"))).status_code == 200
+        assert (await client.post(REANALYZE_URL)).status_code == 200
     waiting = asyncio.Event()
 
     class CapacityWait:
@@ -348,7 +347,7 @@ async def test_known_unregistered_refusal_closes_receipt_and_record_without_hold
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.post(url("api"))
+        response = await client.post(REANALYZE_URL)
         assert response.status_code == 503
     async with factory() as db:
         receipt = (await db.execute(select(WebhookExecutionReceipt))).scalar_one()
@@ -395,7 +394,7 @@ async def test_real_worker_reuses_persisted_analysis_on_presend_failure(
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.post(url("api"))
+        response = await client.post(REANALYZE_URL)
         assert response.status_code == 200
     await worker.process_issue_analysis(captured[0])
     async with factory() as db:
@@ -434,7 +433,7 @@ async def test_carrier_cancelled_before_first_worker_instruction_releases_admiss
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        assert (await client.post(url("api"))).status_code == 200
+        assert (await client.post(REANALYZE_URL)).status_code == 200
     async with factory() as db:
         row = await db.get(IssueAnalysis, payloads[0]["_reanalysis_analysis_id"])
         if closed:

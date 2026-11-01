@@ -181,10 +181,10 @@ async def test_blocked_checkpoint_resume_preserves_owner_and_status_checks(
 ):
     from fastapi import BackgroundTasks
 
+    from backend.services.agent_team import api_operations as routes
     from backend.services.agent_team.conversation_checkpoint import (
         ConversationCheckpointService,
     )
-    from backend.webui.routes import agent_team as routes
 
     task = SimpleNamespace(
         id=912,
@@ -230,30 +230,6 @@ async def test_blocked_checkpoint_resume_preserves_owner_and_status_checks(
         assert task.resume_count == 1
     if owner != "owner":
         assert response.status_code == 403
-
-
-@pytest.mark.parametrize("status", ["failed", "waiting_human"])
-def test_blocked_task_uses_existing_failure_actions_in_rendered_console(status):
-    from backend.webui.deps import get_templates
-
-    task = SimpleNamespace(
-        id=912,
-        status=status,
-        current_phase="blocked",
-        title="Blocked task",
-        workspace_path="/workspace/owner/repo",
-        branch_name="feature/agent-912",
-        last_checkpoint_at=True,
-        pr_url=None,
-    )
-    template = get_templates().env.get_template(
-        "components/agent_team_task_list_fragment.html"
-    )
-    rendered = template.render(
-        tasks=[task], page=1, total_pages=1, total=1, sort="updated"
-    )
-    assert ('data-task-action="resume"' in rendered) is (status == "failed")
-    assert ('data-task-action="retry"' in rendered) is (status == "failed")
 
 
 @pytest.fixture(autouse=True)

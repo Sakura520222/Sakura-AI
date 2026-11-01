@@ -14,8 +14,8 @@ from backend.api.v1.deps import require_api_auth, require_api_super_admin
 from backend.api.v1.private_routes import PrivateAPIRoute
 from backend.api.v1.responses import success_response
 from backend.models.agent_team_models import AgentTeamIteration, AgentTeamTask
+from backend.services.agent_team import api_operations as agent
 from backend.webui.deps import get_db, paginate, require_csrf_header
-from backend.webui.routes import agent_team as agent
 
 router = APIRouter(prefix="/agent", tags=["Agent"], route_class=PrivateAPIRoute)
 

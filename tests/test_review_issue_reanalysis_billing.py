@@ -1,10 +1,5 @@
 """Reanalysis acknowledges only durable server-owned wallet admission."""
 
-import asyncio
-import json
-import re
-import subprocess
-
 import httpx
 import pytest
 from fastapi import FastAPI, Request
@@ -19,8 +14,7 @@ from backend.services.billing_service import BillingService
 from backend.services.database_reset_runtime_service import (
     DatabaseResetRuntimeAdmissionClosed,
 )
-from backend.webui.deps import get_db, get_user_preferences, require_auth
-from backend.webui.routes import issues as web
+from backend.webui.deps import get_db
 from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
 
 sql_runtime = runtime_fixture
@@ -31,7 +25,6 @@ def reanalysis_app(sql_runtime):
     factory, _, _ = sql_runtime
     app = FastAPI()
     app.include_router(api.router, prefix="/api/v1")
-    app.include_router(web.router)
 
     async def db_dependency():
         async with factory() as db:
@@ -44,13 +37,8 @@ def reanalysis_app(sql_runtime):
             "role": request.headers.get("x-test-role", "user"),
         }
 
-    async def preferences():
-        return {"language": "en"}
-
     app.dependency_overrides[get_db] = db_dependency
     app.dependency_overrides[require_api_auth] = identity
-    app.dependency_overrides[require_auth] = identity
-    app.dependency_overrides[get_user_preferences] = preferences
     return app, factory
 
 
@@ -90,12 +78,10 @@ async def seed(factory, *, funded=False, full=False, state="open"):
         await db.commit()
 
 
-def url(surface):
-    return ("/api/v1" if surface == "api" else "") + "/issues/1/reanalyze"
+REANALYZE_URL = "/api/v1/issues/1/reanalyze"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 @pytest.mark.parametrize(
     "reason,status,code",
     [
@@ -104,7 +90,7 @@ def url(surface):
     ],
 )
 async def test_rejected_reanalysis_has_no_task_id_or_new_admission(
-    reanalysis_app, monkeypatch, surface, reason, status, code
+    reanalysis_app, monkeypatch, reason, status, code
 ):
     app, factory = reanalysis_app
     await seed(factory, funded=reason == "concurrency", full=reason == "concurrency")
@@ -120,7 +106,7 @@ async def test_rejected_reanalysis_has_no_task_id_or_new_admission(
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.post(url(surface))
+        response = await client.post(REANALYZE_URL)
     assert response.status_code == status and response.json()["code"] == code
     assert "task_id" not in response.text and calls == []
     assert ("Insufficient" if reason == "balance" else "limit") in response.text
@@ -137,9 +123,8 @@ async def test_rejected_reanalysis_has_no_task_id_or_new_admission(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 async def test_accepted_task_is_admitted_before_queue_and_cannot_nominate_payer(
-    reanalysis_app, monkeypatch, surface
+    reanalysis_app, monkeypatch
 ):
     app, factory = reanalysis_app
     await seed(factory, funded=True)
@@ -167,7 +152,7 @@ async def test_accepted_task_is_admitted_before_queue_and_cannot_nominate_payer(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         response = await client.post(
-            url(surface), json={"user_id": 2, "billing_user_id": 2}
+            REANALYZE_URL, json={"user_id": 2, "billing_user_id": 2}
         )
     assert response.status_code == 200 and response.json()["success"] is True
     assert len(captured) == 1 and captured[0]["analysis_version"] == 3
@@ -177,9 +162,8 @@ async def test_accepted_task_is_admitted_before_queue_and_cannot_nominate_payer(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 async def test_admin_platform_task_is_durable_without_credits(
-    reanalysis_app, monkeypatch, surface
+    reanalysis_app, monkeypatch
 ):
     app, factory = reanalysis_app
     await seed(factory)
@@ -202,16 +186,15 @@ async def test_admin_platform_task_is_durable_without_credits(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         response = await client.post(
-            url(surface), headers={"x-test-role": "super_admin"}
+            REANALYZE_URL, headers={"x-test-role": "super_admin"}
         )
     assert response.status_code == 200
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 @pytest.mark.parametrize("known", [True, False])
 async def test_failed_queue_is_not_acknowledged_and_unknown_handoff_is_preserved(
-    reanalysis_app, monkeypatch, surface, known
+    reanalysis_app, monkeypatch, known
 ):
     app, factory = reanalysis_app
     await seed(factory, funded=True)
@@ -227,7 +210,7 @@ async def test_failed_queue_is_not_acknowledged_and_unknown_handoff_is_preserved
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.post(url(surface))
+        response = await client.post(REANALYZE_URL)
     assert response.status_code == 503 and response.json()["success"] is False
     assert "TEST-PRIVATE" not in response.text and "task_id" not in response.text
     async with factory() as db:
@@ -242,9 +225,8 @@ async def test_failed_queue_is_not_acknowledged_and_unknown_handoff_is_preserved
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 async def test_financial_commit_failure_cannot_ack_or_enqueue(
-    reanalysis_app, monkeypatch, surface
+    reanalysis_app, monkeypatch
 ):
     app, factory = reanalysis_app
     await seed(factory, funded=True)
@@ -270,7 +252,7 @@ async def test_financial_commit_failure_cannot_ack_or_enqueue(
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.post(url(surface))
+        response = await client.post(REANALYZE_URL)
     assert response.status_code == 503 and response.json()["success"] is False
     assert "TEST-PRIVATE" not in response.text and calls == []
     async with factory() as db:
@@ -301,7 +283,7 @@ async def test_late_worker_after_lost_ack_is_not_blocked_as_unknown_usage(
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.post(url("api"))
+        response = await client.post(REANALYZE_URL)
     assert response.status_code == 503
     async with factory() as db:
         service = BillingService(db)
@@ -314,58 +296,3 @@ async def test_late_worker_after_lost_ack_is_not_blocked_as_unknown_usage(
             "chat",
         )
         assert call.call_id == "TEST-late-call"
-
-
-@pytest.mark.asyncio
-async def test_rendered_reanalysis_script_reports_server_error_on_existing_toast_bus(
-    reanalysis_app,
-):
-    app, factory = reanalysis_app
-    await seed(factory)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        page = await client.get("/issues/1")
-        error = await client.post(url("webui"))
-    assert page.status_code == 200 and error.status_code == 402
-    script = next(
-        source
-        for source in re.findall(r"<script[^>]*>(.*?)</script>", page.text, re.DOTALL)
-        if "function reanalyze(id)" in source
-    )
-    harness = """
-const vm = require('node:vm');
-const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
-const events = [];
-const context = {
- window: {dispatchEvent: event => {events.push(event); return true;}},
- CustomEvent: class {constructor(type, options) {this.type = type; this.detail = options.detail;}},
- fetch: async () => ({json: async () => input.response})
-};
-vm.createContext(context);
-vm.runInContext(input.script, context);
-context.reanalyze(1).then(() => process.stdout.write(JSON.stringify(events)));
-"""
-    completed = await asyncio.to_thread(
-        subprocess.run,
-        ["node", "-e", harness],
-        input=json.dumps(
-            {
-                "script": script,
-                "response": error.json(),
-            }
-        ),
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    event = json.loads(completed.stdout)
-    assert event == [
-        {
-            "type": "show-toast",
-            "detail": {
-                "type": "error",
-                "message": error.json()["message"],
-            },
-        }
-    ]
