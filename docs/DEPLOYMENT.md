@@ -509,7 +509,7 @@ sudo curl --fail --silent --show-error \
   http://updater/v1/health
 ```
 
-`install` 不会下载 `latest` updater，而是根据部署状态解析具体 Sakura AI 版本并下载同一 Release 的架构资产。它本身**不提供应用健康门禁**：当 `deployment.env` 已包含具体的 `SAKURA_AI_IMAGE=:vX.Y.Z` 时，安装器可以直接采用该版本，无需查询 `/health`。因此，“`/health` 成功返回预期目标版本”仍是管理员重新安装 updater binary 前必须手动完成的检查。三镜像应用更新本身则由当前 updater 事务执行 health 与 rollback 门禁。
+`install` 不会直接下载 `latest` updater，而是根据部署状态解析具体 Sakura AI 版本，优先下载同一 Release 的架构资产。它本身**不提供应用健康门禁**：当 `deployment.env` 已包含具体的 `SAKURA_AI_IMAGE=:vX.Y.Z`，或完整固定的 `:dev-<UTC timestamp>-vX.Y.Z-<40 位 SHA>@sha256:...` 引用时，安装器可以直接采用其中的版本，无需查询 `/health`，也不需要宿主源码。因此，初装时可以在 Web 尚未运行前安装 updater；但应用更新后同步 updater 时，“`/health` 成功返回预期目标版本”仍是管理员重新安装 updater binary 前必须手动完成的检查。三镜像应用更新本身则由当前 updater 事务执行 health 与 rollback 门禁。
 
 更新成功、三镜像运行身份验证通过且回滚事务结束后，Host Updater 会尝试删除未被任何容器引用的旧版 Sakura AI 官方镜像。它会保留当前部署镜像、其他容器仍在使用的镜像及非 Sakura AI 镜像。清理结果写入更新任务日志；清理失败只会产生警告，不会改变已成功的更新状态。
 
@@ -522,13 +522,13 @@ sudo ./start.sh updater install  # 获取并校验当前版本 binary，安装�
 sudo ./start.sh updater start     # 确认/启动 systemd service
 ```
 
-安装严格绑定当前部署的 Sakura AI 版本，不下载 `latest` updater。版本解析是 **deployment-mode-aware** 的：
+安装优先选择部署版本对应 Release 的 updater，不直接下载 `latest` updater。版本解析是 **deployment-mode-aware** 的，选择安装包不等于验证运行中容器的身份：
 
-- `SAKURA_DEPLOY_MODE=image`：优先使用 `deployment.env` 中 `SAKURA_AI_IMAGE=:vX.Y.Z`（可带 digest）的镜像版本作为权威来源；镜像为 `:latest` 或无具体 tag 时，读取已健康运行服务的 `/health` 版本；服务尚未就绪时才回退到 `backend/__init__.py` 的 `__version__`。镜像部署时实际运行版本始终优先于 host checkout 版本。
+- `SAKURA_DEPLOY_MODE=image`：优先使用 `deployment.env` 中 `SAKURA_AI_IMAGE=:vX.Y.Z`（可带 digest），或完整固定的 `:dev-<UTC timestamp>-vX.Y.Z-<40 位 SHA>@sha256:...` 引用中的版本；这两类具体引用都不依赖 `/health` 或宿主源码。镜像为 `:latest` 等不能直接提取版本的引用时，读取已健康运行服务的 `/health` 版本；服务尚未就绪时才回退到 `backend/__init__.py` 的 `__version__`。
 - `SAKURA_DEPLOY_MODE=source`：以 `backend/__init__.py` 的 `__version__ = "X.Y.Z"` 为权威来源。
 - `deployment.env` 缺失或 `SAKURA_DEPLOY_MODE` 不是 `image`/`source` 时 fail-closed，不猜测版本。
 
-`:latest` 不是具体版本。以上来源都无法确定具体版本时 fail-closed。仅支持 Linux `amd64` 与 `arm64`，其他操作系统或架构会明确失败。
+`:latest` 不是具体版本。以上来源都无法确定具体版本时 fail-closed。开发构建对应的 updater binary 下载明确返回 HTTP 404 时，才尝试最近 stable Release；候选 binary 仍必须通过 SHA256 和当前三镜像 contract 能力校验，不兼容则拒绝安装，不会绕过校验或修改应用镜像频道。仅支持 Linux `amd64` 与 `arm64`，其他操作系统或架构会明确失败。
 
 **state directory 与 binary 校验**：state directory 首次创建为 root-owned `0700`。重复执行安装时，只要现有目录 owner 为 root 且 group/other 无写权限就会自动 harden 到 `0700`；owner 非 root、group/other 可写或目录是 symlink 时 fail-closed。binary 和 `SHA256SUMS` 从对应 GitHub Release 通过 HTTPS 获取，并严格校验目标 binary 的 SHA256 条目。binary 为 root-owned `0700`；install lock 防止并发 acquisition；下载临时文件位于同一 state directory，校验、临时文件 fsync 和安全检查通过后以同文件系统 atomic rename 替换最终 binary。
 
@@ -576,6 +576,8 @@ sudo ./start.sh uninstall
 ```
 
 命令会要求输入 `UNINSTALL`。自动化环境必须显式传入 `--yes`，不会因为 stdin 非交互而默认确认。
+
+**保留数据重新安装**：使用生产部署入口，例如 `sudo ./start.sh --prod --channel=development`，不要用菜单「更新镜像 / 切换镜像频道」代替安装；这些更新入口要求可用的 Host Updater 和可验证的当前容器。旧的开发镜像三项 pin 仍完整且身份一致时，生产部署会复用它们，所以 `--channel=development` 不等于强制拉取频道最新构建。若明确要在已卸载实例上安装最新开发版，应先备份 `.deploy/deployment.env`，仅移除其中的 `SAKURA_AI_IMAGE=` 行，再执行上述生产部署命令；脚本会从完整 development deployment manifest 重新解析三项镜像。保留数据库密码、项目名、连接配置与其余部署字段，保持文件 root-owned、`0600`，不要为此执行 `--purge`。部署完成后会自动安装并启动 updater。
 
 完全清理必须显式使用 `--purge` 并输入 `UNINSTALL`：
 
