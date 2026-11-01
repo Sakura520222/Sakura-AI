@@ -132,9 +132,12 @@ uv run pytest -q
 uv run ruff check .
 uv run python run_ruff.py --check
 uv run pytest tests/test_notification_live_db_646.py -q  # isolated CI MySQL/PostgreSQL only
-uv run --with playwright python scripts/validate_notification_ui_646.py
+npm ci --prefix web
+npm run build --prefix web
+npm exec --prefix web -- playwright install chromium
+npm run e2e --prefix web  # notification inbox and preference regressions in the React WebUI
 ```
 
-The dedicated notification CI workflow runs real MySQL and PostgreSQL transactions/concurrent producers/claims/schema upgrades and browser E2E against the real bilingual templates/JavaScript/API with fixture authentication. Browser artifacts contain Settings/history screenshots. Production SMTP, Telegram and remote Webhook recipients are not contacted by these tests.
+The dedicated notification CI workflow runs real MySQL and PostgreSQL transactions/concurrent producers/claims/schema upgrades. Browser coverage for the notification inbox runs in the WebUI workflow (`webui.yml`) against the real bilingual React frontend and API with fixture authentication. Production SMTP, Telegram and remote Webhook recipients are not contacted by these tests.
 
 Issue #646 acceptance maps to the recovery regressions; event/delivery and business integration tests; API/credential/SSRF/TLS tests; schema/legacy announcement tests; cross-process provider-budget test; database integration workflow; and browser E2E. Authentication redesign, Telegram management/login commands, public/shared Telegram targets, all possible providers and new middleware remain outside the scope.

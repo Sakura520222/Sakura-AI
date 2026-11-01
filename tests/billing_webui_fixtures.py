@@ -10,7 +10,6 @@ from backend.core import config as core_config
 from backend.models.database import WebUIConfig
 from backend.webui import deps
 from backend.webui.deps import get_db
-from backend.webui.routes import billing as routes
 from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
 
 sql_runtime = runtime_fixture
@@ -47,35 +46,11 @@ def pricing_app(sql_runtime, monkeypatch):
     monkeypatch.setattr(core_config, "get_cached_config", lambda key: "zh-CN")
     deps._USER_PREFS_CACHE.clear()
     app = FastAPI()
-    app.include_router(routes.router)
     app.include_router(billing.router, prefix="/api/v1")
     app.include_router(billing_webui.router, prefix="/api/v1")
     app.dependency_overrides[get_db] = db_dependency
     yield app, factory, deps.generate_csrf_token()
     deps._USER_PREFS_CACHE.clear()
-
-
-def pricing_fields(csrf_token, **overrides):
-    return {
-        "csrf_token": csrf_token,
-        "config_mode": "fields",
-        "provider_id": "openai",
-        "model_id": "test-priced-model",
-        "call_kind": "chat",
-        "unit": "tokens",
-        "token_scale": "1000",
-        "currency": "USD",
-        "settlement_currency": "CNY",
-        "fx_rate": "7",
-        "markup": "1.25",
-        "credits_per_currency_unit": "10",
-        "input_price": "0.003",
-        "output_price": "0.009",
-        "cache_read_supported": "false",
-        "cache_creation_supported": "false",
-        "reasoning_supported": "false",
-        **overrides,
-    }
 
 
 async def seed_language(factory, language="en"):

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from backend.services.agent_team import api_operations as agent_team_routes
 from backend.services.agent_team.git_workspace_service import (
     AgentTeamGitWorkspaceService,
 )
@@ -26,7 +27,6 @@ from backend.services.agent_team.workspace_service import (
     WorkspaceSecurityError,
     _rmtree_onexc,
 )
-from backend.webui.routes import agent_team as agent_team_routes
 from backend.workers.agent_team_worker import _merge_modified_files
 
 

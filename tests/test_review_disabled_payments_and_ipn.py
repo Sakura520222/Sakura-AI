@@ -1,11 +1,8 @@
 """Disabling new purchases must not disable refund recovery or lose callbacks."""
 
-import asyncio
 import hashlib
 import hmac
 import json
-import re
-import subprocess
 from contextlib import asynccontextmanager
 
 import httpx
@@ -80,15 +77,8 @@ async def test_disabled_purchase_switch_keeps_own_history_and_blocks_new_orders(
     assert (
         await client.get("/api/v1/billing/orders", headers={"x-test-identity": "bob"})
     ).json()["total"] == 0
-    history = await client.get("/billing/")
-    assert history.status_code == 200 and "TEST-DISABLED" in history.text
-    assert 'action="/billing/redeem"' not in history.text
-    assert 'action="/billing/purchase/' not in history.text
     assert (
         await client.post("/api/v1/billing/orders", json={"plan_id": plan_id})
-    ).status_code == 404
-    assert (
-        await client.post(f"/billing/purchase/{plan_id}", data={"provider": "manual"})
     ).status_code == 404
     async with factory() as db:
         assert len((await db.execute(select(Order))).scalars().all()) == 4
@@ -140,22 +130,25 @@ async def test_disabled_sales_keep_existing_tron_invoice_and_settle_once(
     monkeypatch.setattr("backend.services.payment.get_gateway", gateway_factory)
     await disable_new_payments(client, monkeypatch)
 
-    page = await client.get(f"/billing/crypto-payment/{order_no}")
-    assert page.status_code == 200 and "1.000123" in page.text
-    assert "TEST-tron-address" in page.text
+    invoice = await client.get(f"/api/v1/billing/invoice/{order_no}")
+    assert invoice.status_code == 200
+    assert invoice.json()["payment"]["pay_amount"] == "1.000123"
+    assert invoice.json()["payment"]["pay_address"] == "TEST-tron-address"
     wrong_owner = {"x-test-identity": "bob"}
     assert (
-        await client.get(
-            "/billing/crypto-status", params={"order_no": order_no}, headers=wrong_owner
-        )
+        await client.get(f"/api/v1/billing/invoice/{order_no}", headers=wrong_owner)
     ).status_code == 404
     assert (
-        await client.get(f"/billing/crypto-payment/{order_no}", headers=wrong_owner)
-    ).status_code == 302
+        await client.post(
+            "/api/v1/billing/invoice-status",
+            params={"order_no": order_no},
+            headers=wrong_owner,
+        )
+    ).status_code == 404
     gateway_factory.assert_not_awaited()
     for _ in range(2):
-        status = await client.get(
-            "/billing/crypto-status", params={"order_no": order_no}
+        status = await client.post(
+            "/api/v1/billing/invoice-status", params={"order_no": order_no}
         )
         assert status.status_code == 200 and status.json()["status"] == "completed"
     gateway.check_payment_by_amount.assert_awaited_once()
@@ -164,9 +157,8 @@ async def test_disabled_sales_keep_existing_tron_invoice_and_settle_once(
     assert args.kwargs["min_block_timestamp"] > 0
     gateway.create_payment.assert_not_awaited()
     assert (
-        await client.post(f"/billing/purchase/{plan.id}", data={"provider": "tron"})
+        await client.post("/api/v1/billing/orders", json={"plan_id": plan.id})
     ).status_code == 404
-    assert (await client.post("/billing/crypto-status")).status_code != 200
     async with factory() as db:
         order = await db.get(Order, order_id)
         assert order.status == "fulfilled" and order.invoice_identity == fingerprint
@@ -204,69 +196,6 @@ def test_existing_checkout_allowlist_is_method_and_route_specific(
 
 
 @pytest.mark.asyncio
-async def test_rendered_crypto_component_starts_one_poll_and_stops_at_completion(
-    billing_client,
-):
-    client, factory = billing_client
-    async with factory() as db:
-        service = PaymentService(db)
-        plan = await service.create_plan("TEST component invoice", "one_time", 100)
-        order = await service.create_order(1, plan.id)
-        order.payment_provider = "tron"
-        order.metadata_json = json.dumps(
-            {"pay_address": "TEST-address", "pay_amount": "1.000123"}
-        )
-        order_no = order.order_no
-        await db.commit()
-    page = await client.get(f"/billing/crypto-payment/{order_no}")
-    assert page.status_code == 200
-    component_script = re.search(
-        r"<script>\s*(function cryptoPayment\(\)[\s\S]*?)</script>", page.text
-    ).group(1)
-    root = re.search(r'<div[^>]+x-data="cryptoPayment\(\)"[^>]*>', page.text).group()
-    harness = r"""
-const vm = require('node:vm');
-const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
-let nextId = 0;
-const intervals = new Map();
-const requests = [];
-const context = {
-    Date, console, document: {getElementById: () => null},
-    setInterval(callback, delay) {intervals.set(++nextId, {callback, delay}); return nextId;},
-    clearInterval(id) {intervals.delete(id);},
-    async fetch(url) {requests.push(url); return {ok: true, async json() {return {status: 'completed'};}};}
-};
-vm.createContext(context);
-vm.runInContext(input.script, context);
-(async () => {
-    const component = context.cryptoPayment();
-    // Alpine calls a data object's init before evaluating an explicit x-init.
-    component.init();
-    if (input.explicitInit) component.init();
-    const polls = [...intervals.values()].filter(item => item.delay === 15000);
-    for (const item of polls) await item.callback();
-    process.stdout.write(JSON.stringify({status: component.status, pollCount: polls.length,
-        activePolls: [...intervals.values()].filter(item => item.delay === 15000).length, requests}));
-})().catch(error => {console.error(error); process.exitCode = 1;});
-"""
-    result = await asyncio.to_thread(
-        subprocess.run,
-        ["node", "-e", harness],
-        input=json.dumps(
-            {"script": component_script, "explicitInit": 'x-init="init()"' in root}
-        ),
-        text=True,
-        capture_output=True,
-        check=True,
-        timeout=5,
-    )
-    outcome = json.loads(result.stdout)
-    assert outcome["status"] == "completed"
-    assert outcome["pollCount"] == 1 and outcome["activePolls"] == 0
-    assert outcome["requests"] == [f"/billing/crypto-status?order_no={order_no}"]
-
-
-@pytest.mark.asyncio
 async def test_disabled_payments_preserve_refund_review_auth_and_processing(
     billing_client, monkeypatch
 ):
@@ -274,21 +203,20 @@ async def test_disabled_payments_preserve_refund_review_auth_and_processing(
     _, order_ids = await seed_paid_orders(factory)
     await disable_new_payments(client, monkeypatch)
     admin_headers = {"x-test-identity": "operator"}
-    setup = await client.get("/billing/admin/pricing", headers=admin_headers)
-    token = re.search(r'name="csrf_token" value="([^"]+)"', setup.text).group(1)
-    await client.post(
-        f"/billing/orders/{order_ids[0]}/refund",
+    foreign = await client.post(
+        f"/api/v1/billing/orders/{order_ids[0]}/refund-request",
         headers={"x-test-identity": "bob"},
-        data={"csrf_token": token, "reason": "Unauthorized"},
+        json={"reason": "Unauthorized"},
     )
+    assert foreign.status_code == 400
     async with factory() as db:
         assert (await db.execute(select(RefundRequest))).scalars().all() == []
     for order_id in order_ids[:2]:
         submitted = await client.post(
-            f"/billing/orders/{order_id}/refund",
-            data={"csrf_token": token, "reason": "TEST request"},
+            f"/api/v1/billing/orders/{order_id}/refund-request",
+            json={"reason": "TEST request"},
         )
-        assert submitted.status_code == 302
+        assert submitted.status_code == 200
     async with factory() as db:
         requests = (
             (await db.execute(select(RefundRequest).order_by(RefundRequest.id)))
@@ -297,27 +225,30 @@ async def test_disabled_payments_preserve_refund_review_auth_and_processing(
         )
         assert len(requests) == 2 and all(r.status == "pending" for r in requests)
         request_ids = [r.id for r in requests]
+    listing = await client.get(
+        "/api/v1/billing/admin/refund-requests", headers=admin_headers
+    )
+    assert listing.status_code == 200 and listing.json()["total"] == 2
     assert (
-        await client.get("/billing/admin/refund-requests", headers=admin_headers)
-    ).status_code == 200
-    assert (await client.get("/billing/admin/refund-requests")).status_code == 403
+        await client.get("/api/v1/billing/admin/refund-requests")
+    ).status_code == 403
     assert (
         await client.post(
-            f"/billing/admin/refund-requests/{request_ids[0]}/approve",
-            data={"csrf_token": token},
+            f"/api/v1/billing/admin/refund-requests/{request_ids[0]}/approve",
+            json={"review_note": ""},
         )
     ).status_code == 403
     approved = await client.post(
-        f"/billing/admin/refund-requests/{request_ids[0]}/approve",
+        f"/api/v1/billing/admin/refund-requests/{request_ids[0]}/approve",
         headers=admin_headers,
-        data={"csrf_token": token},
+        json={"review_note": "TEST"},
     )
     rejected = await client.post(
-        f"/billing/admin/refund-requests/{request_ids[1]}/reject",
+        f"/api/v1/billing/admin/refund-requests/{request_ids[1]}/reject",
         headers=admin_headers,
-        data={"csrf_token": token},
+        json={"review_note": "TEST"},
     )
-    assert approved.status_code == rejected.status_code == 302
+    assert approved.status_code == rejected.status_code == 200
     assert (
         await client.post(f"/api/v1/billing/orders/{order_ids[2]}/refund", json={})
     ).status_code == 403
@@ -328,11 +259,11 @@ async def test_disabled_payments_preserve_refund_review_auth_and_processing(
     )
     assert direct.status_code == 200
     web_direct = await client.post(
-        f"/billing/admin/orders/{order_ids[3]}/refund",
+        f"/api/v1/billing/orders/{order_ids[3]}/refund",
         headers=admin_headers,
-        data={"csrf_token": token},
+        json={"idempotency_key": "TEST-disabled-web"},
     )
-    assert web_direct.status_code == 302
+    assert web_direct.status_code == 200
     async with factory() as db:
         assert (await db.get(RefundRequest, request_ids[0])).status == "approved"
         assert (await db.get(RefundRequest, request_ids[1])).status == "rejected"

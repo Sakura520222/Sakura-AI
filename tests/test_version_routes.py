@@ -2,12 +2,12 @@
 
 import json
 
+from backend.api.v1.version import _updater_error, _validate_target
 from backend.services.updater_client import (
     UpdaterActionError,
     UpdaterProtocolError,
     UpdaterUnavailableError,
 )
-from backend.webui.routes.version import _updater_error, _validate_target
 
 
 def test_version_target_uses_strict_semver():

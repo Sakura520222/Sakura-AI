@@ -10,9 +10,11 @@ import pytest
 from fastapi import BackgroundTasks
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from backend.api.v1 import issues as api_issues
+from backend.api.v1 import scans as api_scans
 from backend.core import github_app
-from backend.webui import i18n
-from backend.webui.routes import agent_team, auth, issues, repos, scans, setup
+from backend.services.agent_team import api_operations as agent_team
+from backend.webui.routes import auth
 from backend.workers import scan_worker
 
 _SECRET = "mysql+asyncmy://admin:super-secret@db/sakura"
@@ -39,26 +41,14 @@ def test_sensitive_auth_cookies_are_always_secure(monkeypatch):
     )
     login_response = JSONResponse({"success": True})
     pending_response = RedirectResponse("/auth/mfa")
-    setup_response = RedirectResponse("/setup")
 
     auth._set_webui_token_cookie(login_response, "login-token")
     auth._set_mfa_pending_cookie(pending_response, "pending-token")
-    setup._set_setup_verified_cookie(setup_response, "setup-token")
 
-    for response in (login_response, pending_response, setup_response):
+    for response in (login_response, pending_response):
         cookie_header = response.headers["set-cookie"]
         assert "Secure" in cookie_header
         assert "HttpOnly" in cookie_header
-
-
-def test_language_cookie_replaces_unsupported_value():
-    response = RedirectResponse("/auth/login")
-
-    i18n.set_language_cookie(response, "en\r\nX-Injected: true")
-
-    cookie_header = response.headers["set-cookie"]
-    assert f"{i18n.LANG_COOKIE}={i18n.DEFAULT_LANGUAGE}" in cookie_header
-    assert "X-Injected" not in cookie_header
 
 
 @pytest.mark.asyncio
@@ -171,39 +161,20 @@ async def test_issue_reanalysis_hides_worker_exception(monkeypatch):
         execute=AsyncMock(side_effect=[analysis_result, version_result])
     )
     submit = AsyncMock(side_effect=RuntimeError(_SECRET))
-    monkeypatch.setattr(issues, "submit_issue_reanalysis", submit)
+    monkeypatch.setattr(api_issues, "submit_issue_reanalysis", submit)
 
-    response = await issues.reanalyze_issue(
-        request=object(),
+    response = await api_issues.reanalyze_issue(
         issue_id=1,
         db=db,
         user={"sub": "admin", "role": "admin"},
     )
 
-    _assert_secret_is_hidden(response, "提交重新分析任务失败，请稍后重试")
+    assert _payload(response) == {
+        "success": False,
+        "error": "提交分析任务失败，请稍后重试",
+    }
+    assert _SECRET.encode() not in response.body
     submit.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_batch_issue_index_hides_repository_exception(monkeypatch):
-    monkeypatch.setattr(
-        "backend.core.config.get_settings",
-        lambda: SimpleNamespace(enable_semantic_issue_linking=True),
-    )
-    monkeypatch.setattr(
-        repos,
-        "_get_installations_with_stats",
-        AsyncMock(side_effect=RuntimeError(_SECRET)),
-    )
-
-    response = await repos.batch_index_issues(
-        request=object(),
-        db=object(),
-        user={"user_id": 1},
-        csrf_token="token",
-    )
-
-    _assert_secret_is_hidden(response, "获取仓库列表失败，请稍后重试")
 
 
 @pytest.mark.asyncio
@@ -214,10 +185,9 @@ async def test_scan_trigger_hides_worker_exception(monkeypatch):
 
     monkeypatch.setattr(scan_worker, "ScanWorker", BrokenScanWorker)
 
-    response = await scans.trigger_scan(
-        request=object(),
-        user={"username": "admin"},
-        _csrf="token",
-    )
+    # 绕过限流装饰器，直接验证端点的异常脱敏行为。
+    trigger = getattr(api_scans.trigger_scan, "__wrapped__", api_scans.trigger_scan)
+    response = await trigger(request=object(), user={"username": "admin"})
 
-    _assert_secret_is_hidden(response, "触发扫描失败，请稍后重试")
+    assert _payload(response) == {"success": False, "error": "触发扫描失败"}
+    assert _SECRET.encode() not in response.body

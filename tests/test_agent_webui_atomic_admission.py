@@ -4,6 +4,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from backend.api.v1.agent import router as api_agent_router
 from backend.models.agent_team_models import AgentTeamTask, AgentTeamUserPrompt
 from backend.models.billing_models import BillingOperation, BillingWallet
 from backend.models.legacy_entitlement_models import (
@@ -11,11 +12,11 @@ from backend.models.legacy_entitlement_models import (
     RateLimitAdmission,
 )
 from backend.models.telegram_models import QuotaUsageLog, TelegramUser
+from backend.services.agent_team import api_operations as routes
 from backend.services.agent_team.candidate_service import CandidateServiceError
 from backend.services.billing_service import BillingService
 from backend.webui.auth import WEBUI_TOKEN_COOKIE_NAME
 from backend.webui.deps import get_db
-from backend.webui.routes import agent_team as routes
 from tests.billing_webui_fixtures import pricing_app as app_fixture
 from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
 
@@ -26,7 +27,7 @@ sql_runtime = runtime_fixture
 @pytest.fixture
 def agent_app(pricing_app, monkeypatch):
     app, factory, token = pricing_app
-    app.include_router(routes.router)
+    app.include_router(api_agent_router, prefix="/api/v1")
 
     async def allowed(*args, **kwargs):
         return None
@@ -115,10 +116,9 @@ async def test_failed_agent_creation_leaves_no_quota_operation_or_reserve(
         cookies={WEBUI_TOKEN_COOKIE_NAME: "isolated"},
     ) as client:
         response = await client.post(
-            "/agent-team/tasks/create-from-issue",
-            headers={"x-test-role": "user"},
-            data={
-                "csrf_token": token,
+            "/api/v1/agent/tasks",
+            headers={"x-test-role": "user", "X-CSRF-Token": token},
+            json={
                 "issue_ref": "owner1/repo#5",
                 "priority": "invalid" if failure == "form" else "medium",
             },
@@ -137,9 +137,9 @@ async def test_agent_creation_saves_trusted_carrier_and_consumes_quota_once(agen
         cookies={WEBUI_TOKEN_COOKIE_NAME: "isolated"},
     ) as client:
         response = await client.post(
-            "/agent-team/tasks/create-from-issue",
-            headers={"x-test-role": "user"},
-            data={"csrf_token": token, "issue_ref": "owner1/repo#5"},
+            "/api/v1/agent/tasks",
+            headers={"x-test-role": "user", "X-CSRF-Token": token},
+            json={"issue_ref": "owner1/repo#5"},
         )
     assert response.status_code == 200 and response.json()["success"] is True
     async with factory() as db:
@@ -191,9 +191,9 @@ async def test_non_scheduled_task_creation_does_not_take_balance_quota_or_user_s
         cookies={WEBUI_TOKEN_COOKIE_NAME: "isolated"},
     ) as client:
         saved = await client.post(
-            "/agent-team/tasks/create-from-issue",
-            headers={"x-test-role": "user"},
-            data={"csrf_token": token, "issue_ref": "owner1/repo#5", "status": status},
+            "/api/v1/agent/tasks",
+            headers={"x-test-role": "user", "X-CSRF-Token": token},
+            json={"issue_ref": "owner1/repo#5", "status": status},
         )
         assert saved.status_code == 200 and saved.json()["success"] is True
         async with factory() as db:
@@ -207,13 +207,9 @@ async def test_non_scheduled_task_creation_does_not_take_balance_quota_or_user_s
             assert (await db.get(TelegramUser, 1)).agent_daily_used == 0
             assert (await db.execute(select(RateLimitAdmission))).scalars().all() == []
         executed = await client.post(
-            "/agent-team/tasks/create-from-issue",
-            headers={"x-test-role": "user"},
-            data={
-                "csrf_token": token,
-                "issue_ref": "owner1/repo#5",
-                "status": "queued",
-            },
+            "/api/v1/agent/tasks",
+            headers={"x-test-role": "user", "X-CSRF-Token": token},
+            json={"issue_ref": "owner1/repo#5", "status": "queued"},
         )
         assert executed.status_code == 200 and executed.json()["success"] is True
     async with factory() as db:
@@ -263,9 +259,9 @@ async def test_failed_reentry_commit_preserves_old_task_and_rolls_back_new_admis
 
     app.dependency_overrides[get_db] = interrupted_db
     path = (
-        f"/agent-team/tasks/{task_id}/retry"
+        f"/api/v1/agent/tasks/{task_id}/retry"
         if entry == "retry"
-        else f"/agent-team/api/tasks/{task_id}/prompts"
+        else f"/api/v1/agent/tasks/{task_id}/prompts"
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
@@ -274,8 +270,8 @@ async def test_failed_reentry_commit_preserves_old_task_and_rolls_back_new_admis
     ) as client:
         response = await client.post(
             path,
-            headers={"x-test-role": "user"},
-            data={"csrf_token": token, "content": "TEST further work"},
+            headers={"x-test-role": "user", "X-CSRF-Token": token},
+            json={"content": "TEST further work"},
         )
     assert response.status_code == 500
     async with factory() as db:

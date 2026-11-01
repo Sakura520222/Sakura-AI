@@ -1,10 +1,13 @@
 """Private JSON operations for the authenticated user's security settings."""
 
 from dataclasses import asdict
+from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,18 +16,25 @@ from backend.api.v1.deps import get_api_current_user, limiter, require_api_auth
 from backend.api.v1.private_routes import PrivateAPIRoute
 from backend.api.v1.responses import success_response
 from backend.core.config import get_settings
+from backend.core.redis import get_async_redis
 from backend.core.time_service import format_rfc3339, now_utc
 from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
 from backend.services import two_factor_service as totp
 from backend.services.telegram_binding_service import create_telegram_binding_token
+from backend.services.webauthn_service import (
+    WebAuthnError,
+    begin_registration,
+    finish_registration,
+)
 from backend.webui.auth import queue_webui_token_renewal
 from backend.webui.deps import (
     generate_csrf_token,
     get_db,
+    request_origin,
+    require_auth,
     require_csrf_header,
     user_requires_mfa_enrollment,
 )
-from backend.webui.routes import settings as legacy
 
 router = APIRouter(
     prefix="/webui/security", tags=["Personal Security"], route_class=PrivateAPIRoute
@@ -66,12 +76,147 @@ class RegisterPasskey(BaseModel):
     device_name: str = Field(default="Passkey", max_length=100)
 
 
+# ---- Relocated verbatim from backend/webui/routes/settings.py (legacy WebUI
+# 1.0 removal). 原样迁移自 backend/webui/routes/settings.py，行为保持不变。
+
+_TOTP_SETUP_KEY_PREFIX = "totp:setup:"
+_MAX_TOTP_SETUP_FALLBACK = 1000
+# 仅作为 Redis 不可用时的单进程 asyncio 回退；多进程或多线程部署不共享该状态。
+_totp_setup_fallback: dict[int, tuple[str, datetime]] = {}
+
+
+def _cleanup_totp_setup_fallback(now: datetime | None = None) -> None:
+    """Prune expired and excessive in-memory TOTP setup secrets."""
+    settings = get_settings()
+    now = now or now_utc()
+    ttl_seconds = settings.two_factor_pending_token_expire_minutes * 60
+    expired_user_ids = [
+        user_id
+        for user_id, (_, created_at) in _totp_setup_fallback.items()
+        if (now - created_at).total_seconds() > ttl_seconds
+    ]
+    for user_id in expired_user_ids:
+        _totp_setup_fallback.pop(user_id, None)
+
+    overflow = len(_totp_setup_fallback) - _MAX_TOTP_SETUP_FALLBACK
+    if overflow <= 0:
+        return
+    oldest_user_ids = sorted(
+        _totp_setup_fallback,
+        key=lambda user_id: _totp_setup_fallback[user_id][1],
+    )[:overflow]
+    for user_id in oldest_user_ids:
+        _totp_setup_fallback.pop(user_id, None)
+
+
+async def _save_totp_setup_secret(user_id: int, secret: str) -> None:
+    settings = get_settings()
+    key = f"{_TOTP_SETUP_KEY_PREFIX}{user_id}"
+    try:
+        redis = await get_async_redis()
+        await redis.setex(
+            key, settings.two_factor_pending_token_expire_minutes * 60, secret
+        )
+        return
+    except Exception as exc:
+        logger.warning("Redis 存储 TOTP setup secret 失败，使用内存回退: {}", exc)
+    _cleanup_totp_setup_fallback()
+    _totp_setup_fallback[user_id] = (secret, now_utc())
+
+
+async def _pop_totp_setup_secret(user_id: int) -> str | None:
+    key = f"{_TOTP_SETUP_KEY_PREFIX}{user_id}"
+    try:
+        redis = await get_async_redis()
+        value = await redis.execute_command("GETDEL", key)
+        if value:
+            return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+    except Exception as exc:
+        logger.warning("Redis 读取 TOTP setup secret 失败，尝试内存回退: {}", exc)
+    _cleanup_totp_setup_fallback()
+    fallback = _totp_setup_fallback.pop(user_id, None)
+    return fallback[0] if fallback else None
+
+
+async def _get_user_passkeys(
+    db: AsyncSession, user_id: int
+) -> list[UserWebAuthnCredential]:
+    result = await db.execute(
+        select(UserWebAuthnCredential)
+        .where(UserWebAuthnCredential.user_id == user_id)
+        .order_by(UserWebAuthnCredential.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+@limiter.limit(lambda: get_settings().two_factor_setup_rate_limit)
+async def passkey_register_options(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    csrf_token: str = Depends(require_csrf_header),
+):
+    """创建 Passkey 注册 options。"""
+    user_id = int(user["user_id"])
+    result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
+    db_user = result.scalar_one_or_none()
+    if not db_user:
+        raise HTTPException(status_code=401, detail="未登录")
+    try:
+        data = await begin_registration(db, db_user, request_origin(request))
+    except WebAuthnError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": str(exc), "data": None},
+        )
+    return {"success": True, "message": "ok", "data": data}
+
+
+@limiter.limit(lambda: get_settings().two_factor_setup_rate_limit)
+async def passkey_register_verify(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    csrf_token: str = Depends(require_csrf_header),
+    body: dict = Body(...),
+):
+    """验证并保存 Passkey 注册结果。"""
+    user_id = int(user["user_id"])
+    result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
+    db_user = result.scalar_one_or_none()
+    if not db_user:
+        raise HTTPException(status_code=401, detail="未登录")
+    try:
+        credential = await finish_registration(
+            db,
+            db_user,
+            body.get("challenge_id", ""),
+            body.get("credential", {}),
+            body.get("device_name") or "Passkey",
+        )
+        if db_user.mfa_required:
+            db_user.mfa_required = False
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.warning("Passkey 注册失败: user_id={}, error={}", user_id, exc)
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": "Passkey 注册失败", "data": None},
+        )
+    return {
+        "success": True,
+        "message": "ok",
+        "data": {"id": credential.id, "device_name": credential.device_name},
+    }
+
+
 @router.get("")
 async def status(
     user: dict = Depends(security_user), db: AsyncSession = Depends(get_db)
 ):
     db_user = await account(user, db)
-    keys = await legacy._get_user_passkeys(db, db_user.id)
+    keys = await _get_user_passkeys(db, db_user.id)
     settings = get_settings()
     return success_response(
         data={
@@ -110,7 +255,7 @@ async def setup_totp(
         raise HTTPException(403, "totp_unavailable")
     db_user = await account(user, db)
     setup = totp.create_totp_setup(db_user)
-    await legacy._save_totp_setup_secret(db_user.id, setup.secret)
+    await _save_totp_setup_secret(db_user.id, setup.secret)
     return success_response(data=asdict(setup))
 
 
@@ -125,7 +270,7 @@ async def enable_totp(
     if not get_settings().two_factor_enabled:
         raise HTTPException(403, "totp_unavailable")
     db_user = await account(user, db)
-    secret = await legacy._pop_totp_setup_secret(db_user.id)
+    secret = await _pop_totp_setup_secret(db_user.id)
     if not secret:
         raise HTTPException(400, "setup_expired")
     step = totp.verify_totp_secret(secret, body.code)
@@ -193,9 +338,7 @@ async def passkey_options(
     db: AsyncSession = Depends(get_db),
     csrf: str = Depends(require_csrf_header),
 ):
-    return await legacy.passkey_register_options(
-        request, db=db, user=user, csrf_token=csrf
-    )
+    return await passkey_register_options(request, db=db, user=user, csrf_token=csrf)
 
 
 @router.post("/passkeys/verify")
@@ -206,7 +349,7 @@ async def passkey_verify(
     db: AsyncSession = Depends(get_db),
     csrf: str = Depends(require_csrf_header),
 ):
-    return await legacy.passkey_register_verify(
+    return await passkey_register_verify(
         request, db=db, user=user, csrf_token=csrf, body=body.model_dump()
     )
 

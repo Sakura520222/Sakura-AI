@@ -1,10 +1,11 @@
-"""Agent Skills WebUI 配置与翻译测试。"""
+"""Agent Skills configuration, filtering and translation contracts.
 
-import re
-from pathlib import Path
+The agent_skills.html page was replaced by the React SPA; the config
+registration, catalog, pure helper and navigation contracts below still
+exercise live backend code and stay under test.
+"""
+
 from types import SimpleNamespace
-
-import yaml
 
 from backend.core.config import (
     DYNAMIC_CONFIG_GROUPS,
@@ -12,23 +13,10 @@ from backend.core.config import (
     Settings,
     get_dynamic_config_input_type,
 )
-from backend.webui.deps import get_templates
+from backend.services.agent_team.skill_helpers import _filter_skills, _metadata_list
 from backend.webui.i18n import i18n
-from backend.webui.routes.agent_skills import _filter_skills, _metadata_list
 
 AGENT_TEAM_DYNAMIC_KEYS = set(DYNAMIC_CONFIG_GROUPS["agent_team"]["keys"])
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def _flatten(data: dict, prefix: str = "") -> dict[str, object]:
-    flattened: dict[str, object] = {}
-    for key, value in data.items():
-        full_key = f"{prefix}.{key}" if prefix else key
-        if isinstance(value, dict):
-            flattened.update(_flatten(value, full_key))
-        else:
-            flattened[full_key] = value
-    return flattened
 
 
 def test_agent_skills_dynamic_config_registered():
@@ -53,14 +41,6 @@ def test_agent_team_skills_config_registered_in_unified_group():
 def test_agent_skills_translations_exist():
     i18n.reload()
     keys = [
-        "nav.agent_skills",
-        "agent_skills.title",
-        "agent_skills.install_github",
-        "agent_skills.install_dialog_title",
-        "agent_skills.search_placeholder",
-        "agent_skills.status_validation",
-        "agent_skills.file_manifest",
-        "agent_skills.files",
         "config.group.agent_team",
         "config.label.agent_team_skills_enabled",
         "config.desc.agent_team_skills_root",
@@ -125,59 +105,6 @@ def test_agent_skills_metadata_tags_fail_closed():
     assert _metadata_list(None) == []
 
 
-def test_agent_skills_templates_compile_and_use_compact_ledger():
-    templates = get_templates()
-    templates.env.get_template("agent_skills.html")
-    templates.env.get_template("components/agent_skills_list_fragment.html")
-
-    root = Path(__file__).parents[1]
-    page = (root / "backend/webui/templates/agent_skills.html").read_text(
-        encoding="utf-8"
-    )
-    fragment = (
-        root / "backend/webui/templates/components/agent_skills_list_fragment.html"
-    ).read_text(encoding="utf-8")
-
-    # Issue #625：安装弹窗已迁移到统一 Modal 基础设施（modal_shell）。
-    assert "modal_shell(id=\"agent-skill-install\"" in page
-    assert "<dialog" not in page
-    assert "Sakura.openModal('agent-skill-install')" in page
-    assert 'role="tablist"' in page
-    assert 'name="q"' in page
-    assert 'name="status"' in page
-    assert 'name="source"' in page
-    # prefers-reduced-motion 由 base.html 统一动画层保障（sakura-modal-shell）。
-    assert "prefers-reduced-motion: reduce" not in page
-    assert "rounded-3xl" not in page
-    assert "from-purple" not in page
-    assert "<details" in fragment
-    assert "agent_skills.file_manifest" in fragment
-    assert "/agent-skills/{{ skill.id }}/toggle" in fragment
-    assert "/agent-skills/{{ skill.id }}/delete" in fragment
-    assert "data-confirm" in fragment
-
-
-def test_agent_skills_template_translation_keys_have_catalog_parity():
-    template_paths = (
-        ROOT / "backend/webui/templates/agent_skills.html",
-        ROOT / "backend/webui/templates/components/agent_skills_list_fragment.html",
-    )
-    sources = [path.read_text(encoding="utf-8") for path in template_paths]
-    for source in sources:
-        get_templates().env.parse(source)
-    referenced = set(re.findall(r"_\(\s*['\"]([^'\"]+)['\"]", "\n".join(sources)))
-
-    for filename in ("zh-CN.yaml", "en.yaml"):
-        locale_path = ROOT / "backend/webui/translations" / filename
-        with locale_path.open(encoding="utf-8") as stream:
-            catalog = yaml.safe_load(stream)
-        missing = sorted(key for key in referenced if key not in _flatten(catalog))
-        assert not missing, f"{filename} is missing Agent Skills keys: {missing}"
-
-
 def test_agent_sidebar_navigation_name_is_agent_only():
     i18n.reload()
-    assert i18n.t("nav.agent_team", lang="zh-CN") == "Agent"
-    assert i18n.t("nav.agent_team", lang="en") == "Agent"
     assert i18n.t("config.ai_role_agent_team", lang="zh-CN") == "Agent 模型"
-    assert i18n.t("config.ai_role_agent_team", lang="en") == "Agent model"

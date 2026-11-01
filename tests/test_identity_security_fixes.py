@@ -11,7 +11,6 @@ from sqlalchemy import MetaData, create_engine, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
-from starlette.requests import Request
 
 from backend.api.v1 import auth as api_auth
 from backend.api.v1 import users as users_api
@@ -28,7 +27,6 @@ from backend.services.identity_service import (
 )
 from backend.services.telegram_service import TelegramService
 from backend.webui.routes import auth as web_auth
-from backend.webui.routes import users as web_users
 
 
 class _AsyncSQLiteSession:
@@ -235,10 +233,14 @@ async def test_rename_only_rewrites_synthetic_rows_and_collapses_duplicates(sqli
     await rename_github_username(sqlite_db, user, "new-name")
     await sqlite_db.commit()
     rows = (
-        await sqlite_db.execute(
-            select(UserIdentity).order_by(UserIdentity.provider_user_id)
+        (
+            await sqlite_db.execute(
+                select(UserIdentity).order_by(UserIdentity.provider_user_id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 2
     assert any(
         row.provider_user_id == "legacy:new-name"
@@ -274,10 +276,14 @@ async def test_unverified_email_never_enables_or_disables_verified_primary(sqlit
     )
     await sqlite_db.commit()
     endpoints = (
-        await sqlite_db.execute(
-            select(NotificationEndpoint).order_by(NotificationEndpoint.id)
+        (
+            await sqlite_db.execute(
+                select(NotificationEndpoint).order_by(NotificationEndpoint.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     new_endpoint = next(item for item in endpoints if "unverified" in item.address)
     assert new_endpoint.verified is False
     assert new_endpoint.enabled is False
@@ -351,12 +357,8 @@ async def test_preprovisioned_user_without_identity_can_login_and_unverified_ema
     )
     assert result is not None
     assert result.id == user.id
-    identity = (
-        await sqlite_db.execute(select(UserIdentity))
-    ).scalars().one()
-    endpoint = (
-        await sqlite_db.execute(select(NotificationEndpoint))
-    ).scalars().one()
+    identity = (await sqlite_db.execute(select(UserIdentity))).scalars().one()
+    endpoint = (await sqlite_db.execute(select(NotificationEndpoint))).scalars().one()
     assert identity.provider_user_id == "preprovisioned-id"
     assert endpoint.verified is False
     assert endpoint.enabled is False
@@ -407,7 +409,10 @@ async def test_legacy_bridge_rejects_two_casefold_mirrors_with_one_alias(sqlite_
             GitHubAccount(provider_user_id="new-provider", username="ALICE"),
         )
 
-    assert [row.id for row in (await sqlite_db.execute(select(TelegramUser))).scalars().all()] == [
+    assert [
+        row.id
+        for row in (await sqlite_db.execute(select(TelegramUser))).scalars().all()
+    ] == [
         first.id,
         second.id,
     ]
@@ -415,7 +420,9 @@ async def test_legacy_bridge_rejects_two_casefold_mirrors_with_one_alias(sqlite_
 
 
 @pytest.mark.asyncio
-async def test_legacy_bridge_rechecks_mirror_before_upgrading_alias(sqlite_db, monkeypatch):
+async def test_legacy_bridge_rechecks_mirror_before_upgrading_alias(
+    sqlite_db, monkeypatch
+):
     owner = TelegramUser(
         telegram_id=118,
         github_username="Alice",
@@ -459,9 +466,7 @@ async def test_legacy_bridge_rechecks_mirror_before_upgrading_alias(sqlite_db, m
         )
 
     users = (await sqlite_db.execute(select(TelegramUser))).scalars().all()
-    assert [(row.id, row.github_username) for row in users] == [
-        (owner.id, "Alice")
-    ]
+    assert [(row.id, row.github_username) for row in users] == [(owner.id, "Alice")]
     assert alias.provider_user_id == "legacy:alice"
 
 
@@ -547,9 +552,7 @@ async def test_telegram_registration_rejects_casefold_duplicate_username(sqlite_
     assert second_ok is False
     assert "已被其他账号绑定" in second_message
     users = (await sqlite_db.execute(select(TelegramUser))).scalars().all()
-    assert [(row.telegram_id, row.github_username) for row in users] == [
-        (120, "alice")
-    ]
+    assert [(row.telegram_id, row.github_username) for row in users] == [(120, "alice")]
 
 
 @pytest.mark.asyncio
@@ -641,9 +644,7 @@ async def test_oauth_provider_identity_commit_race_reloads_exact_winner(monkeypa
         async def execute(self, query):
             entity = query.column_descriptions[0]["entity"]
             if entity is UserIdentity:
-                if any(
-                    "provider_user_id" in key for key in query.compile().params
-                ):
+                if any("provider_user_id" in key for key in query.compile().params):
                     return _Rows([winner_identity])
                 return _Rows([])
             if entity is TelegramUser:
@@ -778,9 +779,7 @@ async def test_oauth_username_flush_race_reloads_exact_winner(monkeypatch):
 
     result = await upsert_github_account(
         session,
-        GitHubAccount(
-            provider_user_id="flush-race-provider", username="winner"
-        ),
+        GitHubAccount(provider_user_id="flush-race-provider", username="winner"),
     )
 
     assert result is winner
@@ -809,9 +808,7 @@ async def test_oauth_username_flush_race_does_not_swallow_other_integrity_error(
     unrelated = IntegrityError(
         "insert",
         {},
-        sqlite3.IntegrityError(
-            "UNIQUE constraint failed: telegram_users.email"
-        ),
+        sqlite3.IntegrityError("UNIQUE constraint failed: telegram_users.email"),
     )
     monkeypatch.setattr(
         "backend.services.identity_service.create_user_and_flush",
@@ -885,7 +882,9 @@ async def test_api_oauth_ambiguity_consumes_state_without_account_details(monkey
     )
     monkeypatch.setattr(api_auth.db_module, "async_session", _SessionContext)
 
-    endpoint = getattr(api_auth.github_callback, "__wrapped__", api_auth.github_callback)
+    endpoint = getattr(
+        api_auth.github_callback, "__wrapped__", api_auth.github_callback
+    )
     response = await endpoint(None, api_auth.OAuthCallbackRequest(code="c", state="s"))
 
     assert response.status_code == 409
@@ -895,7 +894,9 @@ async def test_api_oauth_ambiguity_consumes_state_without_account_details(monkey
 
 
 @pytest.mark.asyncio
-async def test_webui_oauth_ambiguity_consumes_state_without_account_details(monkeypatch):
+async def test_webui_oauth_ambiguity_consumes_state_without_account_details(
+    monkeypatch,
+):
     deleted_states: list[str] = []
 
     class _SessionContext:
@@ -908,7 +909,9 @@ async def test_webui_oauth_ambiguity_consumes_state_without_account_details(monk
     async def fake_authenticate(*_args, **_kwargs):
         raise LegacyIdentityAmbiguityError("candidate-one/candidate-two")
 
-    monkeypatch.setattr(web_auth, "_get_oauth_state", AsyncMock(return_value={"redirect": "/"}))
+    monkeypatch.setattr(
+        web_auth, "_get_oauth_state", AsyncMock(return_value={"redirect": "/"})
+    )
     monkeypatch.setattr(
         web_auth,
         "_delete_oauth_state",
@@ -958,9 +961,7 @@ async def test_webui_oauth_ambiguity_consumes_state_without_account_details(monk
 
 
 @pytest.mark.asyncio
-async def test_api_and_webui_rename_routes_use_the_shared_conflict_guard(
-    sqlite_db, monkeypatch
-):
+async def test_api_rename_route_uses_the_shared_conflict_guard(sqlite_db, monkeypatch):
     target = TelegramUser(
         telegram_id=107,
         github_username="old-name",
@@ -985,28 +986,6 @@ async def test_api_and_webui_rename_routes_use_the_shared_conflict_guard(
         user=admin,
     )
     assert api_response.status_code == 400
-    assert sqlite_db.commit_count == commits_before
-    assert target.github_username == "old-name"
-
-    request = Request(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": f"/users/{target.id}/info",
-            "headers": [],
-            "query_string": b"",
-        }
-    )
-    web_response = await web_users.update_user_info(
-        request=request,
-        user_id=target.id,
-        db=sqlite_db,
-        user=admin,
-        csrf_token="test",
-        telegram_id=None,
-        github_username="new-name",
-    )
-    assert web_response.status_code == 302
     assert sqlite_db.commit_count == commits_before
     assert target.github_username == "old-name"
 

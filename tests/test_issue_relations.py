@@ -522,7 +522,9 @@ async def test_closed_relation_is_history_never_duplicate(setup_relation, kind):
 async def test_actual_gitflow_occurrences_remain_related(setup_relation):
     analyzer, _, retriever, client, _ = setup_relation
     prior, current = json.loads(
-        (Path(__file__).parent / "fixtures/issue_relation_gitflow.json").read_text(encoding="utf-8")
+        (Path(__file__).parent / "fixtures/issue_relation_gitflow.json").read_text(
+            encoding="utf-8"
+        )
     )
     prior = {
         **prior,
@@ -881,13 +883,11 @@ async def test_api_list_and_detail_return_history_and_keep_owner_scope(monkeypat
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 async def test_reanalysis_retains_known_issue_state_for_relation_prephase(
-    monkeypatch, surface
+    monkeypatch,
 ):
     from backend.api.v1 import issues as api_routes
     from backend.models.database import IssueAnalysis
-    from backend.webui.routes import issues as webui_routes
 
     record = IssueAnalysis(
         id=1,
@@ -924,78 +924,9 @@ async def test_reanalysis_retains_known_issue_state_for_relation_prephase(
         "backend.services.issues.reanalysis_dispatch.claim_reanalysis_dispatch",
         AsyncMock(),
     )
-    module = api_routes if surface == "api" else webui_routes
-    monkeypatch.setattr(module, "build_user_scope_filter", lambda *a: None)
-    if surface == "api":
-        await module.reanalyze_issue(1, db=Session(), user={"user_id": 42})
-    else:
-        await module.reanalyze_issue(
-            SimpleNamespace(), 1, db=Session(), user={"user_id": 42}
-        )
+    monkeypatch.setattr(api_routes, "build_user_scope_filter", lambda *a: None)
+    await api_routes.reanalyze_issue(1, db=Session(), user={"user_id": 42})
     assert submit.call_args.args[0]["state"] == "open"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "language,label", [("en", "Regression"), ("zh-CN", "回归问题")]
-)
-async def test_detail_page_renders_historical_evidence_and_escapes_quotes(
-    monkeypatch, language, label
-):
-    from starlette.requests import Request
-
-    from backend.models.database import IssueAnalysis
-    from backend.webui.routes import issues as routes
-
-    record = IssueAnalysis(
-        id=1,
-        issue_number=1,
-        repo_owner="owner",
-        repo_name="repo",
-        title="Current",
-        issue_relations=json.dumps(
-            {
-                "status": "verified",
-                "primary": decision(
-                    "regression",
-                    evidence=[
-                        {
-                            "current_quote": "<script>current</script>",
-                            "candidate_quote": "prior fix",
-                        }
-                    ],
-                ),
-                "related": [],
-            }
-        ),
-    )
-
-    class Session:
-        async def execute(self, stmt):
-            return SimpleNamespace(scalar_one_or_none=lambda: record)
-
-    monkeypatch.setattr(routes, "build_user_scope_filter", lambda *a: None)
-    request = Request(
-        {
-            "type": "http",
-            "method": "GET",
-            "path": "/issues/1",
-            "headers": [],
-            "query_string": b"",
-            "scheme": "http",
-            "server": ("testserver", 80),
-        }
-    )
-    result = await routes.issue_detail_page(
-        request,
-        1,
-        db=Session(),
-        user={"role": "super_admin", "sub": "1", "username": "tester"},
-        user_prefs={"language": language},
-    )
-    html = result.body.decode()
-    assert label in html and "prior fix" in html and "#2" in html
-    assert "&lt;script&gt;current&lt;/script&gt;" in html
 
 
 @pytest.mark.parametrize(

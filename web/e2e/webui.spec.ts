@@ -15,7 +15,7 @@ test('settings persist through the real API, guard dirty navigation, and reset',
   expect((await saved).ok()).toBeTruthy();
   await page.reload();
   await expect(input).toHaveValue('7');
-  await row.getByText('详情与默认值', { exact: true }).click();
+  await row.getByText('详情', { exact: true }).click();
   await row.getByRole('button', { name: /恢复默认|重置/ }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();

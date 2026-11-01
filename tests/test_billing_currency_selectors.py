@@ -1,6 +1,5 @@
 """Currency choices are shared by billing forms, JSON and configuration."""
 
-import json
 from types import SimpleNamespace
 
 import httpx
@@ -8,32 +7,25 @@ import pytest
 from sqlalchemy import select
 
 from backend.core.config import (
-    DYNAMIC_CONFIG_RANGES,
     DYNAMIC_CONFIG_SELECT_OPTIONS,
     get_dynamic_config_input_type,
 )
 from backend.models.billing_models import BillingPriceProfile
 from backend.models.database import AppConfig
 from backend.models.legacy_entitlement_models import PaymentRefundInboxEvent
-from backend.models.payment_models import Plan
+from backend.models.payment_models import Order, Plan
+from backend.models.telegram_models import TelegramUser
+from backend.services.billing_price_identity import canonical_price_call_kind
 from backend.services.billing_pricing import (
     PricingPending,
     calculate_price,
     validate_price_config,
 )
+from backend.services.config_center_service import ConfigError, validate_field
+from backend.services.config_metadata import field_catalog
 from backend.services.payment.currency_units import CURRENCY_MINOR_EXPONENTS
-from backend.webui import deps
-from backend.webui.routes.billing import _pricing_editor_values
-from backend.webui.routes.config import (
-    _DynamicConfigValidationError,
-    _validate_dynamic_config_value,
-)
 from tests.billing_webui_fixtures import (
     pricing_app as pricing_app_fixture,
-)
-from tests.billing_webui_fixtures import (
-    pricing_fields,
-    seed_language,
 )
 from tests.billing_webui_fixtures import (
     sql_runtime as runtime_fixture,
@@ -86,25 +78,17 @@ def test_dynamic_currency_fields_use_shared_catalog():
 
 
 def test_old_stream_price_loads_as_merged_chat_editor():
-    profile = SimpleNamespace(
-        provider_id="openai",
-        model_id="historical",
-        call_kind="chat_stream",
-        config=TEST_PRICE,
-    )
-    assert _pricing_editor_values(profile)["call_kind"] == "chat"
-    assert profile.call_kind == "chat_stream"
+    # Historical chat_stream prices canonicalize to the chat editor identity
+    # while the saved call kind stays untouched.
+    assert canonical_price_call_kind("chat_stream") == "chat"
+    assert canonical_price_call_kind("chat") == "chat"
 
 
 def test_dynamic_currency_validation_rejects_forged_code_and_normalizes_legacy_case():
-    kwargs = {
-        "expected_type": str,
-        "ranges": DYNAMIC_CONFIG_RANGES,
-        "select_options": DYNAMIC_CONFIG_SELECT_OPTIONS,
-    }
-    with pytest.raises(_DynamicConfigValidationError):
-        _validate_dynamic_config_value("stripe_currency", "ZZZ", **kwargs)
-    assert _validate_dynamic_config_value("stripe_currency", "usd", **kwargs) == "USD"
+    field = field_catalog()["global/stripe_currency"]
+    with pytest.raises(ConfigError):
+        validate_field(field, "ZZZ")
+    assert validate_field(field, "usd") == "USD"
 
 
 @pytest.mark.asyncio
@@ -157,39 +141,21 @@ async def test_editor_apis_share_the_currency_catalog(pricing_app):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["fields", "json"])
-async def test_unknown_currency_cannot_be_posted_around_selector(pricing_app, mode):
-    app, factory, token = pricing_app
-    await seed_language(factory)
-    payload = pricing_fields(token, currency="ZZZ")
-    if mode == "json":
-        payload.update(
-            config_mode="json", config=json.dumps({**TEST_PRICE, "currency": "ZZZ"})
-        )
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
-        cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
-    ) as client:
-        response = await client.post(
-            "/billing/admin/pricing",
-            data=payload,
-            headers={"Accept": "application/json"},
-        )
-    assert response.status_code == 400, response.text
-    assert response.json()["ok"] is False
-    assert response.json()["errors"][0]["field"] == (
-        "currency" if mode == "fields" else "config"
-    )
-    async with factory() as db:
-        assert (await db.execute(select(BillingPriceProfile))).scalars().all() == []
-
-
-@pytest.mark.asyncio
 async def test_pending_payment_evidence_rejects_unknown_currency(pricing_app):
-    app, factory, token = pricing_app
-    await seed_language(factory)
+    app, factory, _token = pricing_app
     async with factory() as db:
+        actor = await db.get(TelegramUser, 1)
+        actor.role = "super_admin"
+        order = Order(
+            order_no="CURRENCY-CHOICE-ORDER",
+            user_id=1,
+            amount_cents=1000,
+            currency="USD",
+            status="fulfilled",
+            payment_provider="stripe",
+        )
+        db.add(order)
+        await db.flush()
         event = PaymentRefundInboxEvent(
             provider="stripe",
             event_key="currency-choice",
@@ -198,29 +164,29 @@ async def test_pending_payment_evidence_rejects_unknown_currency(pricing_app):
         )
         db.add(event)
         await db.commit()
-        event_id = event.id
+        event_id, order_id = event.id, order.id
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
-        cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         response = await client.get("/api/v1/billing/admin/payment-events")
         assert response.status_code == 200, response.text
         assert event_id in [row["id"] for row in response.json()["items"]]
         response = await client.post(
-            f"/billing/admin/payment-events/{event_id}/resolve",
-            data={
-                "csrf_token": token,
+            f"/api/v1/billing/admin/payment-events/{event_id}/resolve",
+            json={
                 "evidence": "verified",
+                "order_id": order_id,
+                "checkout_amount_cents": 100,
                 "checkout_currency": "ZZZ",
             },
         )
-        assert response.status_code == 302
-        assert "error" in response.headers["location"]
+        assert response.status_code == 400, response.text
     async with factory() as db:
         unchanged = await db.get(PaymentRefundInboxEvent, event_id)
         assert unchanged.status == "pending_reconciliation"
         assert unchanged.evidence == {}
+        saved = await db.get(Order, order_id)
+        assert saved.metadata_json is None
 
 
 @pytest.mark.asyncio
@@ -228,7 +194,6 @@ async def test_plan_page_can_show_unsupported_historical_currency_without_rewrit
     pricing_app,
 ):
     app, factory, _token = pricing_app
-    await seed_language(factory)
     async with factory() as db:
         legacy = Plan(
             name="Legacy monetary code",
@@ -240,9 +205,7 @@ async def test_plan_page_can_show_unsupported_historical_currency_without_rewrit
         await db.commit()
         plan_id = legacy.id
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
-        cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         response = await client.get("/api/v1/billing/admin/plans")
         assert response.status_code == 200, response.text

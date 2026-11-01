@@ -8,11 +8,11 @@ import pytest
 import yaml
 from fastapi import HTTPException
 
+from backend.api.v1.activity import activity_operational_logs
 from backend.core import logging_bridge
 from backend.core.time_service import SystemClock
 from backend.services import operational_log_service as log_service
 from backend.services.activity_observability.access_service import ActivityNotFoundError
-from backend.webui.routes.activity_observability import activity_operational_logs
 
 
 def test_session_log_lookup_matches_exact_ids_and_never_interprets_message_text(

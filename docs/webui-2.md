@@ -1,6 +1,6 @@
 # WebUI 2.0 / React workspace
 
-WebUI 2.0 fully replaces the previous WebUI for [Issue #638](https://github.com/Sakura520222/Sakura-AI/issues/638). `/` opens the React application at `/app/`. Saved page URLs redirect to the corresponding React screen. The old Jinja pages, HTMX fragments and browser scripts have been removed from the served interface.
+WebUI 2.0 fully replaces the previous WebUI for [Issue #638](https://github.com/Sakura520222/Sakura-AI/issues/638). `/` opens the React application at `/app/`. Saved page URLs redirect to the corresponding React screen. The old Jinja pages, HTMX fragments, page-route modules and browser suite have been retired; shared business logic now lives in versioned APIs and services.
 
 ## 使用新版界面
 
@@ -121,9 +121,10 @@ npm run lint --prefix web
 npm test --prefix web
 npm run build --prefix web
 npm run bundle:report --prefix web
+npm exec --prefix web -- playwright install chromium
 npm run e2e --prefix web
 ```
 
-Playwright starts a temporary SQLite fixture using real configuration routes. It never mounts its test authentication overrides into the production app. Tests using mocked providers and a virtual browser authenticator are distinct from real GitHub OAuth, hardware Passkeys, SMTP, Telegram or payment-provider validation.
+Playwright starts a temporary SQLite fixture using real configuration routes. It never mounts its test authentication overrides into the production app. `setup.spec.ts` and `notifications.spec.ts` migrate the retired browser scripts' regressions to the React UI using isolated, stateful API fixtures: Setup credentials, failed preflight/repair and retry, credential clearing, notification names, subscriptions and read requests. Other tests use real local configuration/Skills/scan/queue APIs and a virtual browser authenticator. These checks are distinct from real database repair, GitHub OAuth, hardware Passkeys, SMTP, Telegram or payment-provider validation.
 
 The bundle report measures compressed build assets, with a 220 KiB budget for the initial shell. It does not claim a browser performance score. Screenshots and traces are retained as CI artifacts. Implementation details are recorded in the [upgrade notes](https://github.com/Sakura520222/Sakura-AI/blob/develop/docs/superpowers/plans/2026-10-30-webui-2-upgrade.md).

@@ -61,8 +61,6 @@ from backend.services.user_backup_service import (
 )
 from backend.telegram import handlers as telegram_handlers
 from backend.webui.deps import require_super_admin
-from backend.webui.routes import users as users_webui
-from backend.webui.routes.announcements import router as announcements_webui_router
 
 
 class _Rows:
@@ -134,8 +132,7 @@ def test_legacy_telegram_column_upgrade_is_mysql_only_and_idempotent(monkeypatch
             postgres, SimpleNamespace(info=lambda *_args: None)
         )
         assert postgres.statements == [
-            'ALTER TABLE "telegram_users" '
-            'ALTER COLUMN "telegram_id" DROP NOT NULL'
+            'ALTER TABLE "telegram_users" ALTER COLUMN "telegram_id" DROP NOT NULL'
         ]
 
     import asyncio
@@ -194,17 +191,9 @@ class _IdentityMigrationSession:
         elif entity is NotificationEndpoint:
             rows = self.endpoints
             if "provider_1" in params:
-                rows = [
-                    row
-                    for row in rows
-                    if row.provider == params.get("provider_1")
-                ]
+                rows = [row for row in rows if row.provider == params.get("provider_1")]
             if "address_1" in params:
-                rows = [
-                    row
-                    for row in rows
-                    if row.address == params.get("address_1")
-                ]
+                rows = [row for row in rows if row.address == params.get("address_1")]
         else:
             raise AssertionError(entity)
         return _Rows(rows)
@@ -317,7 +306,11 @@ class _FakeOAuthClient:
         return _FakeResponse(
             200,
             [
-                {"email": "unverified@example.invalid", "primary": True, "verified": False},
+                {
+                    "email": "unverified@example.invalid",
+                    "primary": True,
+                    "verified": False,
+                },
                 {"email": "primary@example.invalid", "primary": True, "verified": True},
             ],
         )
@@ -413,12 +406,12 @@ def test_user_backup_v2_supports_external_only_users_and_detects_endpoint_confli
             ],
         },
     ]
-    with pytest.raises(UserBackupError, match="通知端点 email:same@example.invalid 重复"):
+    with pytest.raises(
+        UserBackupError, match="通知端点 email:same@example.invalid 重复"
+    ):
         parse_user_backup(_user_backup_payload(users, version=2))
 
-    parsed = parse_user_backup(
-        _user_backup_payload([users[0]], version=2)
-    )
+    parsed = parse_user_backup(_user_backup_payload([users[0]], version=2))
     assert parsed["users"][0]["identity"]["telegram_id"] is None
     assert parsed["users"][0]["identities"][0]["provider"] == "passkey"
 
@@ -592,9 +585,10 @@ class _NotificationSession:
                 row, "publication_version", 1
             ) not in (None, predicates["publication_version"]):
                 return _UpdateResult(0)
-            if "claim_token" in predicates and getattr(
-                row, "claim_token", None
-            ) != predicates["claim_token"]:
+            if (
+                "claim_token" in predicates
+                and getattr(row, "claim_token", None) != predicates["claim_token"]
+            ):
                 return _UpdateResult(0)
             if "claim_token" in values and values["claim_token"] is not None:
                 if getattr(row, "claim_token", None) and getattr(
@@ -665,9 +659,7 @@ async def test_notification_provider_failure_isolated_and_retried(monkeypatch):
             notification_max_concurrency=2,
         ),
     )
-    announcement = Announcement(
-        id=1, title="Title", content="Body", status="published"
-    )
+    announcement = Announcement(id=1, title="Title", content="Body", status="published")
     failed = NotificationDelivery(
         id=1,
         announcement_id=1,
@@ -744,9 +736,7 @@ async def test_notification_retry_honors_telegram_retry_after(monkeypatch):
             notification_rate_limit_seconds=0,
         ),
     )
-    announcement = Announcement(
-        id=1, title="Title", content="Body", status="published"
-    )
+    announcement = Announcement(id=1, title="Title", content="Body", status="published")
     delivery = NotificationDelivery(
         id=1,
         announcement_id=1,
@@ -797,8 +787,14 @@ async def test_telegram_binding_token_memory_fallback_is_single_use(monkeypatch)
     binding = await telegram_binding_service.create_telegram_binding_token(42)
 
     assert binding.deep_link.startswith("https://t.me/sakura_test_bot?start=")
-    assert await telegram_binding_service.consume_telegram_binding_token(binding.token) == 42
-    assert await telegram_binding_service.consume_telegram_binding_token(binding.token) is None
+    assert (
+        await telegram_binding_service.consume_telegram_binding_token(binding.token)
+        == 42
+    )
+    assert (
+        await telegram_binding_service.consume_telegram_binding_token(binding.token)
+        is None
+    )
     telegram_binding_service._binding_fallback.clear()
 
 
@@ -810,7 +806,9 @@ async def test_telegram_bind_rejects_group_before_consuming_token(monkeypatch):
         consumed.append(token)
         return 42
 
-    monkeypatch.setattr(telegram_handlers, "consume_telegram_binding_token", fake_consume)
+    monkeypatch.setattr(
+        telegram_handlers, "consume_telegram_binding_token", fake_consume
+    )
 
     class _Message:
         def __init__(self):
@@ -926,8 +924,8 @@ async def test_announcement_scheduler_uses_runtime_supervisor_helper(monkeypatch
     assert captured == {"source": "announcement.broadcast"}
 
 
-def test_webui_announcement_admin_route_precedes_dynamic_detail_route():
-    paths = [route.path for route in announcements_webui_router.routes]
+def test_announcement_admin_route_precedes_dynamic_detail_route():
+    paths = [route.path for route in announcements_api_router.routes]
     assert paths.index("/announcements/admin") < paths.index(
         "/announcements/{announcement_id}"
     )
@@ -990,9 +988,7 @@ async def test_announcement_lifecycle_rejects_mutation_after_publish(monkeypatch
     session.commit = fake_commit
     session.refresh = fake_refresh
     monkeypatch.setattr(announcement_service, "get_announcement", fake_get)
-    monkeypatch.setattr(
-        announcement_service, "_get_lifecycle_announcement", fake_get
-    )
+    monkeypatch.setattr(announcement_service, "_get_lifecycle_announcement", fake_get)
     monkeypatch.setattr(announcement_service, "_ensure_delivery_rows", fake_flush)
     monkeypatch.setattr(
         announcement_service,
@@ -1044,9 +1040,7 @@ async def test_announcement_withdraw_edit_and_republish(monkeypatch):
         return announcement
 
     monkeypatch.setattr(announcement_service, "get_announcement", fake_get)
-    monkeypatch.setattr(
-        announcement_service, "_get_lifecycle_announcement", fake_get
-    )
+    monkeypatch.setattr(announcement_service, "_get_lifecycle_announcement", fake_get)
     monkeypatch.setattr(
         announcement_service,
         "_archive_publication",
@@ -1078,9 +1072,7 @@ async def test_announcement_withdraw_edit_and_republish(monkeypatch):
     assert announcement.status == "withdrawn"
     await announcement_service.update_announcement(session, 1, title="Updated")
     assert announcement.title == "Updated"
-    await announcement_service.publish_announcement(
-        session, 1, schedule_broadcast=True
-    )
+    await announcement_service.publish_announcement(session, 1, schedule_broadcast=True)
 
     assert announcement.status == "published"
     assert scheduled == [1]
@@ -1088,9 +1080,7 @@ async def test_announcement_withdraw_edit_and_republish(monkeypatch):
 
 def test_announcement_admin_routes_require_super_admin():
     admin_routes = [
-        route
-        for route in announcements_api_router.routes
-        if "/admin" in route.path
+        route for route in announcements_api_router.routes if "/admin" in route.path
     ]
     assert admin_routes
     for route in admin_routes:
@@ -1202,9 +1192,7 @@ def _patch_fake_smtp(monkeypatch) -> dict[str, list[_FakeSMTPSession]]:
         return create
 
     monkeypatch.setattr(notification_service.smtplib, "SMTP", _factory("smtp"))
-    monkeypatch.setattr(
-        notification_service.smtplib, "SMTP_SSL", _factory("smtp_ssl")
-    )
+    monkeypatch.setattr(notification_service.smtplib, "SMTP_SSL", _factory("smtp_ssl"))
     return created
 
 
@@ -1237,9 +1225,7 @@ async def _send_email(monkeypatch, **smtp_overrides) -> dict[str, list]:
         endpoint=endpoint,
         title="标题",
         content=_EMAIL_MARKDOWN_CONTENT,
-        content_html=announcement_service.sanitize_markdown(
-            _EMAIL_MARKDOWN_CONTENT
-        ),
+        content_html=announcement_service.sanitize_markdown(_EMAIL_MARKDOWN_CONTENT),
         announcement_type="release",
     )
     return created
@@ -1311,9 +1297,7 @@ async def test_email_provider_renders_markdown_type_and_bold_title(monkeypatch):
     assert "<strong>加粗要点</strong>" in html_part
     assert "<li>列表项</li>" in html_part
     # 页脚的 Sakura-AI 可点击跳转（未配置域名时回退开源仓库）
-    assert (
-        html_part.count('href="https://github.com/Sakura520222/Sakura-AI"') == 2
-    )
+    assert html_part.count('href="https://github.com/Sakura520222/Sakura-AI"') == 2
     assert "此邮件由 <a href=" in html_part
 
 
@@ -1335,9 +1319,7 @@ async def test_email_provider_footer_falls_back_when_domain_is_default(monkeypat
 
     message = created["smtp"][0].sent_messages[0]
     html_part = message.get_body(preferencelist=("html",)).get_content()
-    assert (
-        html_part.count('href="https://github.com/Sakura520222/Sakura-AI"') == 2
-    )
+    assert html_part.count('href="https://github.com/Sakura520222/Sakura-AI"') == 2
     plain_part = message.get_body(preferencelist=("plain",)).get_content()
     assert "【版本发布】标题" in plain_part
     assert "# 发布说明" in plain_part
@@ -1608,9 +1590,7 @@ async def _api_update_user_info(session, user_id, telegram_id):
 
 @pytest.mark.asyncio
 async def test_api_user_info_update_stages_telegram_endpoint():
-    user = TelegramUser(
-        id=5, github_username="alice", telegram_id=None, is_active=True
-    )
+    user = TelegramUser(id=5, github_username="alice", telegram_id=None, is_active=True)
     session = _UserEditSession([user])
 
     response = await _api_update_user_info(session, 5, 222)
@@ -1625,9 +1605,7 @@ async def test_api_user_info_update_stages_telegram_endpoint():
 
 @pytest.mark.asyncio
 async def test_api_user_info_update_rebinds_and_disables_old_telegram_endpoint():
-    user = TelegramUser(
-        id=5, github_username="alice", telegram_id=111, is_active=True
-    )
+    user = TelegramUser(id=5, github_username="alice", telegram_id=111, is_active=True)
     old = NotificationEndpoint(
         id=3, user_id=5, provider="telegram", address="111", enabled=True
     )
@@ -1645,14 +1623,10 @@ async def test_api_user_info_update_rebinds_and_disables_old_telegram_endpoint()
 
 @pytest.mark.asyncio
 async def test_api_user_info_update_rejects_telegram_endpoint_owned_by_other_user():
-    user = TelegramUser(
-        id=5, github_username="alice", telegram_id=None, is_active=True
-    )
+    user = TelegramUser(id=5, github_username="alice", telegram_id=None, is_active=True)
     # 无 legacy 镜像但持有 endpoint 的账号（备份恢复等路径可达），只有
     # endpoint 冲突检查能拦截这次改绑。
-    other = TelegramUser(
-        id=9, github_username="bob", telegram_id=None, is_active=True
-    )
+    other = TelegramUser(id=9, github_username="bob", telegram_id=None, is_active=True)
     bound = NotificationEndpoint(
         id=4, user_id=9, provider="telegram", address="222", enabled=True
     )
@@ -1670,71 +1644,8 @@ async def test_api_user_info_update_rejects_telegram_endpoint_owned_by_other_use
 
 
 @pytest.mark.asyncio
-async def test_webui_user_info_update_rebinds_telegram_endpoint(monkeypatch):
-    monkeypatch.setattr(users_webui, "detect_language", lambda: "zh-CN")
-    user = TelegramUser(
-        id=5, github_username="alice", telegram_id=111, is_active=True
-    )
-    old = NotificationEndpoint(
-        id=3, user_id=5, provider="telegram", address="111", enabled=True
-    )
-    session = _UserEditSession([user], [old])
-
-    response = await users_webui.update_user_info(
-        request=SimpleNamespace(),
-        user_id=5,
-        db=session,
-        user={"user_id": 1, "sub": "admin"},
-        csrf_token="token",
-        telegram_id=222,
-        github_username="alice",
-    )
-
-    assert response.status_code == 302
-    assert user.telegram_id == 222
-    assert [(row.address, row.enabled) for row in session.endpoints] == [
-        ("111", False),
-        ("222", True),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_webui_user_info_update_rejects_telegram_endpoint_conflict(monkeypatch):
-    monkeypatch.setattr(users_webui, "detect_language", lambda: "zh-CN")
-    user = TelegramUser(
-        id=5, github_username="alice", telegram_id=None, is_active=True
-    )
-    other = TelegramUser(
-        id=9, github_username="bob", telegram_id=None, is_active=True
-    )
-    bound = NotificationEndpoint(
-        id=4, user_id=9, provider="telegram", address="222", enabled=True
-    )
-    session = _UserEditSession([user, other], [bound])
-
-    response = await users_webui.update_user_info(
-        request=SimpleNamespace(),
-        user_id=5,
-        db=session,
-        user={"user_id": 1, "sub": "admin"},
-        csrf_token="token",
-        telegram_id=222,
-        github_username="alice",
-    )
-
-    assert response.status_code == 302
-    assert session.rollbacks == 1
-    assert session.commits == 0
-    assert [(row.address, row.user_id, row.enabled) for row in session.endpoints] == [
-        ("222", 9, True)
-    ]
-
-
-@pytest.mark.asyncio
 async def test_api_user_info_update_syncs_telegram_endpoint_while_disabled():
-    user = TelegramUser(
-        id=5, github_username="alice", telegram_id=111, is_active=False
-    )
+    user = TelegramUser(id=5, github_username="alice", telegram_id=111, is_active=False)
     old = NotificationEndpoint(
         id=3, user_id=5, provider="telegram", address="111", enabled=True
     )
@@ -1745,37 +1656,6 @@ async def test_api_user_info_update_syncs_telegram_endpoint_while_disabled():
     assert response.status_code == 200
     assert user.telegram_id == 222
     # 禁用期改绑也必须同步端点：否则重新启用后通知会恢复发往旧聊天。
-    assert [(row.address, row.enabled) for row in session.endpoints] == [
-        ("111", False),
-        ("222", True),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_webui_user_info_update_syncs_telegram_endpoint_while_disabled(
-    monkeypatch,
-):
-    monkeypatch.setattr(users_webui, "detect_language", lambda: "zh-CN")
-    user = TelegramUser(
-        id=5, github_username="alice", telegram_id=111, is_active=False
-    )
-    old = NotificationEndpoint(
-        id=3, user_id=5, provider="telegram", address="111", enabled=True
-    )
-    session = _UserEditSession([user], [old])
-
-    response = await users_webui.update_user_info(
-        request=SimpleNamespace(),
-        user_id=5,
-        db=session,
-        user={"user_id": 1, "sub": "admin"},
-        csrf_token="token",
-        telegram_id=222,
-        github_username="alice",
-    )
-
-    assert response.status_code == 302
-    assert user.telegram_id == 222
     assert [(row.address, row.enabled) for row in session.endpoints] == [
         ("111", False),
         ("222", True),

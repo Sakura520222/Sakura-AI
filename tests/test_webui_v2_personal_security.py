@@ -82,8 +82,8 @@ async def test_totp_setup_enable_replay_and_one_time_recovery_codes(api, monkeyp
     async def pop(user_id):
         return saved.pop(user_id, None)
 
-    monkeypatch.setattr(security.legacy, "_save_totp_setup_secret", save)
-    monkeypatch.setattr(security.legacy, "_pop_totp_setup_secret", pop)
+    monkeypatch.setattr(security, "_save_totp_setup_secret", save)
+    monkeypatch.setattr(security, "_pop_totp_setup_secret", pop)
     monkeypatch.setattr(security.totp, "get_current_totp_step", lambda: 123456)
     response = await client.post("/api/v1/webui/security/totp/setup", headers=headers)
     assert response.status_code == 200
@@ -173,8 +173,8 @@ async def test_passkey_options_and_verification_keep_shared_challenge_handlers(
         return_value={"success": True, "data": {"challenge_id": "one-use"}}
     )
     verify = AsyncMock(return_value={"success": True, "data": {"id": 5}})
-    monkeypatch.setattr(security.legacy, "passkey_register_options", options)
-    monkeypatch.setattr(security.legacy, "passkey_register_verify", verify)
+    monkeypatch.setattr(security, "passkey_register_options", options)
+    monkeypatch.setattr(security, "passkey_register_verify", verify)
     headers = {"X-CSRF-Token": generate_csrf_token()}
     assert (
         await client.post("/api/v1/webui/security/passkeys/options")
@@ -203,7 +203,10 @@ async def test_notification_adapter_requires_csrf_and_passes_only_authenticated_
 ):
     _, client, user, _ = api
     add = AsyncMock(return_value={"id": 11, "provider": "email", "verified": False})
-    monkeypatch.setattr(notifications.notification, "add_endpoint", add)
+    # The v1 route derives the owner from the authenticated principal and only
+    # forwards validated request fields to the preference service.
+    monkeypatch.setattr(notifications, "create_endpoint", add)
+    monkeypatch.setattr(notifications, "endpoint_view", lambda row: row)
     payload = {
         "provider": "email",
         "address": "alice@example.test",
@@ -220,5 +223,5 @@ async def test_notification_adapter_requires_csrf_and_passes_only_authenticated_
     )
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
-    assert add.await_args.kwargs["user"] is user
-    assert add.await_args.args[0].address == "alice@example.test"
+    assert add.await_args.args[1] == user["user_id"]
+    assert add.await_args.kwargs["address"] == "alice@example.test"

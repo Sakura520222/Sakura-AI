@@ -1,12 +1,8 @@
 """Conversation pagination must ignore durable harness bookkeeping."""
 
 import json
-import shutil
-import subprocess
-from pathlib import Path
 
 import pytest
-from jinja2 import Template
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
@@ -18,7 +14,7 @@ from backend.models.agent_team_models import (
     AgentTeamUserPrompt,
 )
 from backend.models.database import Base
-from backend.webui.routes.agent_team import task_stream_data
+from backend.services.agent_team.api_operations import task_stream_data
 
 
 @pytest.fixture
@@ -161,152 +157,3 @@ async def test_stream_owner_scope_still_denies_other_user(stream_db):
     status, data = await stream(adapter, user={"sub": "other", "role": "user"})
     assert status == 403
     assert data["error"] == "Forbidden"
-
-
-@pytest.mark.parametrize(
-    "method,page_size", [("_loadFull", 200), ("_loadIncremental", 50)]
-)
-def test_completed_live_view_drains_has_more_without_sse(tmp_path, method, page_size):
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is required to execute the shipped live-view JavaScript")
-    fragment = Path(
-        "backend/webui/templates/components/agent_team_live_view_fragment.html"
-    ).read_text(encoding="utf-8")
-    rendered = Template(fragment).render(_=lambda key: key)
-    script = rendered.split("<script>", 1)[1].split("</script>", 1)[0]
-    harness = (
-        script
-        + r"""
-    const assert = require('node:assert/strict');
-    global.DOMPurify = {sanitize: value => value};
-    global.marked = {parse: value => value};
-    global.document = {getElementById: () => null};
-    const requests = [];
-    const all = Array.from({length: 205}, (_, i) => ({id: i + 1,
-      session_id: 1, role: i === 204 ? 'assistant' : 'user',
-      content: i === 204 ? 'Completed after all tests' : 'Guidance ' + i}));
-    global.fetch = async url => {
-      const query = new URL(url, 'http://fixture').searchParams;
-      const cursor = Number(query.get('after_id'));
-      const limit = Number(query.get('limit'));
-      requests.push(cursor);
-      const rows = all.filter(row => row.id > cursor);
-      return {ok: true, json: async () => ({success: true,
-        messages: rows.slice(0, limit), tool_calls: [], prompts: [],
-        sessions: [{id: 1, iteration_number: 1, status: 'completed'}],
-        has_more: rows.length > limit, task_status: 'completed',
-        can_send_prompt: false})};
-    };
-    (async () => {
-      const state = agentTeamLiveView();
-      state.$nextTick = callback => callback();
-      state.selectedTaskId = '1';
-      await state.METHOD();
-      assert.equal(state._messages.length, 205);
-      assert.equal(state.displayItems.at(-1).content, 'Completed after all tests');
-      assert.deepEqual(requests, EXPECTED_REQUESTS);
-      assert.equal(state.isLoading, false);
-      // An unchanged conversation can still have a changed tool status.
-      global.fetch = async () => ({ok: true, json: async () => ({success: true,
-        messages: [], prompts: [], sessions: [], has_more: false,
-        tool_calls: [{id: 7, tool_call_id: 'read-1', status: 'completed'}]})});
-      state._toolCalls['read-1'] = {id: 7, tool_call_id: 'read-1', status: 'running'};
-      await state._loadIncremental();
-      assert.equal(state._toolCalls['read-1'].status, 'completed');
-      assert.equal(state._messages.length, 205);
-      // Switching tasks while a page is in flight must not mix conversations.
-      let releaseOld;
-      global.fetch = () => new Promise(resolve => { releaseOld = resolve; });
-      const oldLoad = state._loadFull();
-      state.selectedTaskId = '2';
-      state._resetStreamState(true);
-      const dataFor = content => ({success: true, has_more: false, prompts: [],
-        tool_calls: [], sessions: [{id: 2, status: 'completed'}],
-        messages: [{id: 777, session_id: 2, role: 'assistant', content}]});
-      global.fetch = async () => ({json: async () => dataFor('New task')});
-      await state._loadFull();
-      releaseOld({json: async () => dataFor('Stale old task')});
-      await oldLoad;
-      assert.deepEqual(state._messages.map(row => row.content), ['New task']);
-      assert.equal(state.isLoading, false);
-    })().catch(error => { console.error(error); process.exitCode = 1; });
-    """
-    )
-    harness = harness.replace("METHOD", method).replace(
-        "EXPECTED_REQUESTS", json.dumps(list(range(0, 205, page_size)))
-    )
-    path = tmp_path / "live-view-pagination.js"
-    path.write_text(harness)
-    result = subprocess.run(
-        [node, str(path)], capture_output=True, text=True, check=False
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-@pytest.mark.parametrize("method", ["_loadFull", "_loadIncremental"])
-def test_live_view_retains_sse_refresh_during_inflight_page(tmp_path, method):
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is required to execute the shipped live-view JavaScript")
-    fragment = Path(
-        "backend/webui/templates/components/agent_team_live_view_fragment.html"
-    ).read_text(encoding="utf-8")
-    rendered = Template(fragment).render(_=lambda key: key)
-    script = rendered.split("<script>", 1)[1].split("</script>", 1)[0]
-    harness = (
-        script
-        + r"""
-    const assert = require('node:assert/strict');
-    global.DOMPurify = {sanitize: value => value};
-    global.marked = {parse: value => value};
-    global.document = {getElementById: () => null};
-    let timer;
-    let scheduled = 0;
-    global.setTimeout = callback => { timer = callback; scheduled++; return 1; };
-    const state = agentTeamLiveView();
-    state.$nextTick = callback => callback();
-    state.selectedTaskId = '1';
-    let release;
-    let requests = 0;
-    let active = 0;
-    let maximumActive = 0;
-    const payload = (messages, status) => ({success: true, has_more: false,
-      messages, sessions: [{id: 1, status: 'completed'}], prompts: [],
-      tool_calls: [{id: 7, tool_call_id: 'read-1', status}]});
-    global.fetch = async url => {
-      requests++;
-      active++;
-      maximumActive = Math.max(maximumActive, active);
-      if (requests === 1) return new Promise(resolve => { release = data => {
-        active--; resolve({json: async () => data});
-      }; });
-      active--;
-      return {json: async () => payload([{id: 1, session_id: 1,
-        role: 'assistant', content: 'Final completion'}], 'completed')};
-    };
-    (async () => {
-      const inFlight = state.METHOD();
-      state._onSSEEvent('sse:agent:message_added', {task_id: 1});
-      state._onSSEEvent('sse:agent:tool_completed', {task_id: 1});
-      assert.equal(scheduled, 1, 'Repeated events must coalesce');
-      // Fire the production debounce callback while the first snapshot waits.
-      timer();
-      for (let i = 0; i < 8; i++) await Promise.resolve();
-      assert.equal(requests, 1, 'Updates must not start overlapping requests');
-      release(payload([], 'running'));
-      await inFlight;
-      assert.equal(requests, 2, 'The pending update must rerun after pages drain');
-      assert.deepEqual(state._messages.map(row => row.id), [1]);
-      assert.equal(state._toolCalls['read-1'].status, 'completed');
-      assert.equal(state.isLoading, false);
-      assert.equal(maximumActive, 1);
-    })().catch(error => { console.error(error); process.exitCode = 1; });
-    """
-    ).replace("METHOD", method)
-    path = tmp_path / "live-view-sse-race.js"
-    path.write_text(harness)
-    result = subprocess.run(
-        [node, str(path)], capture_output=True, text=True, check=False
-    )
-    assert result.returncode == 0, result.stdout + result.stderr

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from backend.api.v1 import deps as api_deps
 from backend.api.v1.billing import PlanCreateRequest, WalletThresholdRequest, router
+from backend.api.v1.billing_webui import router as billing_web_router
 from backend.models.admin_action_log import AdminActionLog
 from backend.models.billing_models import (
     BillingOperation,
@@ -28,7 +29,6 @@ from backend.models.telegram_models import TelegramUser
 from backend.services.billing_view_service import parse_pricing_json
 from backend.webui import deps as web_deps
 from backend.webui.deps import get_db, get_user_preferences, require_payment_enabled
-from backend.webui.routes.billing import router as web_router
 from tests.test_billing_wallet import SQLSession
 
 TEST_PRICE = {
@@ -221,7 +221,7 @@ async def billing_client(tmp_path, monkeypatch):
     monkeypatch.setattr(api_deps.db_module, "async_session", sessions)
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
-    app.include_router(web_router)
+    app.include_router(billing_web_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = db_dependency
     app.dependency_overrides[require_payment_enabled] = enabled
     app.dependency_overrides[get_user_preferences] = lambda: {
@@ -412,83 +412,6 @@ def test_exact_schema_and_price_json_reject_binary_floats():
 
 
 @pytest.mark.asyncio
-async def test_webui_renders_real_ledger_and_submits_threshold(billing_client):
-    import re
-
-    client, sessions = billing_client
-    response = await client.get("/billing/credits")
-    assert response.status_code == 200
-    assert 'data-testid="credit_available">8.5' in response.text
-    assert "Awaiting pricing" in response.text
-    assert "secret/private" not in response.text and "SECRET_PRICE" not in response.text
-    assert "Next" in response.text
-    token = re.search(r'name="csrf_token" value="([^"]+)"', response.text).group(1)
-    posted = await client.post(
-        "/billing/credits/threshold", data={"credits": "12.000001", "csrf_token": token}
-    )
-    assert posted.status_code == 302
-    async with sessions() as db:
-        assert (
-            await db.get(BillingWallet, 1)
-        ).low_balance_threshold_units == 12_000_001
-    response = await client.get("/billing/credits?feature=pr_review&kind=")
-    assert "alice/project #5" in response.text
-    assert "Credits are settled from actual AI usage" in response.text
-
-
-@pytest.mark.asyncio
-async def test_webui_price_page_authorization_and_validation(billing_client):
-    import json
-    import re
-
-    client, sessions = billing_client
-    assert (await client.get("/billing/admin/pricing")).status_code == 403
-    headers = {"x-test-identity": "operator"}
-    response = await client.get("/billing/admin/pricing", headers=headers)
-    assert response.status_code == 200
-    token = re.search(r'name="csrf_token" value="([^"]+)"', response.text).group(1)
-    posted = await client.post(
-        "/billing/admin/pricing",
-        headers=headers,
-        data={
-            "provider_id": "test-provider",
-            "model_id": "test-model",
-            "call_kind": "chat",
-            "config": json.dumps(TEST_PRICE),
-            "csrf_token": token,
-        },
-    )
-    assert posted.status_code == 302
-    response = await client.get("/billing/admin/pricing", headers=headers)
-    assert "test-model" in response.text and "test-provider" in response.text
-    posted = await client.post(
-        "/billing/admin/pricing",
-        headers=headers,
-        data={
-            "provider_id": "test-provider",
-            "model_id": "test-model",
-            "call_kind": "chat",
-            "config": '{"input_price":0.1}',
-            "csrf_token": token,
-        },
-    )
-    assert posted.status_code == 302
-    async with sessions() as db:
-        logs = (
-            (
-                await db.execute(
-                    select(AdminActionLog).where(
-                        AdminActionLog.action == "billing_publish_price"
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert len(logs) == 1
-
-
-@pytest.mark.asyncio
 async def test_credit_surface_remains_available_when_payment_entries_disabled(
     billing_client, monkeypatch
 ):
@@ -498,17 +421,16 @@ async def test_credit_surface_remains_available_when_payment_entries_disabled(
     client, _ = billing_client
     client._transport.app.dependency_overrides.pop(require_payment_enabled)
     monkeypatch.setattr(web_deps, "is_payment_enabled", disabled)
+    # Accounting stays readable while every new-sale entry point stays closed.
     assert (await client.get("/api/v1/billing/wallet")).status_code == 200
-    assert (await client.get("/billing/credits")).status_code == 200
     assert (await client.get("/api/v1/billing/plans")).status_code == 404
-    history = await client.get("/billing/")
-    assert history.status_code == 200
-    assert 'action="/billing/redeem"' not in history.text
-    assert 'action="/billing/purchase/' not in history.text
+    assert (
+        await client.post("/api/v1/billing/orders", json={"plan_id": 1})
+    ).status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_plan_billing_contract_persists_and_renders(billing_client):
+async def test_plan_billing_contract_persists_and_projects(billing_client):
     client, sessions = billing_client
     headers = {"x-test-identity": "operator"}
     response = await client.post(
@@ -529,13 +451,10 @@ async def test_plan_billing_contract_persists_and_renders(billing_client):
     response = await client.get("/api/v1/billing/plans")
     assert response.json()[0]["credit_grant"] == "21.123456"
     assert response.json()[0]["rate_limits"] == {"pr_daily": 3, "agent_daily": 1}
-    response = await client.get("/billing/admin/plans", headers=headers)
-    assert response.status_code == 200
-    assert "21.123456 Credits" in response.text and "USD 1.25" in response.text
-    assert (
-        'id="edit-credit_grant"' in response.text
-        and 'id="edit-rate_limits"' in response.text
-    )
+    admin = await client.get("/api/v1/billing/admin/plans", headers=headers)
+    assert admin.status_code == 200
+    assert admin.json()[0]["credit_grant"] == "21.123456"
+    assert admin.json()[0]["formatted_price"] == "1.25"
     response = await client.put(
         f"/api/v1/billing/admin/plans/{plan_id}",
         headers=headers,
@@ -560,9 +479,7 @@ async def test_plan_billing_contract_persists_and_renders(billing_client):
 
 
 @pytest.mark.asyncio
-async def test_admin_grant_reuses_form_event_and_cannot_double_credit(billing_client):
-    import re
-
+async def test_admin_grant_is_idempotent_and_cannot_double_credit(billing_client):
     from backend.models.payment_models import Order, Plan
 
     client, sessions = billing_client
@@ -578,39 +495,34 @@ async def test_admin_grant_reuses_form_event_and_cannot_double_credit(billing_cl
             )
         )
         await db.commit()
-    legacy = await client.post(
+    granted = await client.post(
         "/api/v1/billing/admin/grant",
         headers=headers,
         json={"user_id": 1, "plan_id": 20},
     )
-    assert legacy.status_code == 200
+    assert granted.status_code == 200
     replay = await client.post(
         "/api/v1/billing/admin/grant",
         headers=headers,
         json={
             "user_id": 1,
             "plan_id": 20,
-            "idempotency_key": legacy.json()["idempotency_key"],
+            "idempotency_key": granted.json()["idempotency_key"],
         },
     )
-    assert replay.json() == legacy.json()
-    page = await client.get("/billing/admin/pricing", headers=headers)
-    token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
-    key = re.search(
-        r'name="idempotency_key" value="(admin-grant:[^"]+)"', page.text
-    ).group(1)
-    payload = {"user_id": 1, "plan_id": 20, "csrf_token": token, "idempotency_key": key}
-    first = await client.post("/billing/admin/grant", headers=headers, data=payload)
-    second = await client.post("/billing/admin/grant", headers=headers, data=payload)
-    assert first.status_code == second.status_code == 302
+    assert replay.json() == granted.json()
     async with sessions() as db:
         orders = (
-            (await db.execute(select(Order).where(Order.grant_idempotency_key == key)))
+            (
+                await db.execute(
+                    select(Order).where(Order.user_id == 1, Order.plan_id == 20)
+                )
+            )
             .scalars()
             .all()
         )
         assert len(orders) == 1
-        assert (await db.get(BillingWallet, 1)).balance_units == 24_000_000
+        assert (await db.get(BillingWallet, 1)).balance_units == 16_750_000
 
 
 @pytest.mark.asyncio
@@ -682,10 +594,6 @@ async def test_balance_notices_are_own_only_and_read_idempotently(billing_client
     assert (await client.post("/api/v1/billing/notices/10/read")).status_code == 200
     async with sessions() as db:
         assert (await db.get(BillingNotice, 10)).read_at == first_read_at
-    page = await client.get("/billing/credits")
-    assert page.status_code == 200
-    assert "Earlier balance notifications" in page.text and "Read" in page.text
-    assert "New low balance alerts appear in Notification Center" in page.text
 
 
 @pytest.mark.asyncio
@@ -740,20 +648,12 @@ async def test_jpy_integer_minor_units_render_exactly_for_plan_order_and_refund(
     assert response.json()["amount_cents"] == 2400
     assert response.json()["formatted_amount"] == "2400"
     assert response.json()["formatted_refunded_amount"] == "600"
-    response = await client.get("/billing/admin/plans", headers=headers)
-    assert response.status_code == 200 and "JPY 1200" in response.text
-    assert "JPY 12.00" not in response.text
-    response = await client.get("/billing/")
-    assert response.status_code == 200
-    assert (
-        "JPY 1200" in response.text
-        and "JPY 2400" in response.text
-        and "JPY 600" in response.text
-    )
-    assert "JPY 12.00" not in response.text and "JPY 24.00" not in response.text
-    response = await client.get("/billing/admin/refund-requests", headers=headers)
-    assert response.status_code == 200 and "JPY 600" in response.text
-    assert "JPY 6.00" not in response.text
+    admin = await client.get("/api/v1/billing/admin/plans", headers=headers)
+    assert admin.status_code == 200
+    assert admin.json()[0]["formatted_price"] == "1200"
+    refunds = await client.get("/api/v1/billing/admin/refund-requests", headers=headers)
+    assert refunds.status_code == 200
+    assert refunds.json()["items"][0]["formatted_amount"] == "600"
 
 
 @pytest.mark.asyncio
@@ -761,8 +661,6 @@ async def test_jpy_integer_minor_units_render_exactly_for_plan_order_and_refund(
 async def test_user_hides_order_without_erasing_invoice_or_financial_history(
     billing_client, status
 ):
-    import re
-
     from sqlalchemy.exc import IntegrityError
 
     from backend.models.legacy_entitlement_models import PaymentReceipt
@@ -813,17 +711,15 @@ async def test_user_hides_order_without_erasing_invoice_or_financial_history(
             )
         await db.commit()
     assert (await client.get("/api/v1/billing/orders")).json()["total"] == 1
-    page = await client.get("/billing/credits")
-    token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
-    assert (await client.post("/billing/orders/60/delete")).status_code == 403
-    await client.post(
-        "/billing/orders/60/delete",
-        headers={"x-test-identity": "bob"},
-        data={"csrf_token": token},
-    )
+    # Another user can neither see nor hide the order.
+    assert (
+        await client.post(
+            "/api/v1/billing/orders/60/hide", headers={"x-test-identity": "bob"}
+        )
+    ).status_code == 404
     assert (await client.get("/api/v1/billing/orders")).json()["total"] == 1
-    hidden = await client.post("/billing/orders/60/delete", data={"csrf_token": token})
-    assert hidden.status_code == 302
+    hidden = await client.post("/api/v1/billing/orders/60/hide")
+    assert hidden.status_code == 200 and hidden.json() == {"success": True}
     async with sessions() as db:
         order = await db.get(Order, 60)
         assert order is not None, "User list removal must preserve the original order"
@@ -845,14 +741,12 @@ async def test_user_hides_order_without_erasing_invoice_or_financial_history(
             assert (await db.get(BillingTransaction, 60)).delta_units == 5_000_000
             assert (await db.get(BillingTransaction, 61)).delta_units == -5_000_000
         assert (await db.get(BillingWallet, 1)).balance_units == 9_500_000
-    assert (await client.get("/api/v1/billing/orders")).json() == {
-        "total": 0,
-        "orders": [],
-    }
-    assert "PERMANENT-TRON-INVOICE" not in (await client.get("/billing/")).text
+    listing = await client.get("/api/v1/billing/orders")
+    assert listing.json() == {"total": 0, "orders": []}
+    assert "PERMANENT-TRON-INVOICE" not in listing.text
     # Hiding is idempotent and retains owner-authorized status access for
     # payment callbacks, reconciliation and immutable ledger source links.
-    await client.post("/billing/orders/60/delete", data={"csrf_token": token})
+    await client.post("/api/v1/billing/orders/60/hide")
     assert (await client.get("/api/v1/billing/orders/60")).status_code == 200
     async with sessions() as db:
         assert (await db.get(Order, 60)).hidden_by_user_at == hidden_at
@@ -1045,57 +939,6 @@ async def test_admin_payment_resolution_uses_verified_order_and_grants_once(
             .all()
         )
         assert any(row.status == "reviewed" and row.actor_id == 3 for row in audits)
-
-
-@pytest.mark.asyncio
-async def test_pending_payment_webui_renders_unknown_units_and_enforces_csrf(
-    billing_client,
-):
-    import re
-
-    client, sessions = billing_client
-    await seed_pending_native_payment(sessions)
-    headers = {"x-test-identity": "operator"}
-    page = await client.get("/billing/admin/pricing", headers=headers)
-    assert page.status_code == 200
-    assert "Payment and refund events awaiting reconciliation" in page.text
-    assert "Unknown amount" in page.text and "Unknown currency" in page.text
-    assert "PRIVATE" not in page.text and "USD 10.00" in page.text
-    missing = await client.post(
-        "/billing/admin/payment-events/50/resolve",
-        headers=headers,
-        data={"evidence": "verified proof", "order_id": "50"},
-    )
-    assert missing.status_code == 403
-    token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
-    replayed = await client.post(
-        "/billing/admin/payment-events/50/replay",
-        headers=headers,
-        data={"csrf_token": token},
-    )
-    assert replayed.status_code == 302
-    async with sessions() as db:
-        assert (await db.get(BillingWallet, 1)).balance_units == 9_500_000
-    resolved = await client.post(
-        "/billing/admin/payment-events/50/resolve",
-        headers=headers,
-        data={
-            "evidence": "verified provider receipt native-paid-50",
-            "order_id": "50",
-            "csrf_token": token,
-            "checkout_amount_cents": "",
-            "checkout_currency": "",
-            "refund_reference_id": "",
-            "refund_amount_cents": "",
-            "refund_currency": "",
-        },
-    )
-    assert resolved.status_code == 302
-    async with sessions() as db:
-        assert (await db.get(BillingWallet, 1)).balance_units == 14_500_000
-    page = await client.get("/billing/admin/pricing", headers=headers)
-    assert 'data-payment-event-id="50"' not in page.text
-    assert 'data-payment-event-id="51"' in page.text
 
 
 @pytest.mark.asyncio

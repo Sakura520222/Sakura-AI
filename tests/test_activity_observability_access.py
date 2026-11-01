@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 from starlette.applications import Starlette
 from starlette.requests import Request
 
+from backend.api.v1 import activity as activity_routes
 from backend.models.activity_observability_models import (
     ActivityContextOperation,
     ActivityContextSnapshot,
@@ -42,7 +43,6 @@ from backend.services.activity_observability.conversation_service import (
     ConversationProjectionService,
 )
 from backend.services.activity_observability.tool_service import AuthorizedArtifactView
-from backend.webui.routes import activity_observability as activity_routes
 from backend.webui.sse import user_activity_channel
 
 
@@ -669,74 +669,6 @@ def test_user_activity_channels_are_opaque_stable_and_noninjectable():
     for bad in ("a\nb", "a\rb", "a\tb", "a/../b"):
         with pytest.raises(ValueError):
             user_activity_channel(bad)
-
-
-def test_activity_page_renders_reasoning_omitted_without_spinner_or_fabricated_text():
-    """The observability page must never render a permanent spinner or fabricated
-    reasoning text; omitted/unavailable states keep a deterministic hint only."""
-    from pathlib import Path
-
-    template = Path("backend/webui/templates/activity_observability.html").read_text(
-        encoding="utf-8"
-    )
-    # Deterministic omitted hint is rendered via the i18n key.
-    assert "reasoning_omitted_hint" in template
-    # No permanent spinner component, no fabricated reasoning text.
-    assert "thinking-spinner" not in template
-    assert "推理内容" not in template
-    assert "reasoning_delta" not in template  # provider text never echoed server-side
-    # Notifications must only drive a REST re-fetch, not mutate UI from SSE payload.
-    assert "loadConversationUpdates" in template
-    assert "activity:notification" in template
-    assert 'x-data="{snapshot' not in template
-    assert ".__x" not in template
-
-
-def test_activity_page_uses_independent_scroll_regions_and_sse_fallback_polling():
-    from pathlib import Path
-
-    template = Path("backend/webui/templates/activity_observability.html").read_text(
-        encoding="utf-8"
-    )
-    notification_handler = template.split(
-        "addEventListener('activity:notification'", 1
-    )[1].split("this.eventSource.onerror", 1)[0]
-
-    # 诊断面板"压缩与上下文操作"卡片可点击定位对话流对应条目
-    assert "focusContextOperation(operation)" in template
-    assert 'querySelector(`[data-entry-id="${entryId}"]`)' in template
-    assert "sakura-entry-highlight" in template
-    assert "context_operation:${operation.operation_id}" in template
-    # 定位必须只滚动对话流容器，不能带动整个页面（scrollIntoView 会滚动所有
-    # 可滚动祖先，包括外层页面）；应基于 getBoundingClientRect 偏移后对
-    # timeline 容器 scrollTo。
-    assert "element.scrollIntoView(" not in template
-    assert "timeline.scrollTo(" in template
-    assert "getBoundingClientRect()" in template
-
-    assert "min-h-0 min-w-0 grid-cols-1 overflow-hidden" in template
-    assert 'x-ref="timeline"' in template
-    assert "min-h-0 flex-1 overflow-y-auto overscroll-contain" in template
-    assert "lg:h-full" in template
-    assert "&& !this.streamConnected" in template
-    assert "this.stopFallbackPolling();" in template
-    assert "this.scheduleRefresh(sessionId);" in notification_handler
-    assert "this.loadSessions();" not in notification_handler
-    assert "}, 15000);" in template
-    assert "{% block global_sse_client %}{% endblock %}" in template
-    assert 'x-data="{expanded: false, expandable: false}"' in template
-    assert "$refs.content.scrollHeight > $refs.content.clientHeight" in template
-    assert '@click.stop="expanded = !expanded"' in template
-    assert "expandedEntries" not in template
-    assert "fa-wave-square" not in template
-    assert "fa-comments" not in template
-    # Diagnostics must follow the selected Attempt or the display Invocation's
-    # primary Work Unit, rather than a newer auxiliary summary Attempt.
-    assert "get contextAttempt()" in template
-    assert "invocation.primary_work_unit_id" in template
-    assert "this.contextAttempt?.context" in template
-    assert "current_request_context" in template
-    assert "session_usage_total" in template
 
 
 @pytest.mark.asyncio

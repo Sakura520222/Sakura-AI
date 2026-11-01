@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock
 
@@ -12,7 +11,10 @@ from fastapi.routing import APIRoute
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.dialects import mysql, postgresql
 
+from backend.api.v1 import settings_webui
+from backend.api.v1.deps import require_api_super_admin
 from backend.services import database_reset_service as reset_module
+from backend.services import system_maintenance as system_config_routes
 from backend.services.database_reset_service import (
     DATABASE_RESET_CONFIRMATION,
     DatabaseObjectInventory,
@@ -26,14 +28,11 @@ from backend.webui.deps import (
     get_db,
     get_user_preferences,
     require_csrf_header,
-    require_super_admin,
 )
-from backend.webui.routes import system_config as system_config_routes
-from backend.webui.routes.system_config import router
 
 
 def _route(path: str, method: str) -> APIRoute:
-    for route in router.routes:
+    for route in settings_webui.router.routes:
         if (
             isinstance(route, APIRoute)
             and route.path == path
@@ -355,9 +354,9 @@ async def test_dispose_failure_cannot_mask_success_or_prevent_restart(monkeypatc
 
 
 def test_reset_route_requires_super_admin_and_header_csrf():
-    dependencies = _dependency_calls(_route("/system-config/reset-database", "POST"))
+    dependencies = _dependency_calls(_route("/webui/system/reset-database", "POST"))
 
-    assert require_super_admin in dependencies
+    assert require_api_super_admin in dependencies
     assert require_csrf_header in dependencies
     # 请求级 DB session 会一直存活到响应完成，并与 DROP TABLE 形成锁等待。
     assert get_db not in dependencies
@@ -365,22 +364,11 @@ def test_reset_route_requires_super_admin_and_header_csrf():
 
 
 def test_restart_route_requires_super_admin_csrf_and_audit_session():
-    dependencies = _dependency_calls(_route("/system-config/restart", "POST"))
+    dependencies = _dependency_calls(_route("/webui/system/restart", "POST"))
 
-    assert require_super_admin in dependencies
+    assert require_api_super_admin in dependencies
     assert require_csrf_header in dependencies
     assert get_db in dependencies
-
-
-def test_restart_button_waits_for_new_process_before_refreshing():
-    navbar = Path("backend/webui/templates/components/navbar.html").read_text(
-        encoding="utf-8"
-    )
-
-    assert "waitForApplicationRestart" in navbar
-    assert "fetch('/health', { cache: 'no-store' })" in navbar
-    assert "observedOffline || startupChanged" in navbar
-    assert "window.location.reload()" in navbar
 
 
 @pytest.mark.asyncio

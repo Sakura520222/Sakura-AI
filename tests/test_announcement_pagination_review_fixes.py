@@ -111,10 +111,20 @@ async def test_unread_filter_is_applied_before_pagination_and_ids_break_ties(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("resource_id", "expected"),
-    [(None, [12, 1]), ("1", [1]), ("12", [12]), ("01", []), ("1junk", []), ("1.0", []), ("13", [])],
+    [
+        (None, [12, 1]),
+        ("1", [1]),
+        ("12", [12]),
+        ("01", []),
+        ("1junk", []),
+        ("1.0", []),
+        ("13", []),
+    ],
 )
 async def test_unread_subscription_resource_ids_keep_text_matching(
-    sqlite_session, resource_id, expected,
+    sqlite_session,
+    resource_id,
+    expected,
 ):
     db = sqlite_session
     db.add(TelegramUser(id=1, telegram_id=1001, is_active=True))
@@ -122,21 +132,34 @@ async def test_unread_subscription_resource_ids_keep_text_matching(
     for announcement_id in (1, 12, 13):
         db.add(_published(announcement_id, published_at=published_at))
     db.add(AnnouncementRead(user_id=1, announcement_id=13))
-    db.add(NotificationSubscription(
-        user_id=1, event_type="announcement.*", enabled=True,
-        resource_type="announcement", resource_id=resource_id,
-    ))
+    db.add(
+        NotificationSubscription(
+            user_id=1,
+            event_type="announcement.*",
+            enabled=True,
+            resource_type="announcement",
+            resource_id=resource_id,
+        )
+    )
     await db.commit()
 
     first = await announcement_service.paginate_announcements(
-        db, user_id=1, page=1, per_page=1, unread_only=True,
+        db,
+        user_id=1,
+        page=1,
+        per_page=1,
+        unread_only=True,
     )
     assert first.total == len(expected)
     assert [row.id for row, _read in first.items] == expected[:1]
     assert await announcement_service.unread_count(db, 1) == len(expected)
     if len(expected) > 1:
         second = await announcement_service.paginate_announcements(
-            db, user_id=1, page=2, per_page=1, unread_only=True,
+            db,
+            user_id=1,
+            page=2,
+            per_page=1,
+            unread_only=True,
         )
         assert [row.id for row, _read in second.items] == expected[1:]
 
@@ -151,21 +174,19 @@ async def test_page_bounds_are_clamped_and_legacy_list_limit_remains_compatible(
         db.add(_published(announcement_id, published_at=published_at))
     await db.commit()
 
-    page = await announcement_service.paginate_announcements(
-        db, page=999, per_page=2
-    )
+    page = await announcement_service.paginate_announcements(db, page=999, per_page=2)
     assert page.page == 2
     assert page.total_pages == 2
     assert [row.id for row, _read in page.items] == [1]
 
-    legacy_rows = await announcement_service.list_announcements(
-        db, limit=2, offset=1
-    )
+    legacy_rows = await announcement_service.list_announcements(db, limit=2, offset=1)
     assert [row.id for row, _read in legacy_rows] == [2, 1]
 
 
 @pytest.mark.asyncio
-async def test_archived_current_round_is_returned_with_safe_history_body(sqlite_session):
+async def test_archived_current_round_is_returned_with_safe_history_body(
+    sqlite_session,
+):
     db = sqlite_session
     published_at = announcement_service.now_utc()
     announcement = _published(
@@ -198,15 +219,11 @@ async def test_archived_current_round_is_returned_with_safe_history_body(sqlite_
     assert "<strong>body</strong>" in history[0]["content_html"]
 
 
-def test_announcement_pages_and_guide_expose_the_new_contract():
+def test_telegram_setup_guide_exposes_the_new_contract():
+    """公告页模板已随 SPA 迁移删除；保留 Telegram 接入指南的契约断言。"""
     root = Path(__file__).resolve().parents[1]
-    user_page = (root / "backend/webui/templates/announcements.html").read_text(encoding="utf-8")
-    admin_page = (root / "backend/webui/templates/announcements_admin.html").read_text(encoding="utf-8")
     guide = (root / "docs/TELEGRAM_SETUP.md").read_text(encoding="utf-8")
 
-    assert "page={{ page + 1 }}" in user_page
-    assert "page={{ page + 1 }}" in admin_page
-    assert "round.content_html | safe" in admin_page
     assert "/start" in guide and "/bind" in guide
     assert "/status" not in guide
     assert "/user_add" not in guide

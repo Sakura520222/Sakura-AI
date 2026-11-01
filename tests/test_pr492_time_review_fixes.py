@@ -79,9 +79,7 @@ def test_all_reviewed_date_filter_routes_use_the_aware_boundary_helper():
     root = Path(__file__).parents[1]
     for relative in (
         "backend/api/v1/logs.py",
-        "backend/webui/routes/pr.py",
-        "backend/webui/routes/action_logs.py",
-        "backend/webui/routes/queue.py",
+        "backend/api/v1/reviews.py",
     ):
         source = (root / relative).read_text(encoding="utf-8")
         assert "parse_local_date_boundary" in source
@@ -221,11 +219,3 @@ def test_bootstrap_log_wall_clock_does_not_resolve_application_timezone(
     path = logging_bridge._create_startup_log_file(tmp_path, process_id=123)
 
     assert path.name.endswith("Z_pid123.log")
-
-
-def test_browser_time_formatter_includes_numeric_offset_label():
-    source = (
-        Path(__file__).parents[1] / "backend/webui/templates/base.html"
-    ).read_text(encoding="utf-8")
-
-    assert "timeZoneName: 'longOffset'" in source

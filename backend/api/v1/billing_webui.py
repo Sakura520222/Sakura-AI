@@ -1,9 +1,12 @@
 """JSON projections for the billing screens, using the existing payment services."""
 
 import json
+from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +22,12 @@ from backend.core.config import get_dynamic_config
 from backend.core.log_sanitizer import sanitize_exception_text
 from backend.core.time_service import format_rfc3339, now_utc
 from backend.models.payment_models import Order
-from backend.services.billing_account_pricing_service import configured_pricing_sources
+from backend.services.billing_account_pricing_service import (
+    configured_pricing_sources,
+    get_pricing_account,
+    pricing_account_models,
+)
+from backend.services.billing_price_identity import PRICING_CALL_KINDS
 from backend.services.billing_view_service import add_billing_admin_audit
 from backend.services.payment.currency_units import (
     CURRENCY_MINOR_EXPONENTS,
@@ -28,7 +36,13 @@ from backend.services.payment.currency_units import (
 )
 from backend.services.payment.gateway_factory import get_configured_providers
 from backend.services.payment_service import PaymentError, PaymentService
-from backend.webui.deps import get_db
+from backend.webui.deps import (
+    get_db,
+    get_user_preferences,
+    require_auth,
+    require_super_admin,
+)
+from backend.webui.i18n import detect_language
 
 router = APIRouter(prefix="/billing", tags=["Billing"], route_class=PrivateAPIRoute)
 
@@ -77,9 +91,116 @@ async def payment_invoice_status(
     db: AsyncSession = Depends(get_db),
 ):
     # Reuse provider confirmation and reconciliation; the browser cannot assert settlement.
-    from backend.webui.routes.billing import crypto_payment_status
-
     return await crypto_payment_status(request, db, user)
+
+
+async def crypto_payment_status(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+):
+    """轮询虚拟币支付状态（直接查询 NOWPayments API 获取实时状态）"""
+    order_no = request.query_params.get("order_no", "")
+    if not order_no:
+        return JSONResponse({"status": "unknown"}, status_code=400)
+
+    from sqlalchemy import select
+
+    from backend.models.payment_models import Order
+
+    stmt = select(Order).where(
+        Order.order_no == order_no,
+        Order.user_id == user["user_id"],
+    )
+    result = await db.execute(stmt)
+    order = result.scalar_one_or_none()
+    if not order:
+        return JSONResponse({"status": "unknown"}, status_code=404)
+
+    # 如果订单已经完成/失败/取消，直接返回数据库状态
+    if order.status in ("completed", "fulfilled", "failed", "cancelled", "refunded"):
+        db_status_map = {
+            "completed": "completed",
+            "fulfilled": "completed",
+            "failed": "failed",
+            "cancelled": "expired",
+            "refunded": "failed",
+        }
+        return JSONResponse({"status": db_status_map.get(order.status, order.status)})
+
+    # 对于 pending 状态，查询链上状态
+    if order.payment_provider == "nowpayments" and order.provider_tx_id:
+        try:
+            from backend.services.payment import get_gateway
+
+            gateway = await get_gateway("nowpayments")
+            api_result = await gateway.get_payment_status(order.provider_tx_id)
+            if api_result.success and api_result.raw_data:
+                raw_status = api_result.raw_data.get("payment_status", "")
+                # NOWPayments 状态 → 前端状态
+                nowpay_map = {
+                    "waiting": "waiting",
+                    "confirming": "confirming",
+                    "confirmed": "confirming",
+                    "sending": "confirming",
+                    "partially_paid": "confirming",
+                    "finished": "completed",
+                    "expired": "expired",
+                    "failed": "failed",
+                    "refunded": "failed",
+                }
+                front_status = nowpay_map.get(raw_status, "waiting")
+                return JSONResponse({"status": front_status})
+        except Exception:
+            pass  # 查询失败时 fallback 到数据库状态
+
+    elif order.payment_provider == "tron" and order.metadata_json:
+        try:
+            import json as _json
+
+            from backend.services.payment import get_gateway
+            from backend.services.payment.tron_gateway import TronGateway
+
+            md = _json.loads(order.metadata_json)
+            expected_usdt = Decimal(str(md.get("pay_amount", "0")))
+            if expected_usdt.is_finite() and expected_usdt > 0:
+                gateway = await get_gateway("tron")
+                if isinstance(gateway, TronGateway):
+                    api_result = await gateway.check_payment_by_amount(
+                        order.order_no,
+                        expected_usdt,
+                        min_block_timestamp=int(order.created_at.timestamp() * 1000),
+                    )
+                    if api_result.success and api_result.status == "completed":
+                        # 到账确认，触发订单完成
+                        try:
+                            svc = PaymentService(db)
+                            await svc.confirm_payment(
+                                order_no=order.order_no,
+                                provider_tx_id=api_result.provider_tx_id,
+                                paid_amount_cents=int(md["gateway_amount_cents"]),
+                                paid_currency=str(md["gateway_currency"]),
+                            )
+                            await db.commit()
+                        except Exception as exc:
+                            await db.rollback()
+                            logger.warning(
+                                "Tron payment fulfillment requires reconciliation: order={} error={}",
+                                order.order_no,
+                                type(exc).__name__,
+                            )
+                            return JSONResponse(
+                                {
+                                    "status": "confirming",
+                                    "error": "payment_reconciliation_required",
+                                }
+                            )
+                        return JSONResponse({"status": "completed"})
+        except Exception:
+            pass  # 查询失败时 fallback 到数据库状态
+
+    # fallback: 返回数据库的 pending → waiting
+    return JSONResponse({"status": "waiting"})
 
 
 class RefundNote(BaseModel):
@@ -325,10 +446,13 @@ async def list_admin_codes(
     }
 
 
+# Canonical pricing vocabularies for the SPA pricing editor (定价编辑器共享词表).
+_PRICING_CALL_KINDS = PRICING_CALL_KINDS
+_PRICING_UNITS = ("tokens", "requests", "documents", "search_units")
+
+
 @router.get("/admin/pricing-context")
 async def pricing_context(user: dict = Depends(require_api_super_admin)):
-    from backend.webui.routes.billing import _PRICING_CALL_KINDS, _PRICING_UNITS
-
     accounts, auxiliary = await configured_pricing_sources()
     return {
         "accounts": accounts,
@@ -348,7 +472,6 @@ async def pricing_models(
     user: dict = Depends(require_api_super_admin),
 ):
     from backend.webui.config_feedback import config_api_language
-    from backend.webui.routes.billing import admin_pricing_account_models
 
     return await admin_pricing_account_models(
         account_id,
@@ -358,6 +481,48 @@ async def pricing_models(
         user_prefs={"language": await config_api_language(db, user)},
         refresh=refresh,
     )
+
+
+async def admin_pricing_account_models(
+    account_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
+    refresh: bool = Query(False),
+):
+    lang = (
+        detect_language(user_prefs)
+        if isinstance(user_prefs, dict)
+        else detect_language()
+    )
+    account = await get_pricing_account(account_id)
+    if account is None or not account.enabled:
+        return JSONResponse(
+            {
+                "success": False,
+                "code": "account_unavailable",
+                "error": _account_pricing_message("account_unavailable", lang),
+            },
+            status_code=404,
+        )
+    try:
+        result = await pricing_account_models(account, refresh=refresh is True)
+    except Exception:
+        result = {
+            "account_id": account.id,
+            "models": list(account.models),
+            "default_model": account.default_model,
+            "source": "saved",
+            "discovery_failed": True,
+        }
+    return JSONResponse({"success": True, "data": result})
+
+
+def _account_pricing_message(code, lang):
+    from backend.webui.i18n import i18n
+
+    return i18n.t("billing.account_validation." + code, lang=lang)
 
 
 @router.get("/orders/{order_id}/refund-requests")

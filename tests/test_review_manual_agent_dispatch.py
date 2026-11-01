@@ -12,6 +12,7 @@ from backend.models.billing_models import BillingOperation, BillingWallet
 from backend.models.legacy_entitlement_models import RateLimitAdmission
 from backend.models.telegram_models import TelegramUser
 from backend.models.webhook_execution_models import WebhookExecutionReceipt
+from backend.services.agent_team import api_operations as routes
 from backend.services.agent_team.billing_admission import (
     AgentDeliveryClaim,
     claim_agent_delivery_worker,
@@ -19,7 +20,6 @@ from backend.services.agent_team.billing_admission import (
 )
 from backend.services.billing_service import BillingService
 from backend.services.webhook_execution_reconciliation import reconcile_receipt
-from backend.webui.routes import agent_team as routes
 from tests.billing_webui_fixtures import pricing_app as pricing_fixture
 from tests.test_agent_webui_atomic_admission import agent_app as agent_fixture
 from tests.test_agent_webui_atomic_admission import prepare
@@ -33,9 +33,9 @@ actual_background = routes._run_agent_task_background
 
 async def create(client, token):
     return await client.post(
-        "/agent-team/tasks/create-from-issue",
-        headers={"x-test-role": "user"},
-        data={"csrf_token": token, "issue_ref": "owner1/repo#5"},
+        "/api/v1/agent/tasks",
+        headers={"x-test-role": "user", "X-CSRF-Token": token},
+        json={"issue_ref": "owner1/repo#5"},
     )
 
 
@@ -64,9 +64,9 @@ async def test_create_ack_persists_receipt_and_queued_retry_keeps_original_admis
                 and receipt.source["origin"] == "webui"
             )
         retry = await client.post(
-            f"/agent-team/tasks/{task_id}/retry",
-            headers={"x-test-role": "user"},
-            data={"csrf_token": token},
+            f"/api/v1/agent/tasks/{task_id}/retry",
+            headers={"x-test-role": "user", "X-CSRF-Token": token},
+            json={},
         )
         assert retry.json()["success"]
     async with factory() as db:
@@ -121,9 +121,9 @@ async def test_duplicate_background_claims_run_one_worker_and_keep_original_paye
         response = await create(client, token)
         task_id = response.json()["task_id"]
         retried = await client.post(
-            f"/agent-team/tasks/{task_id}/retry",
-            headers={"x-test-role": "super_admin"},
-            data={"csrf_token": token},
+            f"/api/v1/agent/tasks/{task_id}/retry",
+            headers={"x-test-role": "super_admin", "X-CSRF-Token": token},
+            json={},
         )
         assert retried.json()["success"]
     async with factory() as db:
@@ -150,7 +150,8 @@ async def test_duplicate_background_claims_run_one_worker_and_keep_original_paye
             await db.commit()
 
     monkeypatch.setattr(
-        routes, "register_current_background_task", lambda *args: object()
+        "backend.services.agent_team.api_operations.register_current_background_task",
+        lambda *args: object(),
     )
     monkeypatch.setattr(
         "backend.workers.agent_team_worker.submit_agent_team_task", worker
@@ -177,7 +178,8 @@ async def test_reviewed_unknown_handoff_releases_hold_and_fences_late_worker(
     await prepare(factory)
     monkeypatch.setattr(routes, "_run_agent_task_background", actual_background)
     monkeypatch.setattr(
-        routes, "register_current_background_task", lambda *args: object()
+        "backend.services.agent_team.api_operations.register_current_background_task",
+        lambda *args: object(),
     )
     submit = AsyncMock(side_effect=RuntimeError("TEST unknown dispatch"))
     monkeypatch.setattr(
@@ -247,9 +249,9 @@ async def test_legacy_queued_admission_is_quarantined_without_new_financial_effe
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         retry = await client.post(
-            f"/agent-team/tasks/{task_id}/retry",
-            headers={"x-test-role": "user"},
-            data={"csrf_token": token},
+            f"/api/v1/agent/tasks/{task_id}/retry",
+            headers={"x-test-role": "user", "X-CSRF-Token": token},
+            json={},
         )
         assert (
             retry.status_code == 503
@@ -273,7 +275,9 @@ async def test_registration_failure_remains_retryable_then_worker_claim_finishes
     app, factory, token = agent_app
     await prepare(factory)
     monkeypatch.setattr(routes, "_run_agent_task_background", actual_background)
-    monkeypatch.setattr(routes, "register_current_background_task", lambda *args: None)
+    monkeypatch.setattr(
+        routes, "register_current_background_task", lambda *args: None
+    )
     submitted = AsyncMock()
     monkeypatch.setattr(
         "backend.workers.agent_team_worker.submit_agent_team_task", submitted
@@ -308,9 +312,9 @@ async def test_registration_failure_remains_retryable_then_worker_claim_finishes
             "backend.workers.agent_team_worker.submit_agent_team_task", worker
         )
         retry = await client.post(
-            f"/agent-team/tasks/{task_id}/retry",
-            headers={"x-test-role": "user"},
-            data={"csrf_token": token},
+            f"/api/v1/agent/tasks/{task_id}/retry",
+            headers={"x-test-role": "user", "X-CSRF-Token": token},
+            json={},
         )
         assert retry.json()["success"]
     async with factory() as db:
@@ -330,7 +334,8 @@ async def test_uncertain_submission_keeps_receipt_and_refuses_fresh_queued_charg
     await prepare(factory)
     monkeypatch.setattr(routes, "_run_agent_task_background", actual_background)
     monkeypatch.setattr(
-        routes, "register_current_background_task", lambda *args: object()
+        "backend.services.agent_team.api_operations.register_current_background_task",
+        lambda *args: object(),
     )
     submit = AsyncMock(side_effect=RuntimeError("TEST submission result unknown"))
     monkeypatch.setattr(
@@ -347,9 +352,9 @@ async def test_uncertain_submission_keeps_receipt_and_refuses_fresh_queued_charg
             assert receipt.status == "pending_reconciliation"
             original_operation = receipt.operation_id
         replay = await client.post(
-            f"/agent-team/tasks/{task_id}/retry",
-            headers={"x-test-role": "user"},
-            data={"csrf_token": token},
+            f"/api/v1/agent/tasks/{task_id}/retry",
+            headers={"x-test-role": "user", "X-CSRF-Token": token},
+            json={},
         )
         assert replay.status_code == 503 and not replay.json()["success"]
         assert replay.json()["code"] == "agent_dispatch_pending"
