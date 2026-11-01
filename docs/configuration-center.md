@@ -133,14 +133,14 @@ source hot reload so active synchronization state is not replaced.
 
 ## Browser behaviour and validation
 
-`FieldController` separates draft, confirmed value, request generation and version.
-Switches/selects save immediately; text/numbers debounce for 650 ms or flush on
-blur. IME composition suppresses submission. Writes are serialized, sibling
-versions refreshed, and old responses cannot replace a newer draft. Failures keep
-input with Retry. Conflicts require adopting the server value before editing
-again; changed remote values are never silently overwritten. BroadcastChannel and
-focus refresh reconcile tabs. Outstanding drafts/requests trigger a navigation
-warning. Credentials are never persisted in browser storage.
+The React `SettingsStore` separates drafts, confirmed values, request generations
+and durable revisions. Each field is saved explicitly; sensitive changes and
+resets require confirmation. Writes are serialized, sibling revisions are
+refreshed, and an earlier response cannot replace a newer draft. Failures retain
+the input for retry. Conflicts require explicitly adopting the server value;
+changed remote values are never silently overwritten. BroadcastChannel and focus
+refresh reconcile tabs. Outstanding drafts/requests trigger a navigation warning.
+Credentials are never persisted in browser storage.
 
 ```sh
 uv sync --locked
@@ -148,28 +148,29 @@ uv sync --locked
 uv run pytest -q
 uv run python run_ruff.py --check
 uv run python -m compileall -q backend
-cd tests/webui
-npm ci
-npm run check
-npm test
-npx playwright install chromium
-npm run e2e
+npm ci --prefix web
+npm run lint --prefix web
+npm test --prefix web
+npm run build --prefix web
+npm exec --prefix web -- playwright install chromium
+npm run e2e --prefix web
 ```
 
-On Windows, an installed Edge can be selected with `PLAYWRIGHT_CHANNEL=msedge`.
-CI installs Chromium. The browser fixture uses real routes and isolated SQLite,
-fixture-only authentication, and disables destructive/external effects. Tests
-exercise persistence, CSRF, permissions, secrets, nested/model reset, legacy
-aliasing, runtime recovery, two independent writer processes, debounce/IME, retry,
-navigation, language/theme and 1440/820/390 px layouts. Separate CI jobs run the
-transaction and independent-process suite against MySQL 8.4 and PostgreSQL 17.
-These fixtures do not establish fleet deployment performance. Real OAuth/provider calls and hardware
-authenticator ceremonies remain outside this fixture.
+CI and local Playwright tests use Chromium. The browser fixture serves the built
+React application against real routes and isolated SQLite, uses fixture-only
+authentication, and disables destructive/external effects. Browser and unit tests
+cover persistence, conflicts, reset, permissions, private drafts, navigation,
+language/theme and desktop/mobile layouts. Backend tests cover transaction
+boundaries, revisions, legacy API compatibility and independent writers. Separate
+CI jobs exercise database behavior against MySQL 8.4 and PostgreSQL 17. These
+fixtures do not establish fleet deployment performance. Virtual-authenticator
+tests exercise browser WebAuthn without real OAuth/provider calls or hardware.
 
-Production serves these ES modules directly; no React bundle exists at this
-baseline. JavaScript syntax, template rendering, Python compilation and browser
-tests validate the assets. Docker's existing backend copy includes them, so no
-production Node server is required.
+Production serves the matching prebuilt React bundle from `web/dist` through the
+backend. Git installations can fetch and verify a version-matched bundle without
+Node.js; source releases and Docker images include it. Node.js is needed for
+frontend development and CI builds, not as a production server. The retired
+Jinja templates and `tests/webui` suite are no longer used.
 
 ## Upgrade and rollback
 

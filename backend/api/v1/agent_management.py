@@ -15,6 +15,8 @@ from backend.api.v1.responses import success_response
 from backend.core.time_service import format_rfc3339, from_unix_timestamp
 from backend.models.agent_skill_models import AgentSkill
 from backend.models.agent_team_models import AgentTeamTask
+from backend.services.agent_team import api_operations as team
+from backend.services.agent_team.skill_helpers import _filter_skills, _metadata_list
 from backend.services.agent_team.skill_service import (
     MAX_SKILL_BYTES,
     MAX_SKILL_DIR_BYTES,
@@ -23,8 +25,6 @@ from backend.services.agent_team.skill_service import (
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.webui.deps import get_db, require_csrf_header
 from backend.webui.helpers.admin_log import log_admin_action
-from backend.webui.routes import agent_skills as skills
-from backend.webui.routes import agent_team as team
 
 router = APIRouter(
     prefix="/agent", tags=["Agent Management"], route_class=PrivateAPIRoute
@@ -73,14 +73,26 @@ class SkillState(BaseModel):
 
 def skill_view(skill: AgentSkill) -> SkillView:
     return SkillView(
-        **{key: getattr(skill, key) for key in (
-            "id", "name", "slug", "description", "when_to_use", "version",
-            "source_type", "source_url", "source_ref", "install_path", "file_count",
-            "requires",
-        )},
+        **{
+            key: getattr(skill, key)
+            for key in (
+                "id",
+                "name",
+                "slug",
+                "description",
+                "when_to_use",
+                "version",
+                "source_type",
+                "source_url",
+                "source_ref",
+                "install_path",
+                "file_count",
+                "requires",
+            )
+        },
         enabled=bool(skill.enabled),
-        allowed_tools=skills._metadata_list(skill.allowed_tools),
-        arguments=skills._metadata_list(skill.arguments),
+        allowed_tools=_metadata_list(skill.allowed_tools),
+        arguments=_metadata_list(skill.arguments),
         has_error=bool(skill.error_message),
         updated_at=format_rfc3339(skill.updated_at),
     )
@@ -96,10 +108,11 @@ async def list_skills(
 ):
     service = AgentSkillService()
     rows = await service.list_skills(db)
-    filtered = skills._filter_skills(rows, query=search, status=status, source=source)
+    filtered = _filter_skills(rows, query=search, status=status, source=source)
     return SkillList(
         items=[skill_view(row) for row in filtered],
-        total=len(rows), enabled=sum(bool(row.enabled) for row in rows),
+        total=len(rows),
+        enabled=sum(bool(row.enabled) for row in rows),
         sources=sorted({row.source_type for row in rows}),
         root=str(await service.resolve_root()),
     )
@@ -107,7 +120,8 @@ async def list_skills(
 
 @router.get("/skills/{skill_id}/files")
 async def skill_files(
-    skill_id: int, user: dict = Depends(require_api_super_admin),
+    skill_id: int,
+    user: dict = Depends(require_api_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
     skill = await db.get(AgentSkill, skill_id)
@@ -117,27 +131,41 @@ async def skill_files(
 
 
 async def audit_skill(db, user, action: str, skill: AgentSkill):
-    await log_admin_action(db, user["user_id"], action, "agent_skill", skill.id,
-                           {"slug": skill.slug, "name": skill.name, "enabled": bool(skill.enabled)})
+    await log_admin_action(
+        db,
+        user["user_id"],
+        action,
+        "agent_skill",
+        skill.id,
+        {"slug": skill.slug, "name": skill.name, "enabled": bool(skill.enabled)},
+    )
 
 
 @router.post("/skills/upload", dependencies=[Depends(require_csrf_header)])
 async def upload_skill(
-    skill_file: UploadFile = File(...), name: str = Form("", max_length=255),
-    user: dict = Depends(require_api_super_admin), db: AsyncSession = Depends(get_db),
+    skill_file: UploadFile = File(...),
+    name: str = Form("", max_length=255),
+    user: dict = Depends(require_api_super_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     filename = skill_file.filename or ""
     if not filename.lower().endswith((".md", ".zip")):
         raise HTTPException(422, "unsupported_skill_file")
-    limit = MAX_SKILL_DIR_BYTES if filename.lower().endswith(".zip") else MAX_SKILL_BYTES
+    limit = (
+        MAX_SKILL_DIR_BYTES if filename.lower().endswith(".zip") else MAX_SKILL_BYTES
+    )
     content = await skill_file.read(limit + 1)
     if len(content) > limit:
         raise HTTPException(413, "skill_upload_too_large")
     try:
         skill = await AgentSkillService().install_from_upload(
-            db, content=content, filename=filename, name=name, created_by=str(user["user_id"])
+            db,
+            content=content,
+            filename=filename,
+            name=name,
+            created_by=str(user["user_id"]),
         )
-    except (ValueError, UnicodeError):
+    except ValueError, UnicodeError:
         raise HTTPException(422, "invalid_skill_package") from None
     except Exception:
         logger.exception("Agent Skill upload failed")
@@ -148,7 +176,8 @@ async def upload_skill(
 
 @router.post("/skills/github", dependencies=[Depends(require_csrf_header)])
 async def install_github_skill(
-    body: GithubSkill, user: dict = Depends(require_api_super_admin),
+    body: GithubSkill,
+    user: dict = Depends(require_api_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -166,7 +195,9 @@ async def install_github_skill(
 
 @router.patch("/skills/{skill_id}", dependencies=[Depends(require_csrf_header)])
 async def toggle_skill(
-    skill_id: int, body: SkillState, user: dict = Depends(require_api_super_admin),
+    skill_id: int,
+    body: SkillState,
+    user: dict = Depends(require_api_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
     if await db.get(AgentSkill, skill_id) is None:
@@ -178,7 +209,8 @@ async def toggle_skill(
 
 @router.delete("/skills/{skill_id}", dependencies=[Depends(require_csrf_header)])
 async def delete_skill(
-    skill_id: int, user: dict = Depends(require_api_super_admin),
+    skill_id: int,
+    user: dict = Depends(require_api_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
     if await db.get(AgentSkill, skill_id) is None:
@@ -195,55 +227,95 @@ async def delete_skill(
 async def list_workspaces(user: dict = Depends(require_api_super_admin)):
     service = AgentTeamWorkspaceService()
     rows = await asyncio.to_thread(service.list_workspaces)
-    return {"root": str(service.base_dir), "items": jsonable_encoder([
-        team._workspace_info_to_dict(row) for row in rows
-    ]), "total_size_bytes": sum(row.total_size_bytes for row in rows)}
+    return {
+        "root": str(service.base_dir),
+        "items": jsonable_encoder([team._workspace_info_to_dict(row) for row in rows]),
+        "total_size_bytes": sum(row.total_size_bytes for row in rows),
+    }
 
 
 @router.get("/workspaces/{owner}/{name}/worktrees")
 async def list_worktrees(
-    owner: str, name: str, user: dict = Depends(require_api_super_admin),
+    owner: str,
+    name: str,
+    user: dict = Depends(require_api_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        worktrees = await asyncio.to_thread(AgentTeamWorkspaceService().list_worktrees, owner, name)
+        worktrees = await asyncio.to_thread(
+            AgentTeamWorkspaceService().list_worktrees, owner, name
+        )
     except ValueError:
         raise HTTPException(422, "invalid_workspace_path") from None
     ids = [row.task_id for row in worktrees if row.task_id is not None]
     statuses = {}
     if ids:
-        result = await db.execute(select(AgentTeamTask.id, AgentTeamTask.status).where(AgentTeamTask.id.in_(ids)))
+        result = await db.execute(
+            select(AgentTeamTask.id, AgentTeamTask.status).where(
+                AgentTeamTask.id.in_(ids)
+            )
+        )
         statuses = {row.id: row.status for row in result.all()}
-    return {"items": [{
-        "dir_name": row.dir_name, "task_id": row.task_id,
-        "branch_slug": row.branch_slug, "file_count": row.file_count,
-        "total_size_bytes": row.total_size_bytes,
-        "modified_at": format_rfc3339(from_unix_timestamp(row.modified_at)) if row.modified_at is not None else None,
-        "task_status": statuses.get(row.task_id),
-        "is_active": statuses.get(row.task_id) in team.AGENT_TEAM_ACTIVE_STATUSES,
-    } for row in worktrees]}
+    return {
+        "items": [
+            {
+                "dir_name": row.dir_name,
+                "task_id": row.task_id,
+                "branch_slug": row.branch_slug,
+                "file_count": row.file_count,
+                "total_size_bytes": row.total_size_bytes,
+                "modified_at": format_rfc3339(from_unix_timestamp(row.modified_at))
+                if row.modified_at is not None
+                else None,
+                "task_status": statuses.get(row.task_id),
+                "is_active": statuses.get(row.task_id)
+                in team.AGENT_TEAM_ACTIVE_STATUSES,
+            }
+            for row in worktrees
+        ]
+    }
 
 
 @router.delete("/workspaces/{owner}/{name}")
 async def delete_workspace(
-    owner: str, name: str, user: dict = Depends(require_api_super_admin),
-    db: AsyncSession = Depends(get_db), csrf: str = Depends(require_csrf_header),
+    owner: str,
+    name: str,
+    user: dict = Depends(require_api_super_admin),
+    db: AsyncSession = Depends(get_db),
+    csrf: str = Depends(require_csrf_header),
 ):
-    return await team.delete_workspace(db=db, user=user, csrf_token=csrf, repo_owner=owner, repo_name=name)
+    return await team.delete_workspace(
+        db=db, user=user, csrf_token=csrf, repo_owner=owner, repo_name=name
+    )
 
 
 @router.delete("/workspaces/{owner}/{name}/worktrees/{directory}")
 async def delete_worktree(
-    owner: str, name: str, directory: str,
-    user: dict = Depends(require_api_super_admin), db: AsyncSession = Depends(get_db),
+    owner: str,
+    name: str,
+    directory: str,
+    user: dict = Depends(require_api_super_admin),
+    db: AsyncSession = Depends(get_db),
     csrf: str = Depends(require_csrf_header),
 ):
-    return await team.delete_worktree(db=db, user=user, csrf_token=csrf, repo_owner=owner, repo_name=name, dir_name=directory)
+    return await team.delete_worktree(
+        db=db,
+        user=user,
+        csrf_token=csrf,
+        repo_owner=owner,
+        repo_name=name,
+        dir_name=directory,
+    )
 
 
 @router.post("/workspaces/{owner}/{name}/clean")
 async def clean_worktrees(
-    owner: str, name: str, user: dict = Depends(require_api_super_admin),
-    db: AsyncSession = Depends(get_db), csrf: str = Depends(require_csrf_header),
+    owner: str,
+    name: str,
+    user: dict = Depends(require_api_super_admin),
+    db: AsyncSession = Depends(get_db),
+    csrf: str = Depends(require_csrf_header),
 ):
-    return await team.clean_orphan_worktrees(db=db, user=user, csrf_token=csrf, repo_owner=owner, repo_name=name)
+    return await team.clean_orphan_worktrees(
+        db=db, user=user, csrf_token=csrf, repo_owner=owner, repo_name=name
+    )

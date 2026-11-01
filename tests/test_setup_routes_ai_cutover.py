@@ -1,7 +1,6 @@
 """Setup 路由旧 LLM supplier 流程硬切换测试。"""
 
 import json
-from types import SimpleNamespace
 
 import pytest
 
@@ -20,29 +19,6 @@ class _Request:
 
 def _response_json(response) -> dict:
     return json.loads(response.body)
-
-
-@pytest.mark.asyncio
-async def test_setup_page_loads_without_legacy_settings_attributes(monkeypatch):
-    """Setup 页面不能依赖已删除的旧 Settings AI 字段。"""
-    monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
-    monkeypatch.setattr(setup_route, "get_current_step", lambda: _async_value(0))
-    monkeypatch.setattr(setup_route, "get_missing_fields", lambda: _async_value([]))
-    monkeypatch.setattr(
-        setup_route,
-        "render_template",
-        lambda template, request, **context: {
-            "template": template,
-            "context": context,
-        },
-    )
-
-    result = await setup_route.setup_page(_Request())
-
-    assert result["template"] == "setup_wizard.html"
-    assert not hasattr(SimpleNamespace(), "openai_api_key")
-    assert not hasattr(SimpleNamespace(), "openai_api_base")
-    assert not hasattr(SimpleNamespace(), "openai_model")
 
 
 @pytest.mark.asyncio
@@ -129,7 +105,3 @@ class _FailIfCalled:
     def __call__(self, *args, **kwargs):
         self.called = True
         pytest.fail("旧 SetupService supplier 流程不应被调用")
-
-
-async def _async_value(value):
-    return value

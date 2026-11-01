@@ -1,22 +1,20 @@
-"""Setup Wizard 路由
+"""Setup Wizard legacy 数据路由（/setup/api/*）
 
-首次部署时的配置引导界面，免认证访问。
-完成后自动关闭，重定向到正常 WebUI。
+SPA 迁移后本模块仅保留路径含 ``/api/`` 的数据端点（backend/main.py 按路径
+过滤挂载）；HTML 页面路由已由 React SPA 与 /api/v1/setup 端点取代。
+``inspect_config_backup`` 与 ``complete_setup`` 亦被 backend/api/v1/setup.py 复用。
 """
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 from loguru import logger
 
 from backend.api.v1.deps import limiter
 from backend.core.bootstrap import (
-    _COOKIE_NAME,
     clear_bootstrap_cache,
     get_current_step,
     get_missing_fields,
-    get_setup_token,
     is_bootstrap_mode,
-    validate_setup_token,
     write_connection_config,
 )
 from backend.core.config import get_settings
@@ -32,49 +30,8 @@ from backend.services.config_backup_service import (
     ConfigBackupError,
     parse_config_backup,
 )
-from backend.webui.deps import get_templates, render_template
-from backend.webui.i18n import (
-    DEFAULT_LANGUAGE,
-    SUPPORTED_LANGUAGES,
-    i18n,
-    resolve_language,
-    set_language_cookie,
-)
 
 router = APIRouter(prefix="/setup", tags=["Setup Wizard"])
-templates = get_templates()
-
-
-def _set_setup_verified_cookie(response: RedirectResponse, token: str) -> None:
-    """写入仅可通过 HTTPS 传输的 Setup 验证 Cookie。"""
-    response.set_cookie(
-        key=_COOKIE_NAME,
-        value=token,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        path="/setup",
-    )
-
-
-def _lang_switch_response(lang: str) -> RedirectResponse:
-    """构造语言切换响应：设置 Cookie 并去掉 ?lang= 参数，避免重复切换。"""
-    response = RedirectResponse(url="/setup", status_code=302)
-    set_language_cookie(response, lang)
-    return response
-
-
-def _js_i18n_dict(lang: str) -> dict:
-    """构造注入模板的 JS 翻译字典（仅 setup.* 键，含默认语言回退）。"""
-    result: dict[str, str] = {}
-    for target in dict.fromkeys([lang, DEFAULT_LANGUAGE]):
-        if target not in SUPPORTED_LANGUAGES:
-            continue
-        for key, value in i18n.get_all_translations(target).items():
-            if key.startswith("setup."):
-                result.setdefault(key, value)
-    return result
-
 
 _AI_CONFIG_MIGRATION = {
     "success": False,
@@ -89,115 +46,6 @@ _AI_CONFIG_MIGRATION = {
 def _legacy_ai_migration_response() -> JSONResponse:
     """明确告知旧 Setup AI API 的迁移入口，不触发旧 supplier 流程。"""
     return JSONResponse(_AI_CONFIG_MIGRATION, status_code=410)
-
-
-def _check_bootstrap():
-    """检查是否处于 bootstrap 模式，已完成后拒绝访问"""
-    if not is_bootstrap_mode():
-        # 直接跳转登录页，避免与根路径路由产生重定向循环
-        return RedirectResponse(url="/auth/login", status_code=302)
-    return None
-
-
-def _has_valid_cookie(request: Request) -> bool:
-    """检查请求中是否已携带有效的 setup_verified Cookie。"""
-    token = get_setup_token()
-    if token is None:
-        return False
-    cookie_value = request.cookies.get(_COOKIE_NAME)
-    return cookie_value is not None and validate_setup_token(cookie_value)
-
-
-@router.get("/verify")
-async def verify_page(request: Request):
-    """Token 输入页"""
-    if not is_bootstrap_mode():
-        return RedirectResponse(url="/auth/login", status_code=302)
-    if _has_valid_cookie(request):
-        # 语言切换请求：跳转到 /setup 保持语言参数
-        if request.query_params.get("lang"):
-            return _lang_switch_response(request.query_params["lang"])
-        return RedirectResponse(url="/setup", status_code=302)
-    lang = resolve_language(request)
-    if request.query_params.get("lang"):
-        # 设置语言 Cookie 并保持在验证页
-        response = render_template(
-            "setup_verify.html",
-            request,
-            user_prefs={"language": lang},
-            error=None,
-        )
-        set_language_cookie(response, lang)
-        return response
-    return render_template(
-        "setup_verify.html",
-        request,
-        user_prefs={"language": lang},
-        error=None,
-    )
-
-
-@router.post("/verify")
-@limiter.limit("5/minute")
-async def verify_token(request: Request):
-    """验证 Token，通过后设置 Cookie 并重定向到 Setup Wizard"""
-    if not is_bootstrap_mode():
-        return RedirectResponse(url="/auth/login", status_code=302)
-
-    form = await request.form()
-    token = (form.get("token") or "").strip()
-
-    if validate_setup_token(token):
-        response = RedirectResponse(url="/setup", status_code=302)
-        verified_token = get_setup_token()
-        if verified_token is None:
-            return RedirectResponse(url="/setup/verify", status_code=302)
-        _set_setup_verified_cookie(response, verified_token)
-        return response
-
-    lang = resolve_language(request)
-    return render_template(
-        "setup_verify.html",
-        request,
-        user_prefs={"language": lang},
-        error=i18n.t("setup.verify_invalid", lang=lang),
-    )
-
-
-@router.get("")
-@router.get("/")
-async def setup_page(request: Request):
-    """Setup Wizard 主页面"""
-    redirect = _check_bootstrap()
-    if redirect:
-        return redirect
-
-    # 语言切换请求：设置 Cookie 后重定向（去掉 ?lang= 参数）
-    qlang = request.query_params.get("lang")
-    if qlang in SUPPORTED_LANGUAGES:
-        return _lang_switch_response(qlang)
-
-    lang = resolve_language(request)
-    current_step = await get_current_step()
-    missing = await get_missing_fields()
-
-    # 预填值：compose 部署时环境变量已固定 DATABASE_URL/REDIS_URL，
-    # 使 Setup Wizard 数据库步骤免手动输入；纯本地开发（无环境变量）时为空/默认值，行为不变。
-    settings = get_settings()
-    prefill_values = {
-        "database_url": (settings.database_url or "").strip(),
-        "redis_url": (settings.redis_url or "").strip(),
-    }
-
-    return render_template(
-        "setup_wizard.html",
-        request,
-        user_prefs={"language": lang},
-        current_step=current_step,
-        missing_fields=missing,
-        prefill_values=prefill_values,
-        js_i18n=_js_i18n_dict(lang),
-    )
 
 
 @router.get("/api/state")

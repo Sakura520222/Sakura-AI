@@ -67,18 +67,15 @@ def source(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 @pytest.mark.parametrize("repo_name", ["repo", "owner/repo"])
 async def test_legacy_open_resolves_live_state_without_replacing_user_content(
-    analysis_db, source, surface, repo_name
+    analysis_db, source, repo_name
 ):
     analysis_db.record.issue_state = None
     analysis_db.record.repo_name = repo_name
     analysis_db.session.commit()
 
-    response = await admission_tests._reanalyze(
-        surface, analysis_db.db, {"sub": "owner"}
-    )
+    response = await admission_tests._reanalyze(analysis_db.db, {"sub": "owner"})
 
     assert response.status_code == 200
     assert source.reads == [("owner", "repo")]
@@ -97,17 +94,12 @@ async def test_legacy_open_resolves_live_state_without_replacing_user_content(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
-async def test_legacy_live_closed_rejected_before_version_query(
-    analysis_db, source, surface
-):
+async def test_legacy_live_closed_rejected_before_version_query(analysis_db, source):
     analysis_db.record.issue_state = None
     analysis_db.session.commit()
     source.raw["state"] = "closed"
 
-    response = await admission_tests._reanalyze(
-        surface, analysis_db.db, {"sub": "owner"}
-    )
+    response = await admission_tests._reanalyze(analysis_db.db, {"sub": "owner"})
 
     assert response.status_code == 409
     assert len(analysis_db.statements) == 1
@@ -116,7 +108,6 @@ async def test_legacy_live_closed_rejected_before_version_query(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 @pytest.mark.parametrize(
     "failure",
     [
@@ -132,7 +123,7 @@ async def test_legacy_live_closed_rejected_before_version_query(
     ],
 )
 async def test_legacy_source_failures_are_safe_and_do_not_enqueue(
-    analysis_db, source, surface, failure, capfd
+    analysis_db, source, failure, capfd
 ):
     analysis_db.record.issue_state = None
     analysis_db.session.commit()
@@ -157,9 +148,7 @@ async def test_legacy_source_failures_are_safe_and_do_not_enqueue(
     else:
         source.raw = None
 
-    response = await admission_tests._reanalyze(
-        surface, analysis_db.db, {"sub": "owner"}
-    )
+    response = await admission_tests._reanalyze(analysis_db.db, {"sub": "owner"})
 
     assert response.status_code == 503
     assert json.loads(response.body)["success"] is False
@@ -172,16 +161,13 @@ async def test_legacy_source_failures_are_safe_and_do_not_enqueue(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 @pytest.mark.parametrize("state", ["open", "closed"])
-async def test_known_state_does_not_read_github(analysis_db, source, surface, state):
+async def test_known_state_does_not_read_github(analysis_db, source, state):
     analysis_db.record.issue_state = state
     analysis_db.session.commit()
     source.error = AssertionError("known states do not need source reads")
 
-    response = await admission_tests._reanalyze(
-        surface, analysis_db.db, {"sub": "owner"}
-    )
+    response = await admission_tests._reanalyze(analysis_db.db, {"sub": "owner"})
 
     assert response.status_code == (200 if state == "open" else 409)
     assert source.reads == []
@@ -190,15 +176,11 @@ async def test_known_state_does_not_read_github(analysis_db, source, surface, st
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
-async def test_null_state_out_of_scope_does_not_read_github(
-    analysis_db, source, surface
-):
+async def test_null_state_out_of_scope_does_not_read_github(analysis_db, source):
     analysis_db.record.issue_state = None
     analysis_db.session.commit()
 
-    response = await admission_tests._reanalyze(
-        surface, analysis_db.db, {"sub": "outsider"}
+    response = await admission_tests._reanalyze(analysis_db.db, {"sub": "outsider"}
     )
 
     assert response.status_code == 404
@@ -208,18 +190,15 @@ async def test_null_state_out_of_scope_does_not_read_github(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 @pytest.mark.parametrize("repo_name", ["another/repo", "owner/repo/extra", "", " repo"])
 async def test_legacy_repository_identity_must_match_authorized_row(
-    analysis_db, source, surface, repo_name
+    analysis_db, source, repo_name
 ):
     analysis_db.record.issue_state = None
     analysis_db.record.repo_name = repo_name
     analysis_db.session.commit()
 
-    response = await admission_tests._reanalyze(
-        surface, analysis_db.db, {"sub": "owner"}
-    )
+    response = await admission_tests._reanalyze(analysis_db.db, {"sub": "owner"})
 
     assert response.status_code == 503
     assert source.reads == []
@@ -228,28 +207,26 @@ async def test_legacy_repository_identity_must_match_authorized_row(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 @pytest.mark.parametrize(
     "error", [asyncio.CancelledError(), ReviewCancelledError("stop")]
 )
 async def test_legacy_resolution_propagates_cancellation(
-    analysis_db, source, surface, error
+    analysis_db, source, error
 ):
     analysis_db.record.issue_state = None
     analysis_db.session.commit()
     source.error = error
 
     with pytest.raises(type(error)):
-        await admission_tests._reanalyze(surface, analysis_db.db, {"sub": "owner"})
+        await admission_tests._reanalyze(analysis_db.db, {"sub": "owner"})
     assert len(analysis_db.statements) == 1
     source.submit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 @pytest.mark.parametrize("repo_name", ["repo", "owner/repo"])
 async def test_legacy_open_payload_reaches_real_worker_relation_and_persists_open(
-    monkeypatch, analysis_db, source, surface, repo_name
+    monkeypatch, analysis_db, source, repo_name
 ):
     """Use the worker's actual row creation and guarded save, plus real freshness."""
     from backend.models.database import IssueAnalysis
@@ -289,9 +266,7 @@ async def test_legacy_open_payload_reaches_real_worker_relation_and_persists_ope
         )
     )
     monkeypatch.setattr(reanalysis_admission, "GitHubAppClient", lambda: app)
-    response = await admission_tests._reanalyze(
-        surface, analysis_db.db, {"sub": "owner"}
-    )
+    response = await admission_tests._reanalyze(analysis_db.db, {"sub": "owner"})
     assert response.status_code == 200
     payload = source.submit.call_args.args[0]
 
@@ -471,9 +446,7 @@ async def test_legacy_open_payload_reaches_real_worker_relation_and_persists_ope
 
     # The historical NULL row remains a valid entrypoint after the normalized
     # worker record has been completed. Both names must share one version series.
-    response = await admission_tests._reanalyze(
-        surface, analysis_db.db, {"sub": "owner"}
-    )
+    response = await admission_tests._reanalyze(analysis_db.db, {"sub": "owner"})
     assert response.status_code == 200
     second_payload = source.submit.call_args.args[0]
     assert second_payload["analysis_version"] == 4
@@ -489,10 +462,9 @@ async def test_legacy_open_payload_reaches_real_worker_relation_and_persists_ope
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 @pytest.mark.parametrize("repo_name", ["repo", "owner/repo"])
 async def test_next_version_covers_short_and_full_names_with_same_owner_only(
-    analysis_db, source, surface, repo_name
+    analysis_db, source, repo_name
 ):
     from backend.models.database import IssueAnalysis
 
@@ -537,9 +509,7 @@ async def test_next_version_covers_short_and_full_names_with_same_owner_only(
     )
     analysis_db.session.commit()
 
-    response = await admission_tests._reanalyze(
-        surface, analysis_db.db, {"sub": "owner"}
-    )
+    response = await admission_tests._reanalyze(analysis_db.db, {"sub": "owner"})
 
     assert response.status_code == 200
     assert source.submit.call_args.args[0]["analysis_version"] == 6

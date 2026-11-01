@@ -453,7 +453,9 @@ async def test_pending_only_claim_rejects_pending_to_failed_race(
         )
         assert manual_token
     with Session(sqlite_engine) as session:
-        assert session.get(NotificationDelivery, 1).status == DeliveryStatus.FAILED.value
+        assert (
+            session.get(NotificationDelivery, 1).status == DeliveryStatus.FAILED.value
+        )
 
 
 @pytest.mark.asyncio
@@ -596,7 +598,9 @@ async def test_recovery_waits_for_unexpired_claim_and_can_be_cancelled(
             )
         )
         session.commit()
-    task = asyncio.create_task(announcement_service.recover_pending_announcement_deliveries())
+    task = asyncio.create_task(
+        announcement_service.recover_pending_announcement_deliveries()
+    )
     await asyncio.sleep(0.02)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -661,9 +665,7 @@ async def test_long_lease_does_not_block_other_recovery_work(
         return _AsyncSQLiteSession(Session(sqlite_engine))
 
     monkeypatch.setattr(database_module, "async_session", factory)
-    monkeypatch.setattr(
-        announcement_service, "_ANNOUNCEMENT_RECOVERY_WORKERS", 1
-    )
+    monkeypatch.setattr(announcement_service, "_ANNOUNCEMENT_RECOVERY_WORKERS", 1)
     ready = asyncio.Event()
     calls: list[int] = []
 
@@ -773,8 +775,13 @@ async def test_mixed_leased_and_unleased_rows_recover_without_waiting_for_lease(
         await asyncio.wait_for(called.wait(), timeout=0.5)
         assert calls == [1]
         with Session(sqlite_engine) as session:
-            assert session.get(NotificationDelivery, 1).status == DeliveryStatus.PENDING.value
-            assert session.get(NotificationDelivery, 2).status == DeliveryStatus.SENT.value
+            assert (
+                session.get(NotificationDelivery, 1).status
+                == DeliveryStatus.PENDING.value
+            )
+            assert (
+                session.get(NotificationDelivery, 2).status == DeliveryStatus.SENT.value
+            )
     finally:
         recovery.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -846,23 +853,13 @@ async def test_broadcast_uses_bounded_worker_pool_for_large_backlog(monkeypatch)
         created_workers += 1
         return real_create_task(coro, *args, **kwargs)
 
-    monkeypatch.setattr(notification_service.asyncio, "create_task", counting_create_task)
-    result = await service.broadcast_announcement(_DB(), announcement, expected_version=1)
+    monkeypatch.setattr(
+        notification_service.asyncio, "create_task", counting_create_task
+    )
+    result = await service.broadcast_announcement(
+        _DB(), announcement, expected_version=1
+    )
 
     assert result == {"sent": 100, "failed": 0, "skipped": 0}
     assert created_workers == 4
     assert max_active <= 4
-
-
-def test_admin_template_delete_is_limited_to_batch_deletable_ids():
-    from pathlib import Path
-
-    template = (
-        Path(__file__).parents[1]
-        / "backend/webui/templates/announcements_admin.html"
-    ).read_text(encoding="utf-8")
-    assert "item.id in (deletable_ids | default([]))" in template
-    assert (
-        "{% if item.status != 'published' %}<form method=\"post\" "
-        "action=\"/announcements/admin/{{ item.id }}/delete\""
-    ) not in template

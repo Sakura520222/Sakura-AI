@@ -87,35 +87,34 @@ async def test_chromadb_connection_failure_sanitizes_response_and_logs_traceback
     monkeypatch,
     loguru_capture,
 ):
-    """Exception 路径：响应返回固定脱敏消息，日志保留含敏感细节的完整 traceback。
+    """Exception 路径：API 返回固定脱敏消息，日志保留异常 traceback。
 
-    覆盖 backend/webui/routes/vector_db.py 的 ``logger.exception`` 修复（CodeQL 告警 37）——
-    若回退为 ``exc_info=True``，loguru 不记录 traceback，本测试会失败。
+    覆盖 backend/api/v1/console_data.py 的 ChromaDB 存储读取异常处理；
+    若异常详情泄漏到 API 响应或日志丢失 traceback，本测试会失败。
     """
-    from backend.webui.routes import vector_db
+    from fastapi import HTTPException
+
+    from backend.api.v1 import console_data
 
     sensitive_detail = "chromadb internal error: host=10.0.0.1 token=secret-token"
     monkeypatch.setattr(
-        vector_db,
+        console_data,
         "get_vector_store",
         Mock(side_effect=RuntimeError(sensitive_detail)),
     )
 
-    result = await vector_db.test_chromadb(
-        request=None,
-        user={"sub": "admin"},
-        _csrf="token",
-        user_prefs={},
-    )
+    with pytest.raises(HTTPException) as raised:
+        await console_data.collections(user={"sub": "admin"})
 
+    result = {"detail": raised.value.detail}
     log_output = loguru_capture.getvalue()
 
     # 响应脱敏：固定通用消息，不含任何内部细节
-    assert result["success"] is False
-    assert result["message"] == "ChromaDB 连接测试失败，请检查服务状态"
-    assert "secret-token" not in result["message"]
-    assert "10.0.0.1" not in result["message"]
-    assert "chromadb internal" not in result["message"]
+    assert raised.value.status_code == 503
+    assert result["detail"] == "ChromaDB 连接测试失败，请检查服务状态"
+    assert "secret-token" not in result["detail"]
+    assert "10.0.0.1" not in result["detail"]
+    assert "chromadb internal" not in result["detail"]
 
     # loguru 必须保留完整 traceback 与原始异常细节，供服务端排查
     assert "Traceback" in log_output

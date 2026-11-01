@@ -23,7 +23,7 @@
 │  │ (PR+Issue)   │  │              │  │              │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │    WebUI (Jinja2 + HTMX + Alpine.js) · SSE 实时推送   │   │
+│  │    WebUI (React + TypeScript + Vite) · SSE 实时推送   │   │
 │  ├──────────────────────────────────────────────────────┤   │
 │  │  Setup Wizard · 动态配置 · 仓库互助 · 法律页面 · 审计   │   │
 │  └──────────────────────────────────────────────────────┘   │
@@ -72,7 +72,7 @@
 ## 技术栈
 
 - **后端**：FastAPI（Python 3.14+）、SQLAlchemy（async）、PyGithub
-- **前端**：Jinja2 + Tailwind CSS + HTMX + Alpine.js
+- **前端**：React + TypeScript + Vite + Tailwind CSS；`/app/*` 单页应用与 `/api/v1` JSON 接口，生产使用版本匹配的预构建资源
 - **AI**：多协议适配层（OpenAI Chat Completions / Anthropic Messages / Gemini 原生 / 兼容端点），支持 OpenAI、Anthropic Claude、Google Gemini、xAI Grok、DeepSeek、Qwen、GLM、MiniMax、Kimi、Mistral、Ollama、vLLM 等
 - **存储**：MySQL 8.0（业务）、Redis（队列 / PubSub）、ChromaDB（向量检索）
 - **集成**：GitHub App + OAuth、Telegram Bot、Stripe / Paddle / 支付宝 / NOWPayments / TRON USDT
@@ -131,15 +131,15 @@ Sakura-AI/
 │   │   ├── security_audit_service.py     # 安全审计服务
 │   │   ├── secret_crypto_service.py      # 敏感数据加解密（仓库互助 token 等）
 │   │   └── system_config_service.py      # 系统核心配置管理
-│   ├── webui/             # WebUI 管理界面
-│   │   ├── routes/        #   路由（dashboard, config, users, agent_team, star_aid, billing, legal ...）
-│   │   ├── templates/     #   Jinja2 模板
-│   │   ├── translations/  #   i18n 文案（zh-CN / en）
+│   ├── webui/             # WebUI 共用基础设施（不再渲染 Jinja 页面）
+│   │   ├── routes/        #   SPA 入口、旧链接重定向及必要协议回调
+│   │   ├── translations/  #   后端消息及 React 编译文案（zh-CN / en）
 │   │   ├── auth.py        #   GitHub OAuth 认证
 │   │   └── sse.py         #   SSE 实时推送
 │   ├── workers/           # 后台任务（review / issue / scan / agent_team / star_aid worker）
 │   ├── telegram/          # Telegram Bot（通知、命令、按钮菜单、权限）
 │   └── main.py            # FastAPI 应用入口
+├── web/                   # React 源码、构建脚本、单元测试和 Playwright 回归
 ├── config/                # Setup 连接配置（connection.json）
 ├── docker/                # Docker Compose 部署
 ├── docs/                  # 项目文档
@@ -155,7 +155,8 @@ Sakura-AI/
 | `backend/core/` | 配置单例 `get_settings()`、动态配置、Setup Wizard、bootstrap、AI Provider 注册表、Redis 基础设施、日志、认证 |
 | `backend/models/` | SQLAlchemy 异步模型、数据库初始化、自动迁移、默认配置插入 |
 | `backend/services/` | 全部业务逻辑：PR/Issue 审查、AI agent 工具链、队列调度、支付、安全、RAG、ChromaDB 索引 |
-| `backend/webui/` | 根路径挂载的 HTML/WebUI 路由、认证、SSE、页面辅助、i18n 文案 |
+| `backend/webui/` | SPA 入口与旧链接重定向、必要协议回调、共用认证/SSE/i18n；业务操作由版本化 API 和服务承接 |
+| `web/` | React + TypeScript 应用、Vite 构建、前端单元测试与浏览器回归 |
 | `backend/workers/` | 异步审查、Issue、扫描、Agent Team、仓库互助等后台工作 |
 | `backend/telegram/` | Telegram Bot 通知与命令 |
 

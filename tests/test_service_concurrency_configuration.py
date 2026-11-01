@@ -7,19 +7,15 @@ from pydantic import ValidationError
 from backend.api.v1.billing import PlanCreateRequest, PlanUpdateRequest
 from backend.core.config import (
     DYNAMIC_CONFIG_GROUPS,
-    DYNAMIC_CONFIG_RANGES,
-    DYNAMIC_CONFIG_SELECT_OPTIONS,
     Settings,
     get_all_dynamic_config_keys,
 )
 from backend.models.payment_models import Plan
 from backend.services.billing_service import BillingError, BillingService
+from backend.services.config_center_service import ConfigError, validate_field
+from backend.services.config_metadata import field_catalog
 from backend.services.legacy_entitlement_service import LegacyEntitlementService
 from backend.webui import deps
-from backend.webui.routes.config import (
-    _DynamicConfigValidationError,
-    _validate_dynamic_config_value,
-)
 from tests.billing_webui_fixtures import pricing_app as pricing_fixture
 from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
 
@@ -35,14 +31,8 @@ pricing_app = pricing_fixture
 def test_service_capacity_rejects_nonpositive_settings_and_form_values(key, value):
     with pytest.raises(ValidationError):
         Settings(**{key: value})
-    with pytest.raises(_DynamicConfigValidationError):
-        _validate_dynamic_config_value(
-            key,
-            str(value),
-            expected_type=int,
-            ranges=DYNAMIC_CONFIG_RANGES,
-            select_options=DYNAMIC_CONFIG_SELECT_OPTIONS,
-        )
+    with pytest.raises(ConfigError):
+        validate_field(field_catalog()["global/" + key], str(value), strict=False)
 
 
 @pytest.mark.parametrize(
@@ -59,14 +49,8 @@ def test_shared_capacity_infrastructure_settings_have_matching_form_bounds(
 ):
     with pytest.raises(ValidationError):
         Settings(**{key: invalid})
-    with pytest.raises(_DynamicConfigValidationError):
-        _validate_dynamic_config_value(
-            key,
-            str(invalid),
-            expected_type=expected_type,
-            ranges=DYNAMIC_CONFIG_RANGES,
-            select_options=DYNAMIC_CONFIG_SELECT_OPTIONS,
-        )
+    with pytest.raises(ConfigError):
+        validate_field(field_catalog()["global/" + key], str(invalid), strict=False)
 
 
 def test_shared_capacity_settings_registered_once_without_agent_budget():

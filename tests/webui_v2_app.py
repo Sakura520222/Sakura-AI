@@ -70,6 +70,7 @@ class FixtureRedis:
         if key in self.values:
             self.values[key] = (self.values[key][0], monotonic() + ttl)
 
+
 app.include_router(webui.router, prefix="/api/v1")
 app.include_router(spa.router)
 app.include_router(auth_webui.router, prefix="/api/v1")
@@ -90,29 +91,83 @@ _base_lifespan = app.router.lifespan_context
 async def browser_lifespan(application):
     async with _base_lifespan(application):
         async with fixture.engine.begin() as connection:
-            await connection.run_sync(lambda conn: Base.metadata.create_all(conn, tables=[
-                AgentSkill.__table__, RepoScan.__table__, ScanFinding.__table__,
-                ReviewQueue.__table__, NotificationLockoutRound.__table__,
-            ]))
+            await connection.run_sync(
+                lambda conn: Base.metadata.create_all(
+                    conn,
+                    tables=[
+                        AgentSkill.__table__,
+                        RepoScan.__table__,
+                        ScanFinding.__table__,
+                        ReviewQueue.__table__,
+                        NotificationLockoutRound.__table__,
+                    ],
+                )
+            )
         async with fixture.sessions() as db:
-            db.add_all([
-                RepoScan(id=1, repo_name="browser-fixture", repo_owner="owner", trigger_type="manual", status="completed", progress=100, overall_health_score=0, total_findings=1),
-                ScanFinding(id=1, scan_id=1, file_path="example.py", line_start=12, severity="major", category="reliability", title="Fixture finding", description="A browser fixture finding.", suggestion="Review the fixture."),
-                ReviewQueue(id=11, pr_id=42, repo_name="owner/browser-fixture", action="opened", status="failed", error_message="Fixture failure"),
-                ReviewQueue(id=12, pr_id=43, repo_name="owner/browser-fixture", action="opened", status="completed"),
-            ])
+            db.add_all(
+                [
+                    RepoScan(
+                        id=1,
+                        repo_name="browser-fixture",
+                        repo_owner="owner",
+                        trigger_type="manual",
+                        status="completed",
+                        progress=100,
+                        overall_health_score=0,
+                        total_findings=1,
+                    ),
+                    ScanFinding(
+                        id=1,
+                        scan_id=1,
+                        file_path="example.py",
+                        line_start=12,
+                        severity="major",
+                        category="reliability",
+                        title="Fixture finding",
+                        description="A browser fixture finding.",
+                        suggestion="Review the fixture.",
+                    ),
+                    ReviewQueue(
+                        id=11,
+                        pr_id=42,
+                        repo_name="owner/browser-fixture",
+                        action="opened",
+                        status="failed",
+                        error_message="Fixture failure",
+                    ),
+                    ReviewQueue(
+                        id=12,
+                        pr_id=43,
+                        repo_name="owner/browser-fixture",
+                        action="opened",
+                        status="completed",
+                    ),
+                ]
+            )
             await db.commit()
         redis = FixtureRedis()
         skills = AgentSkillService(Path(fixture.temporary.name) / "skills")
-        workspaces = AgentTeamWorkspaceService(Path(fixture.temporary.name) / "workspaces")
+        workspaces = AgentTeamWorkspaceService(
+            Path(fixture.temporary.name) / "workspaces"
+        )
         with (
             patch.object(AgentSkillService, "list_skills", _real_list_skills),
             patch.object(agent_management, "AgentSkillService", lambda: skills),
-            patch.object(agent_management, "AgentTeamWorkspaceService", lambda: workspaces),
-            patch.object(agent_management.team, "AgentTeamWorkspaceService", lambda: workspaces),
-            patch.object(webauthn_service, "get_async_redis", AsyncMock(return_value=redis)),
-            patch.object(fixture.settings, "get_async_redis", AsyncMock(return_value=redis)),
-            patch.object(mfa_lockout_service, "get_async_redis", AsyncMock(return_value=redis)),
+            patch.object(
+                agent_management, "AgentTeamWorkspaceService", lambda: workspaces
+            ),
+            patch.object(
+                agent_management.team, "AgentTeamWorkspaceService", lambda: workspaces
+            ),
+            patch.object(
+                webauthn_service, "get_async_redis", AsyncMock(return_value=redis)
+            ),
+            patch.object(
+                personal_security, "get_async_redis", AsyncMock(return_value=redis)
+            ),
+            patch.object(
+                mfa_lockout_service, "get_async_redis", AsyncMock(return_value=redis)
+            ),
             patch.object(get_settings(), "passkeys_rp_id", "localhost"),
             patch.object(get_settings(), "passkeys_origin", "http://localhost:8768"),
             patch.object(get_settings(), "passkeys_enabled", True),

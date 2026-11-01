@@ -78,8 +78,6 @@ deploy.py
 .deploy_state.json
 .claude/
 node_modules/
-tests/webui/test-results/
-tests/webui/playwright-report/
 web/test-results/
 web/playwright-report/
 web/*.tsbuildinfo

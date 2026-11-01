@@ -1,7 +1,5 @@
 """Pricing persistence and authorization contracts. Browser controls are covered in Billing.test.tsx."""
 
-import json
-
 import httpx
 import pytest
 from sqlalchemy import select
@@ -9,9 +7,7 @@ from sqlalchemy import select
 from backend.models.admin_action_log import AdminActionLog
 from backend.models.billing_models import BillingPriceProfile
 from backend.services.billing_service import BillingService
-from backend.webui import deps
 from tests.billing_webui_fixtures import pricing_app as pricing_app_fixture
-from tests.billing_webui_fixtures import pricing_fields, seed_language
 from tests.billing_webui_fixtures import sql_runtime as runtime_fixture
 from tests.test_billing_credits_api import TEST_PRICE
 from tests.test_billing_credits_api import billing_client as billing_client_fixture
@@ -22,29 +18,47 @@ billing_client = billing_client_fixture
 
 
 @pytest.mark.asyncio
-async def test_structured_prices_normalize_unit_and_publish_immutable_versions(
-    pricing_app,
-):
-    app, factory, csrf_token = pricing_app
-    await seed_language(factory)
+async def test_structured_prices_publish_immutable_canonical_versions(pricing_app):
+    app, factory, _csrf_token = pricing_app
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
-        cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         response = await client.post(
-            "/billing/admin/pricing",
-            data=pricing_fields(csrf_token),
-            headers={"Accept": "application/json"},
+            "/api/v1/billing/admin/pricing",
+            json={
+                "provider_id": "openai",
+                "model_id": "test-priced-model",
+                "call_kind": "chat",
+                "config": {
+                    **TEST_PRICE,
+                    "fx_rate": "7",
+                    "markup": "1.25",
+                    "input_price": "3",
+                    "output_price": "9",
+                    "cache_read_supported": False,
+                },
+            },
         )
         assert response.status_code == 200, response.text
-        assert response.json()["ok"] is True
+        assert response.json()["version"] == 1
         response = await client.post(
-            "/billing/admin/pricing",
-            data=pricing_fields(csrf_token, input_price="0.004"),
-            headers={"Accept": "application/json"},
+            "/api/v1/billing/admin/pricing",
+            json={
+                "provider_id": "openai",
+                "model_id": "test-priced-model",
+                "call_kind": "chat",
+                "config": {
+                    **TEST_PRICE,
+                    "fx_rate": "7",
+                    "markup": "1.25",
+                    "input_price": "4",
+                    "output_price": "9",
+                    "cache_read_supported": False,
+                },
+            },
         )
         assert response.status_code == 200, response.text
+        assert response.json()["version"] == 2
     async with factory() as db:
         prices = (
             (
@@ -55,6 +69,7 @@ async def test_structured_prices_normalize_unit_and_publish_immutable_versions(
             .scalars()
             .all()
         )
+        # A new publish appends a version; earlier versions stay byte-identical.
         assert [price.version for price in prices] == [1, 2]
         assert prices[0].config["input_price"] == "3"
         assert prices[1].config["input_price"] == "4"
@@ -69,23 +84,27 @@ async def test_structured_prices_normalize_unit_and_publish_immutable_versions(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("unit", ["requests", "documents", "search_units"])
 async def test_non_token_editor_prices_native_meter(pricing_app, unit):
-    app, factory, csrf_token = pricing_app
-    await seed_language(factory)
+    app, factory, _csrf_token = pricing_app
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
-        cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         response = await client.post(
-            "/billing/admin/pricing",
-            data=pricing_fields(
-                csrf_token,
-                unit=unit,
-                meter=unit,
-                unit_price="0.00000001",
-                call_kind="rerank",
-            ),
-            headers={"Accept": "application/json"},
+            "/api/v1/billing/admin/pricing",
+            json={
+                "provider_id": "openai",
+                "model_id": "native-meter-model",
+                "call_kind": "rerank",
+                "config": {
+                    "currency": "USD",
+                    "settlement_currency": "CNY",
+                    "fx_rate": "7",
+                    "markup": "1.25",
+                    "credits_per_currency_unit": "10",
+                    "unit": unit,
+                    "meter": unit,
+                    "unit_price": "0.00000001",
+                },
+            },
         )
     assert response.status_code == 200, response.text
     async with factory() as db:
@@ -97,64 +116,25 @@ async def test_non_token_editor_prices_native_meter(pricing_app, unit):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "changes,field",
-    [
-        ({"fx_rate": ""}, "fx_rate"),
-        ({"markup": "0"}, "markup"),
-        ({"input_price": "NaN"}, "input_price"),
-        ({"currency": "US"}, "currency"),
-        ({"token_scale": "100"}, "token_scale"),
-    ],
-)
-async def test_editor_invalid_fields_are_localized_without_persistence(
-    pricing_app, changes, field
-):
-    app, factory, csrf_token = pricing_app
-    await seed_language(factory)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
-        cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
-    ) as client:
-        response = await client.post(
-            "/billing/admin/pricing",
-            data=pricing_fields(csrf_token, **changes),
-            headers={"Accept": "application/json"},
-        )
-    assert response.status_code == 400, response.text
-    assert response.json()["errors"][0]["field"] == field
-    assert "无效" not in response.json()["errors"][0]["message"]
-    async with factory() as db:
-        assert (await db.execute(select(BillingPriceProfile))).scalars().all() == []
-        assert (await db.execute(select(AdminActionLog))).scalars().all() == []
-
-
-@pytest.mark.asyncio
 async def test_advanced_json_stays_compatible_and_rejects_floats(pricing_app):
-    app, factory, csrf_token = pricing_app
-    await seed_language(factory)
+    app, factory, _csrf_token = pricing_app
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
-        cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         legacy = {
-            "csrf_token": csrf_token,
             "provider_id": "openai",
             "model_id": "legacy-api-editor-model",
             "call_kind": "chat",
-            "config": json.dumps(TEST_PRICE),
+            "config": TEST_PRICE,
         }
-        response = await client.post("/billing/admin/pricing", data=legacy)
-        assert response.status_code == 302
+        response = await client.post("/api/v1/billing/admin/pricing", json=legacy)
+        assert response.status_code == 200, response.text
         response = await client.post(
-            "/billing/admin/pricing",
-            data={**legacy, "config": json.dumps({**TEST_PRICE, "fx_rate": 1.1})},
-            headers={"Accept": "application/json"},
+            "/api/v1/billing/admin/pricing",
+            json={**legacy, "config": {**TEST_PRICE, "fx_rate": 1.1}},
         )
         assert response.status_code == 400, response.text
-        assert response.json()["errors"][0]["field"] == "config"
+        assert response.json()["detail"]["code"] == "invalid_billing_config"
     async with factory() as db:
         assert len((await db.execute(select(BillingPriceProfile))).scalars().all()) == 1
 
@@ -192,26 +172,3 @@ async def test_loading_a_price_for_editing_preserves_its_published_version(
             .all()
         )
         assert [(row.id, row.config) for row in rows] == [(profile_id, snapshot)]
-
-
-@pytest.mark.asyncio
-async def test_pricing_editor_keeps_superadmin_and_csrf_authority(pricing_app):
-    app, factory, csrf_token = pricing_app
-    await seed_language(factory)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
-        cookies={deps.WEBUI_TOKEN_COOKIE_NAME: "isolated-token"},
-    ) as client:
-        response = await client.post(
-            "/billing/admin/pricing", data=pricing_fields("invalid-csrf")
-        )
-        assert response.status_code == 403
-        response = await client.post(
-            "/billing/admin/pricing",
-            data=pricing_fields(csrf_token),
-            headers={"x-test-role": "user"},
-        )
-        assert response.status_code == 403
-    async with factory() as db:
-        assert (await db.execute(select(BillingPriceProfile))).scalars().all() == []

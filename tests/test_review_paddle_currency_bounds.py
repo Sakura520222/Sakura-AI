@@ -11,19 +11,16 @@ from sqlalchemy import select
 from backend.api.v1 import config as config_api
 from backend.api.v1.deps import require_api_super_admin
 from backend.core.config import (
-    DYNAMIC_CONFIG_RANGES,
     DYNAMIC_CONFIG_SELECT_OPTIONS,
     Settings,
     get_settings,
     validate_currency_config_value,
 )
 from backend.models.database import AppConfig
+from backend.services.config_center_service import ConfigError, validate_field
+from backend.services.config_metadata import field_catalog
 from backend.services.payment.paddle_gateway import PaddleGateway
 from backend.webui.deps import get_db
-from backend.webui.routes.config import (
-    _DynamicConfigValidationError,
-    _validate_dynamic_config_value,
-)
 from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
 
 sql_runtime = runtime_fixture
@@ -47,14 +44,8 @@ def test_config_validation_rejects_paddle_unsupported_codes(code):
         validate_currency_config_value("paddle_currency", code)
     with pytest.raises(ValidationError):
         Settings(paddle_currency=code)
-    with pytest.raises(_DynamicConfigValidationError):
-        _validate_dynamic_config_value(
-            "paddle_currency",
-            code,
-            expected_type=str,
-            ranges=DYNAMIC_CONFIG_RANGES,
-            select_options=DYNAMIC_CONFIG_SELECT_OPTIONS,
-        )
+    with pytest.raises(ConfigError):
+        validate_field(field_catalog()["global/paddle_currency"], code)
     assert validate_currency_config_value("payment_default_currency", code) == code
 
 

@@ -11,6 +11,10 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from backend.api.v1.announcements import (
+    AnnouncementCreateRequest,
+    _request_publishes,
+)
 from backend.models import Base
 from backend.models.announcement_models import (
     Announcement,
@@ -23,7 +27,6 @@ from backend.models.announcement_models import (
 from backend.models.identity_models import NotificationEndpoint
 from backend.models.telegram_models import TelegramUser
 from backend.services import announcement_service, notification_service
-from backend.webui.routes.announcements import _publish_action
 
 
 class _AsyncSQLiteSession:
@@ -211,9 +214,13 @@ async def test_email_security_modes_use_only_supported_context_arguments(
 
 
 @pytest.mark.asyncio
-async def test_republish_resets_current_state_and_archives_old_round(sqlite_sessions, monkeypatch):
+async def test_republish_resets_current_state_and_archives_old_round(
+    sqlite_sessions, monkeypatch
+):
     db, _other = sqlite_sessions
-    monkeypatch.setattr(announcement_service, "schedule_announcement_broadcast", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        announcement_service, "schedule_announcement_broadcast", lambda *_a, **_k: None
+    )
     db.add(TelegramUser(id=1, telegram_id=1001, is_active=True))
     db.add(
         NotificationEndpoint(
@@ -255,19 +262,23 @@ async def test_republish_resets_current_state_and_archives_old_round(sqlite_sess
         (2, DeliveryStatus.PENDING.value, 0)
     }
     history = (
-        await db.execute(
-            select(AnnouncementPublicationHistory).order_by(
-                AnnouncementPublicationHistory.publication_version
+        (
+            await db.execute(
+                select(AnnouncementPublicationHistory).order_by(
+                    AnnouncementPublicationHistory.publication_version
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert [(row.publication_version, row.title, row.content) for row in history] == [
         (1, "Old title", "Old body"),
         (2, "New title", "New body"),
     ]
     old_delivery = (
-        await db.execute(select(AnnouncementDeliveryHistory))
-    ).scalars().all()
+        (await db.execute(select(AnnouncementDeliveryHistory))).scalars().all()
+    )
     assert [(row.status, row.attempts) for row in old_delivery] == [
         (DeliveryStatus.SENT.value, 1),
         (DeliveryStatus.SENT.value, 1),
@@ -281,15 +292,15 @@ async def test_republish_resets_current_state_and_archives_old_round(sqlite_sess
 @pytest.mark.asyncio
 async def test_stale_worker_cannot_write_after_republish(sqlite_sessions, monkeypatch):
     db, other = sqlite_sessions
-    monkeypatch.setattr(announcement_service, "schedule_announcement_broadcast", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        announcement_service, "schedule_announcement_broadcast", lambda *_a, **_k: None
+    )
     db.add(TelegramUser(id=1, telegram_id=1001, is_active=True))
     await db.commit()
     announcement = await announcement_service.create_announcement(
         db, title="Before", content="Before body", publish=True
     )
-    delivery = (
-        await db.execute(select(NotificationDelivery))
-    ).scalars().first()
+    delivery = (await db.execute(select(NotificationDelivery))).scalars().first()
     provider_calls = []
 
     class _RepublishOnSend:
@@ -306,9 +317,7 @@ async def test_stale_worker_cannot_write_after_republish(sqlite_sessions, monkey
             )
 
     service = notification_service.NotificationService(
-        notification_service.NotificationProviderRegistry(
-            {"web": _RepublishOnSend()}
-        )
+        notification_service.NotificationProviderRegistry({"web": _RepublishOnSend()})
     )
     result = await service._deliver_one(
         db,
@@ -362,8 +371,8 @@ async def test_legacy_withdrawn_edit_captures_old_body_before_draft_save(
         db, legacy.id, content="Edited draft"
     )
     snapshot = (
-        await db.execute(select(AnnouncementPublicationHistory))
-    ).scalars().one()
+        (await db.execute(select(AnnouncementPublicationHistory))).scalars().one()
+    )
     assert snapshot.content == "Legacy body"
     assert snapshot.archived_at is not None
 
@@ -373,6 +382,16 @@ async def test_legacy_withdrawn_edit_captures_old_body_before_draft_save(
 
 
 def test_admin_actions_keep_publish_primary_and_draft_secondary():
-    assert _publish_action("save_and_publish") is True
-    assert _publish_action("draft") is False
-    assert _publish_action(None) is True
+    # 发布仍是主操作；仅显式 action/draft 才生成草稿（JSON API 契约）。
+    def publishes(**kwargs):
+        return _request_publishes(
+            AnnouncementCreateRequest(title="t", content="c", **kwargs)
+        )
+
+    assert publishes(action="save_and_publish") is True
+    assert publishes(action="save-and-publish") is True
+    assert publishes(action="draft") is False
+    assert publishes(send=True) is True
+    assert publishes(send=False) is False
+    assert publishes(action=None, publish=True) is True
+    assert publishes() is False

@@ -19,16 +19,53 @@ from backend.core.time_service import (
     filename_timestamp,
     format_rfc3339,
     get_time_service,
+    parse_local_date_boundary,
 )
 from backend.models.database import PRReview, ReviewComment
 from backend.webui.deps import (
+    build_review_search_filter,
     build_user_scope_filter,
     get_db,
     paginate,
 )
-from backend.webui.routes.pr import apply_review_filters
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
+
+
+def apply_review_filters(
+    query, *, search="", repo="", status="", decision="", date_from="", date_to=""
+):
+    """Apply the same filters to the PR list, count, and CSV export."""
+    search_filter = build_review_search_filter(search)
+    if search_filter is not None:
+        query = query.where(search_filter)
+    if repo:
+        if "/" in repo:
+            owner, name = repo.split("/", 1)
+            query = query.where(
+                PRReview.repo_owner == owner, PRReview.repo_name == name
+            )
+        else:
+            # Accept old /logs/?repo=name bookmarks during the migration.
+            query = query.where(PRReview.repo_name == repo)
+    if status:
+        query = query.where(PRReview.status == status)
+    if decision:
+        query = query.where(PRReview.decision == decision)
+    for value, operator, exclusive_end in (
+        (date_from, PRReview.created_at.__ge__, False),
+        (date_to, PRReview.created_at.__lt__, True),
+    ):
+        if value:
+            try:
+                boundary = parse_local_date_boundary(
+                    value, get_time_service().zone, exclusive_end=exclusive_end
+                )
+            except ValueError:
+                continue
+            query = query.where(operator(boundary))
+    return query
+
 
 OVERALL_COMMENT = "__overall__"
 

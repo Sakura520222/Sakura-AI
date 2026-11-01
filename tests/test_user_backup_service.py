@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.routing import APIRoute
 
+from backend.api.v1 import settings_webui
+from backend.api.v1.deps import require_api_super_admin
 from backend.models.database import UserConfig, WebUIConfig
 from backend.models.telegram_models import (
     TelegramUser,
@@ -23,8 +25,7 @@ from backend.services.user_backup_service import (
     serialize_user_backup,
 )
 from backend.services.webauthn_service import credential_id_hash
-from backend.webui.deps import require_csrf, require_super_admin
-from backend.webui.routes.config import router
+from backend.webui.deps import require_csrf_header
 
 
 def _user(*, user_id: int = 1, telegram_id: int = 1001) -> TelegramUser:
@@ -401,7 +402,7 @@ async def test_restore_same_secret_replaces_recovery_codes_and_merges_passkey_si
 
 
 def _route(path: str, method: str) -> APIRoute:
-    for route in router.routes:
+    for route in settings_webui.router.routes:
         if (
             isinstance(route, APIRoute)
             and route.path == path
@@ -413,10 +414,10 @@ def _route(path: str, method: str) -> APIRoute:
 
 @pytest.mark.parametrize(
     "path",
-    ["/config/backup/export/users", "/config/backup/users/import"],
+    ["/webui/backup/export/{scope}", "/webui/backup/import"],
 )
 def test_user_backup_routes_are_super_admin_csrf_protected(path: str):
     route = _route(path, "POST")
     dependencies = [dependency.call for dependency in route.dependant.dependencies]
-    assert require_super_admin in dependencies
-    assert require_csrf in dependencies
+    assert require_api_super_admin in dependencies
+    assert require_csrf_header in dependencies

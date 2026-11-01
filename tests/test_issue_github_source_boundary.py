@@ -168,9 +168,8 @@ def test_real_init_failure_logs_no_provider_error_or_key_fragment(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 async def test_admission_real_auth_cancel_propagates_without_enqueue(
-    analysis_db, boundary, surface, monkeypatch
+    analysis_db, boundary, monkeypatch
 ):
     from unittest.mock import AsyncMock
 
@@ -183,7 +182,7 @@ async def test_admission_real_auth_cancel_propagates_without_enqueue(
     )
 
     with pytest.raises(ReviewCancelledError):
-        await admission_tests._reanalyze(surface, analysis_db.db, {"sub": "owner"})
+        await admission_tests._reanalyze(analysis_db.db, {"sub": "owner"})
 
     assert boundary.attempts == 1
     assert boundary.sleeps == []
@@ -193,9 +192,8 @@ async def test_admission_real_auth_cancel_propagates_without_enqueue(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "webui"])
 async def test_admission_real_auth_ordinary_failure_returns_safe503(
-    analysis_db, boundary, surface, monkeypatch
+    analysis_db, boundary, monkeypatch
 ):
     from unittest.mock import AsyncMock
 
@@ -207,9 +205,7 @@ async def test_admission_real_auth_ordinary_failure_returns_safe503(
         "backend.workers.issue_worker.submit_issue_analysis_task", submit
     )
 
-    response = await admission_tests._reanalyze(
-        surface, analysis_db.db, {"sub": "owner"}
-    )
+    response = await admission_tests._reanalyze(analysis_db.db, {"sub": "owner"})
 
     assert response.status_code == 503
     assert SECRET not in response.body.decode()

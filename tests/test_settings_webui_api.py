@@ -53,17 +53,13 @@ def test_export_requires_csrf_and_preserves_existing_download_response(
     client, monkeypatch
 ):
     http, _db, _auth = client
-    export = AsyncMock(
-        return_value=Response(
-            b'{"format":"fixture"}',
-            media_type="application/json",
-            headers={
-                "Content-Disposition": 'attachment; filename="backup.json"',
-                "Cache-Control": "no-store",
-            },
-        )
+    export = AsyncMock(return_value={"sections": {"global": {"count": 1}}})
+    monkeypatch.setattr(settings_webui, "export_config_backup", export)
+    monkeypatch.setattr(
+        settings_webui,
+        "serialize_config_backup",
+        Mock(return_value=b'{"format":"fixture"}'),
     )
-    monkeypatch.setattr(settings_webui.legacy_backup, "download_config_backup", export)
     assert http.post("/api/v1/webui/backup/export/all").status_code == 422
     assert (
         http.post(
@@ -74,10 +70,13 @@ def test_export_requires_csrf_and_preserves_existing_download_response(
     assert export.await_count == 0
     response = http.post("/api/v1/webui/backup/export/all", headers=headers())
     assert response.status_code == 200
-    assert (
-        response.headers["content-disposition"] == 'attachment; filename="backup.json"'
-    )
-    assert export.call_args.kwargs["scope"] == "all"
+    assert response.content == b'{"format":"fixture"}'
+    filename = response.headers["content-disposition"]
+    assert filename.startswith('attachment; filename="sakura-ai-config-all-')
+    assert filename.endswith('.json"')
+    assert response.headers["cache-control"].startswith("no-store")
+    export.assert_awaited_once()
+    assert export.await_args.args[1] == "all"
 
 
 def test_import_protects_connection_settings_and_reports_only_safe_counters(

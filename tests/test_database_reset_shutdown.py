@@ -12,17 +12,18 @@ import pytest
 
 import backend.core.setup_service as setup_service_module
 from backend import main
+from backend.api.v1 import activity as activity_routes
+from backend.api.v1.events import sse_events
 from backend.core.setup_service import SetupService
 from backend.services.database_reset_runtime_service import (
     quiesce_database_reset_runtime,
 )
 from backend.webui import deps as webui_deps
-from backend.webui.routes import activity_observability as activity_routes
-from backend.webui.routes.sse import sse_events
 from backend.webui.sse import SSEManager, sse_manager
 
 
 async def _run_isolated_lifespan(app, monkeypatch):
+    monkeypatch.setattr("backend.core.webui_distribution.get_distribution", AsyncMock())
     monkeypatch.setattr(main, "is_bootstrap_mode", lambda: True)
     monkeypatch.setattr(main, "stop_telegram_bot", AsyncMock())
     monkeypatch.setattr(
@@ -96,6 +97,8 @@ async def test_lifespan_outbox_shutdown_cancels_and_awaits_unresponsive_dispatch
         SimpleNamespace(
             activity_outbox_shutdown_timeout_seconds=shutdown_timeout,
             app_timezone="system",
+            # The lifespan warms the version-matched frontend from this repo.
+            sakura_update_repo="Sakura520222/Sakura-AI",
         ),
     )
 

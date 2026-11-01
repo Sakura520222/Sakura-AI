@@ -1,33 +1,25 @@
-"""全局配置页 /config（R3）回归测试。
+"""配置中心回归测试（SPA 迁移后保留的活跃契约）。
 
-覆盖：新 GET /config 渲染（super_admin 权限、平铺组 + 节上下文）、
-旧 GET 页面 302 重定向、保存端点保留、团队页配置端点移除、
-web_search 键经 general/save 通用循环保存、protocol_repair 单保存路径。
+覆盖：旧配置链接经 entrypoints 表 302 到 SPA /app/* 入口、
+issue 模板投影与校验、动态配置组结构契约、agent-team 配置端点移除。
+旧模板页与其表单保存端点已随 legacy WebUI 一并退役。
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
-from html.parser import HTMLParser
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
-from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI
 from fastapi.routing import APIRoute
-from starlette.datastructures import FormData
-from starlette.requests import Request
+from fastapi.testclient import TestClient
 
+from backend.api.v1.agent import router as agent_team_router
 from backend.core import config_sections
 from backend.core.config import DYNAMIC_CONFIG_GROUPS, DYNAMIC_CONFIG_RANGES
-from backend.services.agent_team.network_policy import AgentTeamNetworkPolicy
-from backend.webui.deps import require_csrf, require_super_admin
-from backend.webui.routes import config as config_routes
-from backend.webui.routes.agent_team import router as agent_team_router
-from backend.webui.routes.config import router
+from backend.webui.routes.entrypoints import router as entrypoints_router
+from tests.config_sqlite_session import SQLiteConfigSession as _FakeSession
 
 
 @pytest.fixture(autouse=True)
@@ -38,144 +30,6 @@ def _clean_section_store():
     config_sections.clear_section_store()
 
 
-def _make_request() -> Request:
-    return Request(
-        {
-            "type": "http",
-            "method": "GET",
-            "path": "/config",
-            "raw_path": b"/config",
-            "query_string": b"",
-            "headers": [],
-            "client": ("127.0.0.1", 12345),
-            "server": ("testserver", 80),
-            "scheme": "http",
-        }
-    )
-
-
-class _ScalarResult:
-    """execute 的标量结果（无既有行 → 创建路径）。"""
-
-    def __init__(self, value=None) -> None:
-        self._value = value
-
-    def scalar_one_or_none(self):
-        return self._value
-
-    def scalars(self):
-        return _ScalarsResult()
-
-
-class _ScalarsResult:
-    def all(self):
-        return []
-
-
-from tests.config_sqlite_session import SQLiteConfigSession as _FakeSession
-
-
-class _FormRequest:
-    """只实现保存路由需要的 Request 接口。"""
-
-    def __init__(self, form_data: Mapping[str, str], *, ajax: bool = False) -> None:
-        self._form_data = form_data
-        self.headers = {"accept": "application/json"} if ajax else {}
-
-    async def form(self) -> Mapping[str, str]:
-        return self._form_data
-
-
-def _config_error(response, field: str, *, ajax: bool = False) -> dict:
-    """Assert the observable form/AJAX error contract, without mocking feedback."""
-    if ajax:
-        assert response.status_code == 400
-        payload = json.loads(response.body)
-        assert payload["ok"] is False
-        assert "配置保存失败" in payload["toast"]
-        errors = payload["errors"]
-    else:
-        assert response.status_code == 302
-        target = urlsplit(response.headers["location"])
-        assert target.path == "/config"
-        query = parse_qs(target.query)
-        assert query["_toast_type"] == ["error"]
-        assert "配置保存失败" in query["_toast"][0]
-        errors = json.loads(query["_errors"][0])
-    assert len(errors) == 1
-    error = errors[0]
-    assert error["field"] == field
-    assert error["code"] == "invalid_config_value"
-    assert isinstance(error["message"], str) and error["message"]
-    assert not error["message"].startswith("toast.")
-    return error
-
-
-def _route(path: str, method: str, target_router=router) -> APIRoute:
-    for route in target_router.routes:
-        if (
-            isinstance(route, APIRoute)
-            and route.path == path
-            and method in route.methods
-        ):
-            return route
-    raise AssertionError(f"Route {method} {path} not found")
-
-
-def _dependency_calls(route: APIRoute) -> list[object]:
-    return [dependency.call for dependency in route.dependant.dependencies]
-
-
-# ---------- 路由注册与权限 ----------
-
-
-def test_unified_page_requires_super_admin():
-    route = _route("/config", "GET")
-    assert require_super_admin in _dependency_calls(route)
-
-
-@pytest.mark.parametrize(
-    ("path", "method"),
-    [
-        ("/config/general/save", "POST"),
-        ("/config/strategies/save", "POST"),
-        ("/config/labels/save-labels", "POST"),
-        ("/config/labels/save-settings", "POST"),
-        ("/config/labels/save-conflict-rules", "POST"),
-    ],
-)
-def test_legacy_save_endpoints_preserved(path: str, method: str):
-    """保存链路保留既有 POST 端点路径与语义（不做新端点）。"""
-    route = _route(path, method)
-    assert require_super_admin in _dependency_calls(route)
-    assert require_csrf in _dependency_calls(route)
-
-
-@pytest.mark.parametrize(
-    ("path", "method"),
-    [
-        ("/config/general", "GET"),
-        ("/config/strategies", "GET"),
-        ("/config/labels", "GET"),
-    ],
-)
-@pytest.mark.asyncio
-async def test_legacy_get_pages_redirect_to_unified(path: str, method: str):
-    """旧 GET 页面返回 302 → /config，且仍需 super_admin。"""
-    route = _route(path, method)
-    assert require_super_admin in _dependency_calls(route)
-    user = {"sub": "admin", "role": "super_admin", "user_id": 1}
-
-    if path == "/config/general":
-        response = await config_routes.general_config_page(user=user)
-    elif path == "/config/strategies":
-        response = await config_routes.strategies_page(user=user)
-    else:
-        response = await config_routes.labels_page(user=user)
-    assert response.status_code == 302
-    assert response.headers["location"].startswith("/config")
-
-
 def test_agent_team_config_save_endpoint_removed():
     """团队页配置保存端点已移除（A9：其余功能保留）。"""
     paths = [
@@ -184,55 +38,44 @@ def test_agent_team_config_save_endpoint_removed():
     assert "/agent-team/config/save" not in paths
 
 
-# ---------- 统一页渲染 ----------
+# ---------- 旧链接入口重定向（entrypoints 挂载路由） ----------
 
 
-@pytest.mark.asyncio
-async def test_unified_page_renders_flat_groups_and_section_forms(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    response = await config_routes.unified_config_page(
-        _make_request(),
-        db=_FakeSession(),
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        user_prefs={"language": "zh-CN"},
-    )
+def _entrypoints_client() -> TestClient:
+    app = FastAPI()
+    app.include_router(entrypoints_router)
+    return TestClient(app)
+
+
+@pytest.mark.parametrize(
+    ("legacy", "destination"),
+    [
+        ("/config", "/app/settings/review"),
+        ("/config/", "/app/settings/review"),
+        ("/config/ai", "/app/settings/ai"),
+        ("/config/backup", "/app/settings/backup"),
+        ("/settings-center/review", "/app/settings/review"),
+        ("/system-config", "/app/settings/system"),
+        ("/version/manager", "/app/admin/version"),
+    ],
+)
+def test_legacy_config_urls_redirect_to_app_settings(legacy, destination):
+    """旧配置/版本页链接经挂载的 entrypoints 表 302 到 SPA /app/* 入口。"""
+    response = _entrypoints_client().get(legacy, follow_redirects=False)
     assert response.status_code == 302
-    assert response.headers["location"] == "/settings-center/review"
-    from backend.webui.routes.config_center import center_page
-
-    response = await center_page(
-        _make_request(),
-        "review",
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        user_prefs={"language": "zh-CN"},
-        db=_FakeSession(),
-    )
-    html = response.body.decode()
-    assert 'id="settings-fields"' in html
-    assert 'id="save-all-btn"' not in html
-    assert 'action="/config/general/save"' not in html
-    assert 'data-category-link="issue"' in html
+    assert response.headers["location"] == destination
+    assert response.headers["cache-control"] == "no-store"
 
 
-class _IssueTemplateParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.fields = {}
-        self.current = None
+def test_entrypoint_redirect_strips_token_queries_and_keeps_the_rest():
+    """重定向剥离 token/access_token/csrf_token 查询参数，其余查询保留。"""
+    client = _entrypoints_client()
+    response = client.get("/config?token=secret&next=/x", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/app/settings/review?next=%2Fx"
 
-    def handle_starttag(self, tag, attrs):
-        if tag == "textarea":
-            self.current = dict(attrs).get("name")
-            self.fields[self.current] = ""
 
-    def handle_data(self, data):
-        if self.current is not None:
-            self.fields[self.current] += data
-
-    def handle_endtag(self, tag):
-        if tag == "textarea":
-            self.current = None
+# ---------- 统一页渲染 ----------
 
 
 @pytest.mark.asyncio
@@ -283,49 +126,6 @@ async def test_issue_template_editor_displays_defaults_or_existing_custom_values
             )
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("invalid", [False, True])
-async def test_issue_template_form_save_validates_and_keeps_both_languages(
-    monkeypatch, invalid
-):
-    monkeypatch.setattr(config_routes, "log_admin_action", AsyncMock())
-    monkeypatch.setattr(config_routes, "detect_language", lambda *_: "en")
-    template = "Conclusion {summary}\nAction {feasibility}"
-    english = template + (" {unknown}" if invalid else " {{literal}}")
-    form = FormData(
-        {
-            "cat_name": "bug",
-            "cat_desc": "A failure",
-            "cat_keywords": "error",
-            "issue_system_prompt": "Project focus.",
-            "issue_comment_template": template,
-            "issue_comment_template_en": english,
-        }
-    )
-    db = _FakeSession()
-    response = await config_routes.save_strategies_section(
-        _FormRequest(form),
-        db=db,
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="test",
-        section="issue_analysis",
-    )
-    if invalid:
-        assert "_toast_type=error" in response.headers["location"]
-        assert db.added == [] and db.committed is False
-    else:
-        assert "_toast_type=error" not in response.headers["location"]
-        stored = json.loads(db.added[0].key_value)
-        assert stored["comment_template"] == template
-        assert stored["comment_template_en"] == english
-        assert (
-            config_sections.get_section_config("strategy.issue_analysis")[
-                "comment_template_en"
-            ]
-            == english
-        )
-
-
 # ---------- 分组重组（任务 5） ----------
 
 
@@ -363,8 +163,8 @@ def test_depgraph_mode_removed_from_dynamic_group():
 def test_depgraph_template_falls_back_to_static_mode():
     """模板上下文缺少 mode 时应与运行时默认值一致地选择 static。"""
     from backend.services.config_metadata import field_catalog
-    assert field_catalog()["global/pr_dependency_graph_mode"].default == "static"
 
+    assert field_catalog()["global/pr_dependency_graph_mode"].default == "static"
 
 
 def test_issue_config_hint_excludes_removed_auto_comment_toggle():
@@ -379,180 +179,6 @@ def test_issue_config_hint_excludes_removed_auto_comment_toggle():
     en_hint = next(line for line in en.splitlines() if "issue_config_hint:" in line)
     assert "自动评论" not in zh_hint
     assert "auto comment" not in en_hint.lower()
-
-
-@pytest.mark.asyncio
-async def test_agent_network_status_local_full_access_is_host_ready(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Local readiness is host-unrestricted, not dependent on sandbox egress."""
-
-    async def fresh_policy_state():
-        return SimpleNamespace(
-            policy=AgentTeamNetworkPolicy.FULL_ACCESS,
-            revision="revision-42",
-        )
-
-    async def fresh_config(key: str):
-        assert key == "agent_team_execution_backend"
-        return "local"
-
-    async def unexpected_sandbox_probe():
-        raise AssertionError("local status must not probe sandboxd egress")
-
-    monkeypatch.setattr(
-        config_routes,
-        "get_agent_team_network_policy_state",
-        fresh_policy_state,
-    )
-    monkeypatch.setattr(config_routes, "get_dynamic_config_fresh", fresh_config)
-    monkeypatch.setattr(
-        config_routes,
-        "get_settings",
-        lambda: SimpleNamespace(sakura_deploy_mode="source"),
-    )
-    monkeypatch.setattr(
-        config_routes,
-        "read_sandbox_capability_status",
-        unexpected_sandbox_probe,
-    )
-
-    response = await config_routes.agent_network_status(user={})
-    payload = json.loads(response.body)
-
-    assert response.status_code == 200
-    assert payload == {
-        "backend": "local",
-        "backend_ready": True,
-        "sandbox_ready": False,
-        "egress_capability": "not_applicable",
-        "egress_available": None,
-        "policy": "full_access",
-        "policy_revision": "revision-42",
-        "full_access_risk": True,
-        "local_host_network": True,
-        "agent_network_mode": "not_applicable",
-        "dependency_network_mode": "not_applicable",
-        "dependency_egress_available": False,
-    }
-
-
-@pytest.mark.parametrize(
-    (
-        "policy",
-        "sandbox_ready",
-        "egress",
-        "agent_mode",
-        "dependency_mode",
-        "dependency_available",
-        "backend_ready",
-    ),
-    [
-        ("web_tools", True, "egress", "none", "egress", True, True),
-        ("web_tools", True, "none", "none", "egress", False, True),
-        ("web_tools", False, "egress", "none", "egress", False, False),
-        ("web_tools", False, "unavailable", "none", "egress", False, False),
-        ("offline", True, "egress", "none", "none", False, True),
-        ("full_access", True, "egress", "egress", "egress", True, True),
-        ("full_access", True, "none", "egress", "egress", False, False),
-    ],
-)
-@pytest.mark.asyncio
-async def test_agent_network_status_separates_authorized_modes_from_readiness(
-    monkeypatch,
-    policy,
-    sandbox_ready,
-    egress,
-    agent_mode,
-    dependency_mode,
-    dependency_available,
-    backend_ready,
-):
-    """An advertised egress mode alone must not imply a ready dependency runner."""
-
-    async def fresh_policy_state():
-        return SimpleNamespace(
-            policy=AgentTeamNetworkPolicy(policy), revision="revision-604"
-        )
-
-    async def fresh_config(_key):
-        return "sandbox"
-
-    async def sandbox_status():
-        return {"available": sandbox_ready, "egress_capability": egress}
-
-    monkeypatch.setattr(
-        config_routes, "get_agent_team_network_policy_state", fresh_policy_state
-    )
-    monkeypatch.setattr(config_routes, "get_dynamic_config_fresh", fresh_config)
-    monkeypatch.setattr(config_routes, "read_sandbox_capability_status", sandbox_status)
-
-    response = await config_routes.agent_network_status(user={})
-    payload = json.loads(response.body)
-
-    assert response.status_code == 200
-    assert payload == {
-        "backend": "sandbox",
-        "backend_ready": backend_ready,
-        "sandbox_ready": sandbox_ready,
-        "egress_capability": egress,
-        "egress_available": egress == "egress",
-        "policy": policy,
-        "policy_revision": "revision-604",
-        "full_access_risk": policy == "full_access",
-        "local_host_network": False,
-        "agent_network_mode": agent_mode,
-        "dependency_network_mode": dependency_mode,
-        "dependency_egress_available": dependency_available,
-    }
-
-
-@pytest.mark.asyncio
-async def test_agent_network_status_failed_config_marks_new_modes_unavailable(
-    monkeypatch,
-):
-    async def failed_policy_state():
-        raise RuntimeError("database unavailable")
-
-    monkeypatch.setattr(
-        config_routes, "get_agent_team_network_policy_state", failed_policy_state
-    )
-    response = await config_routes.agent_network_status(user={})
-    payload = json.loads(response.body)
-
-    assert response.status_code == 503
-    assert payload["backend_ready"] is False
-    assert payload["agent_network_mode"] == "unavailable"
-    assert payload["dependency_network_mode"] == "unavailable"
-    assert payload["dependency_egress_available"] is False
-
-
-def test_agent_network_status_requires_super_admin():
-    assert require_super_admin in _dependency_calls(
-        _route("/config/agent-network-status", "GET")
-    )
-
-
-def test_agent_network_status_ui_marks_host_mode_and_non_applicable_egress():
-    template = (
-        Path(__file__).parents[1]
-        / "backend"
-        / "webui"
-        / "templates"
-        / "components" / "config_network_status.html"
-    ).read_text(encoding="utf-8")
-    en = (
-        Path(__file__).parents[1] / "backend" / "webui" / "translations" / "en.yaml"
-    ).read_text(encoding="utf-8")
-    zh = (
-        Path(__file__).parents[1] / "backend" / "webui" / "translations" / "zh-CN.yaml"
-    ).read_text(encoding="utf-8")
-
-    assert "not_applicable: labels.notApplicable" in template
-    assert "value === null ? labels.notApplicable" in template
-    assert "agent_network_local_risk" in template
-    assert 'agent_network_not_applicable: "Not applicable"' in en
-    assert 'agent_network_not_applicable: "不适用"' in zh
 
 
 # ---------- general/save 通用循环 ----------
@@ -575,451 +201,3 @@ async def test_dependency_retry_inputs_render_bounds_and_typed_steps(
 
     await config_center_service.save_app_updates(db, {delay.key: saved_delay})
     assert float(db.rows[0].key_value) == float(saved_delay)
-
-
-@pytest.mark.parametrize(
-    ("key", "value"),
-    [
-        ("agent_team_dependency_install_attempts", "0"),
-        ("agent_team_dependency_install_attempts", "6"),
-        ("agent_team_dependency_retry_delay_seconds", "-0.1"),
-        ("agent_team_dependency_retry_delay_seconds", "60.1"),
-    ],
-)
-@pytest.mark.asyncio
-async def test_general_save_rejects_dependency_retry_out_of_range(
-    monkeypatch, key, value
-):
-    _patch_save_deps(monkeypatch)
-    db = _FakeSession()
-    response = await config_routes.save_general_config(
-        _FormRequest({"csrf_token": "t", key: value}),
-        db=db,
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="t",
-    )
-
-    assert not db.committed
-    assert db.added == []
-    error = _config_error(response, key)
-    assert "值须在" in error["message"]
-    bounds = (1, 5) if key == "agent_team_dependency_install_attempts" else (0.0, 60.0)
-    assert error["params"] == {"min_v": bounds[0], "max_v": bounds[1]}
-
-
-@pytest.mark.parametrize(
-    ("attempts", "delay"), [("1", "0"), ("5", "60"), ("3", "0.25")]
-)
-@pytest.mark.asyncio
-async def test_general_save_accepts_dependency_retry_bounds_and_fractional_delay(
-    monkeypatch, attempts, delay
-):
-    _patch_save_deps(monkeypatch)
-    form = {
-        "csrf_token": "t",
-        "agent_team_dependency_install_attempts": attempts,
-        "agent_team_dependency_retry_delay_seconds": delay,
-    }
-    db = _FakeSession()
-    response = await config_routes.save_general_config(
-        _FormRequest(form),
-        db=db,
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="t",
-    )
-
-    assert response.status_code == 302
-    assert db.committed
-    saved = {row.key_name: row.key_value for row in db.added}
-    assert int(saved["agent_team_dependency_install_attempts"]) == int(attempts)
-    assert float(saved["agent_team_dependency_retry_delay_seconds"]) == float(delay)
-
-
-def _patch_save_deps(monkeypatch: pytest.MonkeyPatch):
-    """替换 save_general_config 的副作用依赖（函数内延迟导入 → patch 源模块）。"""
-    monkeypatch.setattr(config_routes, "detect_language", lambda: "zh-CN")
-    monkeypatch.setattr(config_routes, "log_admin_action", _noop_async)
-    # These are pure field/serialization tests with a recording-only session.
-    # Activation and live route validation use real SQL in billing/config tests.
-    monkeypatch.setattr(
-        "backend.services.billing_configuration_service.validate_billing_configuration",
-        _noop_async,
-    )
-    monkeypatch.setattr(
-        "backend.core.config.update_settings_field", lambda _key, _value: None
-    )
-    # 信号量重置走延迟导入，patch 目标模块级函数
-    monkeypatch.setattr("backend.workers.issue_worker.reset_issue_semaphore", _noop)
-    monkeypatch.setattr("backend.workers.review_worker.reset_review_semaphore", _noop)
-
-
-async def _noop_async(*_args, **_kwargs) -> None:
-    return None
-
-
-def _noop(*_args, **_kwargs) -> None:
-    return None
-
-
-@pytest.mark.asyncio
-async def test_general_save_persists_web_search_and_review_basic_keys(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """web_search 六键与 review_basic 八键经通用循环落库。"""
-    _patch_save_deps(monkeypatch)
-    form = {
-        "csrf_token": "t",
-        "max_concurrent_reviews": "7",
-        "review_timeout_seconds": "600",
-        "enable_auto_review": "true",
-        "enable_check_runs": "true",
-        "enable_analysis_check": "true",
-        "enable_findings_check": "true",
-        "analysis_min_interval_sec": "300",
-        "protocol_repair_max_attempts": "5",
-        "web_search_enabled": "true",
-        "web_search_provider": "duckduckgo",
-        "web_search_api_key": "sk-test-1234",
-        "web_search_api_key_changed": "true",
-        "web_search_max_results": "5",
-        "web_search_max_content_length": "2000",
-        "web_search_timeout": "30",
-    }
-    db = _FakeSession()
-    response = await config_routes.save_general_config(
-        _FormRequest(form),
-        db=db,
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="t",
-    )
-    assert response.status_code == 302
-    assert db.committed
-    saved = {row.key_name: row.key_value for row in db.added}
-    assert saved["max_concurrent_reviews"] == "7"
-    assert saved["web_search_enabled"] == "true"
-    assert saved["web_search_provider"] == "duckduckgo"
-    assert saved["web_search_api_key"] == "sk-test-1234"
-    assert saved["protocol_repair_max_attempts"] == "5"
-
-
-@pytest.mark.asyncio
-async def test_general_save_rejects_below_min_open_ended_range(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """开区间上界键只约束下界：0 被拒绝且响应定位字段。"""
-    _patch_save_deps(monkeypatch)
-    form = {"csrf_token": "t", "max_concurrent_reviews": "0"}
-    db = _FakeSession()
-    response = await config_routes.save_general_config(
-        _FormRequest(form),
-        db=db,
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="t",
-    )
-    error = _config_error(response, "max_concurrent_reviews")
-    assert "值须不小于 1" in error["message"]
-    assert error["params"] == {"min_v": 1}
-    assert db.added == [] and db.committed is False
-
-
-@pytest.mark.asyncio
-async def test_general_save_accepts_large_open_ended_value(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """无硬编码上限：大数值通过下界校验后正常保存。"""
-    _patch_save_deps(monkeypatch)
-    form = {"csrf_token": "t", "max_concurrent_reviews": "999999"}
-    db = _FakeSession()
-    response = await config_routes.save_general_config(
-        _FormRequest(form),
-        db=db,
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="t",
-    )
-    assert response.status_code == 302
-    saved = {row.key_name: row.key_value for row in db.added}
-    assert saved["max_concurrent_reviews"] == "999999"
-
-
-@pytest.mark.asyncio
-async def test_general_save_validates_protocol_repair_range(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """protocol_repair_max_attempts 上界 10：越界响应保留范围约束。"""
-    _patch_save_deps(monkeypatch)
-    form = {"csrf_token": "t", "protocol_repair_max_attempts": "11"}
-    db = _FakeSession()
-    response = await config_routes.save_general_config(
-        _FormRequest(form),
-        db=db,
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="t",
-    )
-    error = _config_error(response, "protocol_repair_max_attempts")
-    assert "值须在 1-10 之间" in error["message"]
-    assert error["params"] == {"min_v": 1, "max_v": 10}
-    assert db.added == [] and db.committed is False
-
-
-@pytest.mark.asyncio
-async def test_general_save_rejects_unknown_web_search_provider(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """web_search_provider 走 SELECT_OPTIONS 校验：非法值不保存。"""
-    _patch_save_deps(monkeypatch)
-    form = {"csrf_token": "t", "web_search_provider": "google"}
-    db = _FakeSession()
-    response = await config_routes.save_general_config(
-        _FormRequest(form),
-        db=db,
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="t",
-    )
-    error = _config_error(response, "web_search_provider")
-    assert "值无效" in error["message"]
-    assert error["params"] == {}
-    assert db.added == [] and db.committed is False
-
-
-@pytest.mark.asyncio
-async def test_general_save_prevalidates_all_fields_before_side_effects(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """后面的非法整数不能留下前面字段的 DB、缓存或热加载副作用。"""
-    _patch_save_deps(monkeypatch)
-    side_effects: list[tuple] = []
-    monkeypatch.setattr(
-        "backend.core.config.invalidate_dynamic_config_cache",
-        lambda keys: side_effects.append(("invalidate", tuple(keys))),
-    )
-    monkeypatch.setattr(
-        "backend.core.config.update_settings_field",
-        lambda key, value: side_effects.append(("settings", key, value)),
-    )
-
-    class _NoDbAccess(_FakeSession):
-        async def execute(self, _stmt):
-            raise AssertionError("非法输入预校验阶段不应访问数据库")
-
-    db = _NoDbAccess()
-    response = await config_routes.save_general_config(
-        _FormRequest(
-            {
-                "max_concurrent_reviews": "7",
-                "review_timeout_seconds": "1.5",
-            }
-        ),
-        db=db,
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="t",
-    )
-
-    assert response.status_code == 302
-    assert db.added == []
-    assert db.committed is False
-    assert side_effects == []
-
-
-@pytest.mark.asyncio
-async def test_general_save_rejects_fractional_integer_without_side_effects(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """整数配置拒绝 1.5，而不是先转成浮点再截断。"""
-    _patch_save_deps(monkeypatch)
-    db = _FakeSession()
-    response = await config_routes.save_general_config(
-        _FormRequest({"max_concurrent_reviews": "1.5"}, ajax=True),
-        db=db,
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="t",
-    )
-
-    error = _config_error(response, "max_concurrent_reviews", ajax=True)
-    assert "必须是有效数值" in error["message"]
-    assert error["params"] == {}
-    assert db.added == []
-    assert db.committed is False
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("raw", ["NaN", "Infinity", "-Infinity"])
-async def test_general_save_rejects_non_finite_float_without_side_effects(
-    monkeypatch: pytest.MonkeyPatch, raw: str
-):
-    """浮点配置只接受有限值，NaN/Infinity 不能绕过范围比较。"""
-    _patch_save_deps(monkeypatch)
-    db = _FakeSession()
-    response = await config_routes.save_general_config(
-        _FormRequest({"rerank_score_threshold": raw}, ajax=True),
-        db=db,
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="t",
-    )
-
-    error = _config_error(response, "rerank_score_threshold", ajax=True)
-    assert "必须是有效数值" in error["message"]
-    assert error["params"] == {}
-    assert db.added == []
-    assert db.committed is False
-
-
-@pytest.mark.asyncio
-async def test_general_save_serializes_finite_float_and_bool_values(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """有限浮点正常保存，复选框布尔值统一使用小写文本。"""
-    _patch_save_deps(monkeypatch)
-    db = _FakeSession()
-    response = await config_routes.save_general_config(
-        _FormRequest(
-            {
-                "rerank_score_threshold": "0.25",
-                "enable_auto_review": "TRUE",
-            }
-        ),
-        db=db,
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="t",
-    )
-
-    assert response.status_code == 302
-    saved = {row.key_name: row.key_value for row in db.added}
-    assert saved["rerank_score_threshold"] == "0.25"
-    assert saved["enable_auto_review"] == "true"
-
-
-# ---------- 统一保存 save-all ----------
-
-
-class _JsonRequest:
-    """save-all 路由需要的 Request 接口（仅 json()）。"""
-
-    def __init__(self, payload: dict) -> None:
-        self._payload = payload
-
-    async def json(self) -> dict:
-        return self._payload
-
-
-def test_save_all_endpoint_registered_with_admin_and_csrf_header():
-    """POST /config/save-all 需 super_admin + CSRF Header（JSON 请求）。"""
-    from backend.webui.deps import require_csrf_header
-
-    route = _route("/config/save-all", "POST")
-    calls = _dependency_calls(route)
-    assert require_super_admin in calls
-    assert require_csrf_header in calls
-
-
-@pytest.mark.asyncio
-async def test_save_all_dispatches_handlers_and_aggregates_results(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """save-all 按页面顺序调用各分区保存 handler，聚合单条 toast JSON。
-
-    strategies 表单透传 section；单项 error toast 标记该分区失败并回传 anchor。
-    """
-    from fastapi.responses import RedirectResponse
-
-    calls: list[tuple] = []
-
-    async def _ok_handler(request, db, user, csrf_token, **kwargs):
-        calls.append(("ok", tuple(sorted(kwargs))))
-        return RedirectResponse("/config?_toast=saved&_toast_type=success")
-
-    async def _fail_handler(request, db, user, csrf_token, **kwargs):
-        calls.append(("fail", tuple(sorted(kwargs))))
-        return RedirectResponse("/config?_toast=bad&_toast_type=error")
-
-    monkeypatch.setattr(config_routes, "save_general_config", _ok_handler)
-    monkeypatch.setattr(config_routes, "save_strategies_section", _ok_handler)
-    monkeypatch.setattr(config_routes, "save_labels_definitions", _ok_handler)
-    monkeypatch.setattr(config_routes, "save_recommendation_settings", _fail_handler)
-    monkeypatch.setattr(config_routes, "save_conflict_rules", _ok_handler)
-    monkeypatch.setattr(config_routes, "detect_language", lambda: "zh-CN")
-
-    payload = {
-        "requests": [
-            {
-                "action": "/config/general/save",
-                "anchor": None,
-                "fields": {"max_review_iterations": "3"},
-            },
-            {
-                "action": "/config/strategies/save",
-                "anchor": "section-strategy-strategies",
-                "fields": {"section": "strategies", "strategy_quick_name": "快速"},
-            },
-            {
-                "action": "/config/labels/save-settings",
-                "anchor": "section-label-recommendation",
-                "fields": {"rec_enabled": "true", "confidence_threshold": "0.7"},
-            },
-        ]
-    }
-    response = await config_routes.save_all_config(
-        _JsonRequest(payload),
-        db=object(),
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="t",
-    )
-    data = json.loads(response.body)
-
-    # 全部 handler 均被调用，strategies 透传 section 参数
-    assert [name for name, _kwargs in calls] == ["ok", "ok", "fail"]
-    assert calls[1][1] == ("section",)
-
-    assert data["ok"] is False
-    failed = [r for r in data["results"] if not r["ok"]]
-    assert len(failed) == 1
-    assert failed[0]["anchor"] == "section-label-recommendation"
-    assert failed[0]["toast"] == "bad"
-    assert "1 项配置保存失败" in data["toast"]
-
-
-@pytest.mark.asyncio
-async def test_save_all_success_returns_aggregated_toast(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """全部成功时返回 ok=True 与成功 toast。"""
-    from fastapi.responses import RedirectResponse
-
-    async def _ok_handler(request, db, user, csrf_token, **kwargs):
-        return RedirectResponse("/config?_toast=saved&_toast_type=success")
-
-    for name in (
-        "save_general_config",
-        "save_strategies_section",
-        "save_labels_definitions",
-        "save_recommendation_settings",
-        "save_conflict_rules",
-    ):
-        monkeypatch.setattr(config_routes, name, _ok_handler)
-    monkeypatch.setattr(config_routes, "detect_language", lambda: "zh-CN")
-
-    payload = {
-        "requests": [{"action": "/config/general/save", "anchor": None, "fields": {}}]
-    }
-    response = await config_routes.save_all_config(
-        _JsonRequest(payload),
-        db=object(),
-        user={"sub": "admin", "role": "super_admin", "user_id": 1},
-        csrf_token="t",
-    )
-    data = json.loads(response.body)
-    assert data["ok"] is True
-    assert data["results"][0]["ok"] is True
-    assert "全部配置已保存" in data["toast"]
-
-
-@pytest.mark.asyncio
-async def test_save_all_rejects_malformed_payload():
-    """非数组 requests → 400。"""
-    with pytest.raises(HTTPException) as exc_info:
-        await config_routes.save_all_config(
-            _JsonRequest({"requests": "nope"}),
-            db=object(),
-            user={"sub": "admin", "role": "super_admin", "user_id": 1},
-            csrf_token="t",
-        )
-    assert exc_info.value.status_code == 400

@@ -1,7 +1,6 @@
 """Protected deletion uses real FK enforcement and keeps financial provenance."""
 
 import json
-from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
@@ -26,8 +25,7 @@ from backend.models.legacy_entitlement_models import (
 from backend.models.payment_models import Order, Plan
 from backend.models.telegram_models import TelegramUser
 from backend.services.billing_service import BillingService
-from backend.webui import deps as web_deps
-from backend.webui.routes import users as web_users
+from backend.webui.deps import get_db
 from tests.test_billing_usage_attribution import DurableSQLSession
 from tests.test_billing_usage_attribution import sql_runtime as real_runtime_fixture
 
@@ -74,32 +72,24 @@ async def retention_client(sql_runtime, monkeypatch):
         async with sessions() as db:
             yield db
 
-    monkeypatch.setattr(web_deps, "get_current_user", current_user)
-    monkeypatch.setattr(web_deps, "user_requires_mfa_enrollment", no_mfa)
     monkeypatch.setattr(api_deps, "get_api_current_user", current_user)
     monkeypatch.setattr(api_deps, "user_requires_mfa_enrollment", no_mfa)
     monkeypatch.setattr(api_deps.db_module, "async_session", sessions)
     app = FastAPI()
     app.include_router(api_users.router, prefix="/api/v1")
-    app.include_router(web_users.router)
-    app.dependency_overrides[web_deps.get_db] = db_dependency
-    app.dependency_overrides[web_deps.get_user_preferences] = lambda: {"language": "en"}
+    app.dependency_overrides[get_db] = db_dependency
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         yield client, sessions
 
 
-async def delete_through(client, surface, user_id, *, identity="operator", csrf=True):
+async def delete_through(client, user_id, *, identity="operator"):
     headers = {"x-test-identity": identity}
-    if surface == "api":
-        return await client.delete(f"/api/v1/users/{user_id}", headers=headers)
-    data = {"csrf_token": web_deps.get_csrf_serializer().dumps({})} if csrf else {}
-    return await client.post(f"/users/{user_id}/delete", headers=headers, data=data)
+    return await client.delete(f"/api/v1/users/{user_id}", headers=headers)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "web"])
 @pytest.mark.parametrize(
     "source",
     [
@@ -112,7 +102,7 @@ async def delete_through(client, surface, user_id, *, identity="operator", csrf=
     ],
 )
 async def test_protected_delete_deactivates_financial_user_and_keeps_sources(
-    retention_client, surface, source
+    retention_client, source
 ):
     client, sessions = retention_client
     async with sessions() as db:
@@ -165,14 +155,10 @@ async def test_protected_delete_deactivates_financial_user_and_keeps_sources(
             ).all()
         )
 
-    response = await delete_through(client, surface, 1)
-    assert response.status_code == (200 if surface == "api" else 302)
-    if surface == "api":
-        assert response.json()["success"] is True
-        assert "financial" in response.json()["message"]
-    else:
-        toast = parse_qs(urlparse(response.headers["location"]).query)["_toast"][0]
-        assert "financial" in toast
+    response = await delete_through(client, 1)
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert "financial" in response.json()["message"]
     async with sessions() as db:
         target = await db.get(TelegramUser, 1)
         assert target is not None and not target.is_active
@@ -212,32 +198,24 @@ async def test_protected_delete_deactivates_financial_user_and_keeps_sources(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "web"])
 async def test_user_without_financial_history_can_still_be_deleted(
-    retention_client, surface
+    retention_client,
 ):
     client, sessions = retention_client
-    response = await delete_through(client, surface, 4)
-    assert response.status_code == (200 if surface == "api" else 302)
+    response = await delete_through(client, 4)
+    assert response.status_code == 200
     async with sessions() as db:
         assert await db.get(TelegramUser, 4) is None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "web"])
 async def test_retention_keeps_delete_auth_self_and_missing_user_guards(
-    retention_client, surface
+    retention_client,
 ):
     client, sessions = retention_client
-    assert (
-        await delete_through(client, surface, 4, identity="owner")
-    ).status_code == 403
-    self_delete = await delete_through(client, surface, 3)
-    assert self_delete.status_code == (400 if surface == "api" else 302)
-    if surface == "web":
-        assert (await delete_through(client, surface, 4, csrf=False)).status_code == 403
-    missing = await delete_through(client, surface, 999)
-    assert missing.status_code == 404
+    assert (await delete_through(client, 4, identity="owner")).status_code == 403
+    assert (await delete_through(client, 3)).status_code == 400
+    assert (await delete_through(client, 999)).status_code == 404
     async with sessions() as db:
         assert (await db.get(TelegramUser, 3)).is_active
         assert (await db.get(TelegramUser, 4)).is_active
@@ -246,33 +224,8 @@ async def test_retention_keeps_delete_auth_self_and_missing_user_guards(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("lang", ["zh-CN", "en"])
-async def test_user_removal_page_explains_financial_retention(retention_client, lang):
-    client, _ = retention_client
-    client._transport.app.dependency_overrides[web_deps.get_user_preferences] = lambda: {
-        "language": lang
-    }
-    page = await client.get("/users/1")
-    assert page.status_code == 200
-    if lang == "en":
-        assert "financial and entitlement records are retained" in page.text
-        assert "permanently delete user" not in page.text
-        assert "Remove User" in page.text
-    else:
-        assert "账务及权益记录会保留" in page.text
-        assert "永久删除用户" not in page.text
-        assert "移除用户" in page.text
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "web"])
-@pytest.mark.parametrize("lang", ["zh-CN", "en"])
-async def test_retained_delete_reply_uses_admin_language(
-    retention_client, surface, lang
-):
+async def test_retained_delete_reply_uses_admin_language(retention_client, lang):
     client, sessions = retention_client
-    client._transport.app.dependency_overrides[web_deps.get_user_preferences] = lambda: {
-        "language": lang
-    }
     async with sessions() as db:
         preferences = (
             await db.execute(select(WebUIConfig).where(WebUIConfig.user_id == 3))
@@ -280,12 +233,8 @@ async def test_retained_delete_reply_uses_admin_language(
         preferences.language = lang
         await BillingService(db).get_wallet(1)
         await db.commit()
-    response = await delete_through(client, surface, 1)
-    message = (
-        response.json()["message"]
-        if surface == "api"
-        else parse_qs(urlparse(response.headers["location"]).query)["_toast"][0]
-    )
+    response = await delete_through(client, 1)
+    message = response.json()["message"]
     assert message == (
         "用户 owner1 已停用，账务及权益记录已保留"
         if lang == "zh-CN"
@@ -294,9 +243,8 @@ async def test_retained_delete_reply_uses_admin_language(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "web"])
 async def test_failed_retention_commit_rolls_back_without_success(
-    retention_client, monkeypatch, surface
+    retention_client, monkeypatch
 ):
     client, sessions = retention_client
     async with sessions() as db:
@@ -313,14 +261,9 @@ async def test_failed_retention_commit_rolls_back_without_success(
         await original(self)
 
     monkeypatch.setattr(RetentionSession, "commit", fail_retention)
-    response = await delete_through(client, surface, 1)
-    if surface == "api":
-        assert response.status_code == 400 and response.json()["success"] is False
-        assert response.json()["error"] == "User deletion failed"
-    else:
-        assert parse_qs(urlparse(response.headers["location"]).query)[
-            "_toast_type"
-        ] == ["error"]
+    response = await delete_through(client, 1)
+    assert response.status_code == 400 and response.json()["success"] is False
+    assert response.json()["error"] == "User deletion failed"
     async with sessions() as db:
         assert (await db.get(TelegramUser, 1)).is_active
         assert (await db.get(BillingWallet, 1)).balance_units == 7_000_000
@@ -328,9 +271,8 @@ async def test_failed_retention_commit_rolls_back_without_success(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["api", "web"])
 async def test_retention_targets_id_even_when_username_is_unbound_or_case_ambiguous(
-    retention_client, surface
+    retention_client,
 ):
     client, sessions = retention_client
     async with sessions() as db:
@@ -341,9 +283,7 @@ async def test_retention_targets_id_even_when_username_is_unbound_or_case_ambigu
         await BillingService(db).get_wallet(2)
         await db.commit()
     for user_id in (1, 2):
-        assert (await delete_through(client, surface, user_id)).status_code == (
-            200 if surface == "api" else 302
-        )
+        assert (await delete_through(client, user_id)).status_code == 200
     async with sessions() as db:
         assert not (await db.get(TelegramUser, 1)).is_active
         assert not (await db.get(TelegramUser, 2)).is_active

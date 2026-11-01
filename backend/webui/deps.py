@@ -4,20 +4,18 @@ import asyncio
 import re
 from collections import OrderedDict
 from collections.abc import AsyncGenerator
-from functools import lru_cache
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from fastapi import Depends, Form, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import RedirectResponse
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from loguru import logger
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
-from backend.core.time_service import get_time_service, monotonic
+from backend.core.time_service import monotonic
 from backend.models import database as db_module
 from backend.models.database import PRReview, WebUIConfig
 from backend.models.telegram_models import TelegramUser
@@ -28,97 +26,6 @@ from backend.webui.auth import (
     is_access_token_payload,
     queue_webui_token_renewal,
 )
-from backend.webui.i18n import SUPPORTED_LANGUAGES, make_translation_func
-from backend.webui.time_filters import register_time_filters
-
-
-# ========== 模板引擎 ==========
-@lru_cache
-def get_templates() -> Jinja2Templates:
-    """获取 Jinja2 模板引擎单例"""
-    templates = Jinja2Templates(directory="backend/webui/templates")
-    from backend.services.payment.currency_units import (
-        format_minor_amount,
-        safe_format_minor_amount,
-    )
-
-    templates.env.globals["format_minor_amount"] = format_minor_amount
-    templates.env.globals["safe_format_minor_amount"] = safe_format_minor_amount
-    templates.env.globals["percentage"] = _percentage_filter
-    # get_settings() returns the cached singleton updated in place by dynamic config.
-    templates.env.globals["settings"] = get_settings()
-    templates.env.filters["format_duration"] = _format_duration_filter
-    register_time_filters(templates.env)
-    # i18n: 注入默认翻译函数（实际语言由模板上下文中的 _ 覆盖）
-    templates.env.globals["_"] = make_translation_func("zh-CN")
-    return templates
-
-
-def _percentage_filter(used, quota) -> int:
-    """计算配额使用百分比（0-100）"""
-    if quota and quota > 0:
-        return min(int((used / quota) * 100), 100)
-    return 0
-
-
-def _format_duration_filter(seconds) -> str:
-    """将秒数格式化为可读字符串（Jinja2 过滤器）"""
-    if not seconds:
-        return "-"
-    total_seconds = int(seconds)
-    if total_seconds < 60:
-        return f"{total_seconds}s"
-    minutes, remaining_seconds = divmod(total_seconds, 60)
-    if minutes < 60:
-        return f"{minutes}m {remaining_seconds}s"
-    hours, remaining_minutes = divmod(minutes, 60)
-    return f"{hours}h {remaining_minutes}m"
-
-
-def render_template(
-    template_name: str,
-    request: Request,
-    user_prefs: dict | None = None,
-    **context: Any,
-):
-    """渲染模板并自动注入 i18n 翻译函数
-
-    所有路由应使用此函数代替直接调用 templates.TemplateResponse，
-    以确保模板中的 _() 函数绑定到正确的语言。
-
-    Args:
-        template_name: 模板文件名
-        request: FastAPI Request 对象
-        user_prefs: 用户偏好（包含 language 字段）
-        **context: 传递给模板的额外上下文变量
-    """
-    from backend.webui.i18n import detect_language
-
-    lang = detect_language(user_prefs)
-    context["_"] = make_translation_func(lang)
-    context["lang"] = lang
-    if template_name in {
-        "config_center.html",
-        "config_ai.html",
-        "settings.html",
-        "system_config.html",
-        "config_backup.html",
-    }:
-        from backend.webui.i18n import i18n
-
-        context["center_messages"] = i18n.namespace("config_center", lang)
-    context["supported_languages"] = SUPPORTED_LANGUAGES
-    context["request"] = request
-    time_service = get_time_service()
-    context["app_timezone"] = time_service.resolved_timezone
-    context["app_timezone_json"] = time_service.resolved_timezone
-    context["app_timezone_offset"] = time_service.to_app_timezone(
-        time_service.now_utc()
-    ).strftime("%z")
-    if user_prefs:
-        context["user_prefs"] = user_prefs
-
-    return get_templates().TemplateResponse(request, template_name, context)
 
 
 def build_review_search_filter(search: str):
@@ -155,7 +62,9 @@ def build_user_scope_filter(user: dict, model: type) -> Any | None:
     if user.get("role") in ("admin", "super_admin"):
         return None
     username = user["sub"].casefold()
-    return or_(func.lower(model.repo_owner) == username, func.lower(model.author) == username)
+    return or_(
+        func.lower(model.repo_owner) == username, func.lower(model.author) == username
+    )
 
 
 async def paginate(
@@ -469,37 +378,6 @@ async def require_csrf_header(
     if not validate_csrf_token(x_csrf_token):
         raise HTTPException(status_code=403, detail="CSRF 验证失败")
     return x_csrf_token
-
-
-def error_page(
-    request: Request,
-    status_code: int = 404,
-    title: str = "页面未找到",
-    message: str = "请求的资源不存在",
-    user: dict | None = None,
-    user_prefs: dict | None = None,
-) -> HTMLResponse:
-    """渲染统一的错误页面"""
-    from backend.webui.i18n import detect_language
-
-    lang = detect_language(user_prefs)
-    return get_templates().TemplateResponse(
-        request,
-        "error.html",
-        {
-            "request": request,
-            "status_code": status_code,
-            "title": title,
-            "message": message,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "user_prefs": user_prefs or {"language": "zh-CN", "items_per_page": 20},
-            "_": make_translation_func(lang),
-            "lang": lang,
-            "supported_languages": SUPPORTED_LANGUAGES,
-        },
-        status_code=status_code,
-    )
 
 
 def _safe_redirect_path(url: str) -> str:

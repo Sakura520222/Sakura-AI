@@ -92,8 +92,8 @@ Agent 配额初始化配置项：
 - `backend/services/telegram_service.py`：Telegram 用户服务负责 PR、Issue、Agent 配额消费入口。
 - `backend/services/quota_scheduler.py`：`QuotaResetScheduler` 负责 UTC 00:00 定时批量重置。
 - `backend/main.py`：应用生命周期中启动和停止配额重置调度器。
-- `backend/webui/routes/users.py`、`backend/webui/routes/billing.py`：WebUI 中的用户和计费管理入口。
-- `backend/webui/routes/agent_team.py`：Agent 任务创建、重试、仓库权限和 Agent 配额入口。
+- `backend/api/v1/users.py`、`backend/api/v1/billing.py`、`backend/api/v1/billing_webui.py`：React WebUI 的用户和计费管理 JSON 接口。
+- `backend/api/v1/agent.py`、`backend/api/v1/agent_management.py`：Agent 任务创建、重试、仓库权限和 Agent 配额入口。
 - `backend/telegram/handlers.py`：Telegram Bot 配额相关交互入口。
 
 ---

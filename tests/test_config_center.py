@@ -31,14 +31,26 @@ USER = {"user_id": 2, "role": "user", "sub": "user"}
 
 
 @pytest.mark.asyncio
-async def test_configuration_center_rejects_negative_credit_reserve_before_commit(config_db):
+async def test_configuration_center_rejects_negative_credit_reserve_before_commit(
+    config_db,
+):
     service = ConfigCenterService()
     async with config_db() as db:
         current = await field(service, db, "global/billing_initial_reserve_credits")
         with pytest.raises(ConfigError, match="invalid_value"):
-            await service.mutate(db, ADMIN, current["id"], version=current["version"], value="-1")
-        assert (await db.execute(select(AppConfig).where(AppConfig.key_name == "billing_initial_reserve_credits"))).scalar_one_or_none() is None
-        assert (await field(service, db, current["id"]))["version"] == current["version"]
+            await service.mutate(
+                db, ADMIN, current["id"], version=current["version"], value="-1"
+            )
+        assert (
+            await db.execute(
+                select(AppConfig).where(
+                    AppConfig.key_name == "billing_initial_reserve_credits"
+                )
+            )
+        ).scalar_one_or_none() is None
+        assert (await field(service, db, current["id"]))["version"] == current[
+            "version"
+        ]
 
 
 @pytest_asyncio.fixture
@@ -78,7 +90,13 @@ async def config_db(tmp_path):
         ServiceExecutionOwnership,
     )
 
-    tables.extend([ServiceExecutionGate.__table__, ServiceExecutionLease.__table__, ServiceExecutionOwnership.__table__])
+    tables.extend(
+        [
+            ServiceExecutionGate.__table__,
+            ServiceExecutionLease.__table__,
+            ServiceExecutionOwnership.__table__,
+        ]
+    )
     async with engine.begin() as connection:
         if remote:
             await connection.run_sync(
@@ -139,7 +157,9 @@ async def test_local_commit_poll_preserves_the_active_semaphore(
     from backend.models.service_execution_models import ServiceExecutionLease
     from backend.services.service_execution_capacity import ServiceExecutionLimiter
 
-    limiter = ServiceExecutionLimiter("pr_review" if family == "review" else "issue_analysis")
+    limiter = ServiceExecutionLimiter(
+        "pr_review" if family == "review" else "issue_analysis"
+    )
     monkeypatch.setattr(module, f"_{family}_semaphore", limiter)
     key = f"max_concurrent_{family}s"
     setattr(get_settings(), key, 3)
@@ -160,7 +180,9 @@ async def test_local_commit_poll_preserves_the_active_semaphore(
             apply.assert_not_awaited()
             assert await getattr(module, f"_get_{family}_semaphore")() is semaphore
             async with config_db() as lease_db:
-                assert await lease_db.get(ServiceExecutionLease, lease.token) is not None
+                assert (
+                    await lease_db.get(ServiceExecutionLease, lease.token) is not None
+                )
             assert config_runtime.config_runtime_sync.seen["app/" + key] == 1
 
 
@@ -176,7 +198,9 @@ async def test_partial_runtime_retry_does_not_reset_an_already_applied_limit(
     from backend.models.service_execution_models import ServiceExecutionLease
     from backend.services.service_execution_capacity import ServiceExecutionLimiter
 
-    monkeypatch.setattr(review_worker, "_review_semaphore", ServiceExecutionLimiter("pr_review"))
+    monkeypatch.setattr(
+        review_worker, "_review_semaphore", ServiceExecutionLimiter("pr_review")
+    )
     get_settings().max_concurrent_reviews = 3
     original_apply = config_center_service.apply_config_values
 
@@ -198,7 +222,9 @@ async def test_partial_runtime_retry_does_not_reset_an_already_applied_limit(
             await config_runtime.config_runtime_sync.refresh(db)
             assert await review_worker._get_review_semaphore() is semaphore
             async with config_db() as lease_db:
-                assert await lease_db.get(ServiceExecutionLease, lease.token) is not None
+                assert (
+                    await lease_db.get(ServiceExecutionLease, lease.token) is not None
+                )
             assert not config_runtime.config_runtime_sync.pending
 
 
@@ -208,8 +234,6 @@ async def config_http(config_db, monkeypatch):
     from backend.api.v1.deps import require_api_super_admin
     from backend.models import database
     from backend.webui import deps
-    from backend.webui.routes import settings as legacy_settings
-    from backend.webui.routes import system_config
 
     app = FastAPI()
     for router in (
@@ -219,8 +243,6 @@ async def config_http(config_db, monkeypatch):
         config_center.router,
     ):
         app.include_router(router, prefix="/api/v1")
-    app.include_router(legacy_settings.router)
-    app.include_router(system_config.router)
     app.dependency_overrides[require_api_auth] = lambda: USER
     app.dependency_overrides[require_api_super_admin] = lambda: ADMIN
     app.dependency_overrides[require_csrf_header] = lambda: "valid"
@@ -286,7 +308,7 @@ async def test_legacy_api_returns_committed_pending_and_retries_unchanged_value(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("writer", ["center", "legacy_api", "legacy_form"])
+@pytest.mark.parametrize("writer", ["center", "legacy_api"])
 async def test_empty_personal_language_is_an_override_until_explicit_reset(
     config_db, config_http, writer
 ):
@@ -340,12 +362,6 @@ async def test_empty_personal_language_is_an_override_until_explicit_reset(
             "/api/v1/user-config", json={"configs": {"output_language": ""}}
         )
         assert response.status_code == 200 and response.json()["success"]
-    else:
-        response = await config_http.post(
-            "/settings/",
-            data={"items_per_page": 20, "language": "zh-CN", "output_language": ""},
-        )
-        assert response.status_code == 302
     current = await state()
     assert current["value"] == "" and current["source"] == "user"
     assert await get_user_dynamic_config("output_language", USER["user_id"]) == ""
@@ -829,53 +845,6 @@ async def test_runtime_reconciliation_reloads_deletion_and_restart(config_db):
         assert (
             get_settings().review_timeout_seconds == Settings().review_timeout_seconds
         )
-
-
-@pytest.mark.asyncio
-async def test_legacy_system_form_reports_pending_without_reapplying(
-    config_db, config_http, monkeypatch
-):
-    from unittest.mock import AsyncMock
-
-    from backend.services import config_center_service, config_runtime
-    from backend.webui.routes import system_config
-
-    original_apply = config_center_service.apply_config_values
-    original_toast = system_config.toast_redirect
-    toasts = []
-
-    def toast(url, key, *args, **kwargs):
-        toasts.append(key)
-        return original_toast(url, key, *args, **kwargs)
-
-    monkeypatch.setattr(system_config, "toast_redirect", toast)
-    monkeypatch.setattr(
-        config_center_service,
-        "apply_config_values",
-        AsyncMock(side_effect=RuntimeError("runtime unavailable")),
-    )
-    original_timeout = get_settings().notification_send_timeout_seconds
-    for _ in range(2):
-        response = await config_http.post(
-            "/system-config/save", data={"notification_send_timeout_seconds": "12"}
-        )
-        assert response.is_redirect
-        assert toasts[-1] == "toast.config_saved_pending"
-        assert get_settings().notification_send_timeout_seconds == original_timeout
-    async with config_db() as db:
-        row = (await db.execute(select(AppConfig))).scalar_one()
-        assert float(row.key_value) == 12
-    monkeypatch.setattr(config_center_service, "apply_config_values", original_apply)
-    response = await config_http.post(
-        "/system-config/save", data={"notification_send_timeout_seconds": "12"}
-    )
-    assert response.is_redirect
-    assert get_settings().notification_send_timeout_seconds == 12
-    assert not config_runtime.config_runtime_sync.pending
-    assert (
-        config_runtime.config_runtime_sync.seen["app/notification_send_timeout_seconds"]
-        == 1
-    )
 
 
 @pytest.mark.asyncio

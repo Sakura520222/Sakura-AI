@@ -1,9 +1,11 @@
 from types import SimpleNamespace
+from urllib.parse import urlencode
 
 import pytest
+from fastapi.responses import RedirectResponse
 
+from backend.api.v1 import console_data as route_module
 from backend.services import sakura_memory_service as service_module
-from backend.webui.routes import sakura_memory as route_module
 
 
 @pytest.mark.asyncio
@@ -45,27 +47,27 @@ async def test_trigger_extract_uses_public_service_without_private_state_lookup(
         lang="",
         **kwargs,
     ):
-        return {
-            "url": url,
-            "message": message,
-            "toast_type": toast_type,
-        }
+        query = urlencode({"_toast": message, "_toast_type": toast_type})
+        return RedirectResponse(f"{url}?{query}", status_code=status_code)
 
     monkeypatch.setattr(route_module, "log_admin_action", fake_log_admin_action)
     monkeypatch.setattr(route_module, "toast_redirect", fake_toast_redirect)
-    monkeypatch.setattr(route_module, "detect_language", lambda: "zh-CN")
 
-    response = await route_module.trigger_extract(
-        "owner/repo",
+    response = await route_module.memory_operation(
+        "extract",
         request=object(),
+        repo="owner/repo",
         db=db,
         user={"user_id": 7},
-        csrf_token="csrf",
+        csrf="csrf",
     )
 
     assert service.calls == [(repo, "owner/repo", None)]
     assert admin_actions == [(db, 7, "sakura_trigger", "extract", "owner/repo")]
-    assert response["message"] == "toast.sakura_extract_triggered"
+    assert response == {
+        "success": True,
+        "message": "toast.sakura_extract_triggered",
+    }
 
 
 @pytest.mark.asyncio

@@ -1,31 +1,21 @@
-"""WebUI Agent 专家团队路由"""
+"""Agent Team application operations used by the versioned API."""
 
 import asyncio
 import json
 import re
 from uuid import uuid4
 
-from fastapi import (
-    APIRouter,
-    BackgroundTasks,
-    Depends,
-    Form,
-    HTTPException,
-    Query,
-    Request,
-)
+from fastapi import BackgroundTasks, Depends, Form
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from loguru import logger
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from backend.core.config import get_dynamic_config
 from backend.core.time_service import format_rfc3339, from_unix_timestamp, now_utc
 from backend.models.agent_team_models import (
     AgentTeamConversationContext,
-    AgentTeamIteration,
     AgentTeamMessage,
     AgentTeamSession,
     AgentTeamSourceType,
@@ -34,7 +24,6 @@ from backend.models.agent_team_models import (
     AgentTeamToolCall,
     AgentTeamUserPrompt,
 )
-from backend.models.database import IssueAnalysis
 from backend.models.database import utc_now as _utc_now
 from backend.services.agent_team.candidate_service import (
     DEFAULT_AGENT_TASK_GOAL,
@@ -64,19 +53,8 @@ from backend.services.database_reset_runtime_service import (
     create_registered_background_task,
     register_current_background_task,
 )
-from backend.webui.deps import (
-    get_csrf_serializer,
-    get_db,
-    get_user_preferences,
-    paginate,
-    render_template,
-    require_auth,
-    require_csrf,
-    require_super_admin,
-)
+from backend.webui.deps import get_db, require_auth, require_csrf, require_super_admin
 from backend.webui.helpers.admin_log import log_admin_action
-
-router = APIRouter(prefix="/agent-team", tags=["WebUI Agent Team"])
 
 AGENT_TEAM_ACTIVE_STATUSES = [
     AgentTeamTaskStatus.QUEUED.value,
@@ -94,13 +72,11 @@ AGENT_TEAM_ACTIVE_STATUSES = [
 
 _VALID_TASK_PRIORITIES = {"critical", "high", "medium", "low"}
 
-# 终态但具备 workspace/branch/PR 信息、可续跑的任务状态
 _RESUMABLE_TERMINAL_STATUSES = {
     AgentTeamTaskStatus.COMPLETED.value,
     AgentTeamTaskStatus.WAITING_HUMAN.value,
     AgentTeamTaskStatus.PR_OPENED.value,
 }
-
 
 def _can_send_agent_prompt(task: AgentTeamTask) -> tuple[bool, str]:
     """判断 Live View 是否允许管理员指导输入。
@@ -123,7 +99,6 @@ def _can_send_agent_prompt(task: AgentTeamTask) -> tuple[bool, str]:
     if task.status in _RESUMABLE_TERMINAL_STATUSES:
         return False, "missing_workspace_or_pr"
     return False, "task_inactive"
-
 
 def _message_guidance_ids(message_json: str | None) -> list[int]:
     """Read stable prompt IDs from a checkpointed guidance message."""
@@ -150,7 +125,6 @@ def _message_guidance_ids(message_json: str | None) -> list[int]:
             guidance_ids.append(guidance_id)
     return guidance_ids
 
-
 def _is_conversation_message(message: AgentTeamMessage) -> bool:
     """Exclude bookkeeping while keeping historical conversation rows intact."""
     if message.role in {"audit", "harness_control"}:
@@ -167,10 +141,8 @@ def _is_conversation_message(message: AgentTeamMessage) -> bool:
         and {"harness_event", "context_compaction"}.intersection(metadata)
     )
 
-
 def _is_admin(user: dict) -> bool:
     return user.get("role") in ("admin", "super_admin")
-
 
 def _can_access_task(user: dict, task: AgentTeamTask) -> bool:
     username = (user.get("sub") or "").casefold()
@@ -178,13 +150,11 @@ def _can_access_task(user: dict, task: AgentTeamTask) -> bool:
         username and (task.started_by or "").casefold() == username
     )
 
-
 def _build_task_owner_filter(user: dict):
     """非管理员用户只能看到自己创建的任务"""
     if _is_admin(user):
         return None
     return func.lower(AgentTeamTask.started_by) == (user.get("sub") or "").casefold()
-
 
 async def _check_and_consume_agent_quota(
     db: AsyncSession,
@@ -209,7 +179,6 @@ async def _check_and_consume_agent_quota(
         commit=False,
     )
 
-
 async def _check_repo_access(user: dict, repo_full_name: str) -> str | None:
     """非管理员用户校验仓库访问权限，返回错误信息或 None 表示通过。
 
@@ -229,13 +198,11 @@ async def _check_repo_access(user: dict, repo_full_name: str) -> str | None:
         return "该仓库不在允许列表中，无法创建任务"
     return None
 
-
 def _clean_optional_text(value: str | None) -> str | None:
     if value is None:
         return None
     cleaned = value.strip()
     return cleaned or None
-
 
 def _parse_optional_int(value: str | None, field_name: str) -> int | None:
     cleaned = _clean_optional_text(value)
@@ -245,7 +212,6 @@ def _parse_optional_int(value: str | None, field_name: str) -> int | None:
         return int(cleaned)
     except ValueError as exc:
         raise ValueError(f"{field_name} 必须是整数") from exc
-
 
 def _parse_task_overrides(
     *,
@@ -321,10 +287,8 @@ def _parse_task_overrides(
 
     return overrides
 
-
 def _should_schedule_agent_task(status: str) -> bool:
     return status == AgentTeamTaskStatus.QUEUED.value
-
 
 def _workspace_repo_task_condition(repo_owner: str, repo_name: str):
     """匹配占用指定物理仓库工作区的普通或 direct-PR 任务。"""
@@ -340,13 +304,11 @@ def _workspace_repo_task_condition(repo_owner: str, repo_name: str):
         ),
     )
 
-
 def _compact_json(value) -> str:
     try:
         return json.dumps(value, ensure_ascii=False)
     except TypeError, ValueError:
         return str(value)
-
 
 def _format_context_items(value) -> list[dict]:
     items = []
@@ -368,7 +330,6 @@ def _format_context_items(value) -> list[dict]:
         if text:
             items.append({"text": text, "meta": meta})
     return items
-
 
 def _format_agent_conversation_contexts(
     contexts: list[AgentTeamConversationContext],
@@ -395,29 +356,6 @@ def _format_agent_conversation_contexts(
         }
         for context in ordered
     ]
-
-
-async def _load_task_issue_analysis(
-    db: AsyncSession, task: AgentTeamTask
-) -> IssueAnalysis | None:
-    return await load_issue_analysis_for_context(
-        db,
-        source_type=task.source_type,
-        source_id=task.source_id,
-        repo_owner=task.repo_owner,
-        repo_name=task.repo_name,
-        repo_full_name=task.repo_full_name,
-        issue_number=task.source_issue_number,
-    )
-
-
-async def _load_task_issue_comments(task: AgentTeamTask) -> list[dict]:
-    return await load_issue_comments_for_context(
-        repo_owner=task.repo_owner,
-        repo_name=task.repo_name,
-        issue_number=task.source_issue_number,
-    )
-
 
 async def _build_manual_issue_submission_context(db: AsyncSession, draft: dict) -> dict:
     analysis = await load_issue_analysis_for_context(
@@ -502,200 +440,6 @@ async def _build_manual_issue_submission_context(db: AsyncSession, draft: dict) 
         },
     }
 
-
-@router.get("/")
-async def agent_team_page(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_auth),
-    user_prefs: dict = Depends(get_user_preferences),
-    task_id: int | None = Query(None, ge=1),
-):
-    """Agent 专家团队独立页面。"""
-    is_admin = _is_admin(user)
-    if task_id is not None:
-        task = await db.get(AgentTeamTask, task_id)
-        if task is None:
-            raise HTTPException(404, "Task not found")
-        if not _can_access_task(user, task):
-            raise HTTPException(403, "Forbidden")
-    stats = await _load_stats(db, user=user)
-    agent_quota = None
-    if not is_admin:
-        # 延迟导入避免循环引用
-        from backend.services.telegram_service import TelegramService
-
-        quota_info = await TelegramService(db).get_user_quota_info(user["sub"])
-        if quota_info:
-            agent_quota = {
-                "daily_used": quota_info["agent_daily"]["used"],
-                "daily_limit": quota_info["agent_daily"]["limit"],
-                "weekly_used": quota_info["agent_weekly"]["used"],
-                "weekly_limit": quota_info["agent_weekly"]["limit"],
-                "monthly_used": quota_info["agent_monthly"]["used"],
-                "monthly_limit": quota_info["agent_monthly"]["limit"],
-            }
-    return render_template(
-        "agent_team.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        active_page="agent_team",
-        stats=stats,
-        workspace_summary=_load_workspace_summary(),
-        status_options=[status.value for status in AgentTeamTaskStatus],
-        is_admin=is_admin,
-        agent_quota=agent_quota,
-        selected_task_id=task_id,
-    )
-
-
-@router.get("/list-fragment")
-async def task_list_fragment(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_auth),
-    user_prefs: dict = Depends(get_user_preferences),
-    page: int = 1,
-    per_page: int | None = None,
-    status: str | None = None,
-    source_type: str | None = None,
-    q: str | None = None,
-    sort: str = "newest",
-):
-    """任务列表片段。"""
-    if per_page is None:
-        per_page = user_prefs["items_per_page"]
-    filters = []
-    owner_filter = _build_task_owner_filter(user)
-    if owner_filter is not None:
-        filters.append(owner_filter)
-    if status and status != "all":
-        if status == "active":
-            filters.append(AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES))
-        else:
-            filters.append(AgentTeamTask.status == status)
-    if source_type and source_type != "all":
-        filters.append(AgentTeamTask.source_type == source_type)
-    if q:
-        keyword = f"%{q.strip()}%"
-        filters.append(
-            or_(
-                AgentTeamTask.title.ilike(keyword),
-                AgentTeamTask.repo_full_name.ilike(keyword),
-                AgentTeamTask.summary.ilike(keyword),
-                AgentTeamTask.branch_name.ilike(keyword),
-            )
-        )
-
-    order_by = desc(AgentTeamTask.created_at)
-    if sort == "score":
-        order_by = desc(AgentTeamTask.candidate_score)
-    elif sort == "updated":
-        order_by = desc(AgentTeamTask.updated_at)
-
-    query = select(AgentTeamTask).where(*filters).order_by(order_by)
-    count_query = select(func.count(AgentTeamTask.id)).where(*filters)
-    tasks, total, total_pages, page = await paginate(
-        db, query, count_query, page, per_page
-    )
-    return render_template(
-        "components/agent_team_task_list_fragment.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        tasks=tasks,
-        page=page,
-        total_pages=total_pages,
-        total=total,
-        per_page=per_page,
-        status=status or "all",
-        source_type=source_type or "all",
-        q=q or "",
-        sort=sort,
-    )
-
-
-@router.get("/workspaces-fragment")
-async def workspace_list_fragment(
-    request: Request,
-    user: dict = Depends(require_super_admin),
-    user_prefs: dict = Depends(get_user_preferences),
-):
-    """工作区列表片段。"""
-    service = AgentTeamWorkspaceService()
-    workspaces = [_workspace_info_to_dict(info) for info in service.list_workspaces()]
-    return render_template(
-        "components/agent_team_workspace_list_fragment.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        workspace_root=str(service.base_dir),
-        workspaces=workspaces,
-        total_size=sum(item["total_size_bytes"] for item in workspaces),
-        total_size_label=_format_bytes(
-            sum(item["total_size_bytes"] for item in workspaces)
-        ),
-    )
-
-
-@router.get("/tasks/{task_id}/detail-fragment")
-async def task_detail_fragment(
-    task_id: int,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_auth),
-    user_prefs: dict = Depends(get_user_preferences),
-):
-    """任务详情片段。"""
-    result = await db.execute(
-        select(AgentTeamTask)
-        .where(AgentTeamTask.id == task_id)
-        .options(
-            selectinload(AgentTeamTask.iterations).selectinload(
-                AgentTeamIteration.patch_files
-            ),
-            selectinload(AgentTeamTask.feedback),
-            selectinload(AgentTeamTask.conversation_contexts),
-        )
-    )
-    task = result.scalar_one_or_none()
-    if task is None:
-        return JSONResponse(
-            {"success": False, "message": "任务不存在"}, status_code=404
-        )
-    if not _can_access_task(user, task):
-        return JSONResponse(
-            {"success": False, "message": "无权查看此任务"}, status_code=403
-        )
-
-    # selectinload 不支持在当前 SQLAlchemy 版本中稳定地继续链式排序，模板侧按序展示即可。
-    task.iterations.sort(key=lambda item: item.iteration_number)
-    task.feedback.sort(key=lambda item: item.created_at, reverse=True)
-    for iteration in task.iterations:
-        iteration.patch_files.sort(key=lambda item: item.file_path)
-
-    issue_analysis = await _load_task_issue_analysis(db, task)
-    issue_comments = await _load_task_issue_comments(task)
-    agent_contexts = _format_agent_conversation_contexts(task.conversation_contexts)
-
-    return render_template(
-        "components/agent_team_task_detail_fragment.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        task=task,
-        issue_analysis_context=format_issue_analysis_context(issue_analysis),
-        issue_comments=issue_comments,
-        agent_contexts=agent_contexts,
-    )
-
-
-@router.get("/api/repos/{owner}/{name}/branches")
 async def list_repo_branches(
     owner: str,
     name: str,
@@ -738,8 +482,6 @@ async def list_repo_branches(
             status_code=200,
         )
 
-
-@router.post("/candidates")
 async def preview_candidates(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
@@ -776,8 +518,6 @@ async def preview_candidates(
         {"success": True, "candidates": candidates_to_dicts(candidates)}
     )
 
-
-@router.post("/tasks/create")
 async def create_task_from_candidate(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
@@ -882,7 +622,6 @@ async def create_task_from_candidate(
 
     return JSONResponse({"success": True, "task_id": task.id})
 
-
 def _parse_issue_ref(ref: str) -> tuple[str, int]:
     """Parse issue reference into (repo_full_name, issue_number).
 
@@ -917,8 +656,6 @@ def _parse_issue_ref(ref: str) -> tuple[str, int]:
         "• owner/repo 123"
     )
 
-
-@router.post("/tasks/preview-from-issue")
 async def preview_task_from_issue(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
@@ -1004,8 +741,6 @@ async def preview_task_from_issue(
         )
     )
 
-
-@router.post("/tasks/create-from-issue")
 async def create_task_from_issue(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
@@ -1166,8 +901,6 @@ async def create_task_from_issue(
 
     return JSONResponse({"success": True, "task_id": task.id})
 
-
-@router.post("/tasks/{task_id}/retry")
 async def retry_task(
     task_id: int,
     background_tasks: BackgroundTasks,
@@ -1289,8 +1022,6 @@ async def retry_task(
     )
     return JSONResponse({"success": True, "task_id": task_id})
 
-
-@router.post("/tasks/{task_id}/resume")
 async def resume_task(
     task_id: int,
     background_tasks: BackgroundTasks,
@@ -1354,8 +1085,6 @@ async def resume_task(
     )
     return JSONResponse({"success": True, "task_id": task_id})
 
-
-@router.post("/tasks/{task_id}/cancel")
 async def cancel_task(
     task_id: int,
     db: AsyncSession = Depends(get_db),
@@ -1412,8 +1141,6 @@ async def cancel_task(
     )
     return JSONResponse({"success": True, "task_id": task_id})
 
-
-@router.post("/tasks/{task_id}/delete")
 async def delete_task(
     task_id: int,
     db: AsyncSession = Depends(get_db),
@@ -1466,8 +1193,6 @@ async def delete_task(
     )
     return JSONResponse({"success": True, "task_id": task_id})
 
-
-@router.post("/workspaces/delete")
 async def delete_workspace(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
@@ -1493,7 +1218,9 @@ async def delete_workspace(
 
     service = AgentTeamWorkspaceService()
     try:
-        workspace = await asyncio.to_thread(service.delete_workspace, repo_owner, repo_name)
+        workspace = await asyncio.to_thread(
+            service.delete_workspace, repo_owner, repo_name
+        )
     except ValueError:
         logger.exception("删除 Agent 仓库工作区失败：路径校验未通过")
         return JSONResponse(
@@ -1512,76 +1239,6 @@ async def delete_workspace(
         {"success": True, "repo_owner": repo_owner, "repo_name": repo_name}
     )
 
-
-# ── Worktree 管理 ──────────────────────────────────────────
-
-
-@router.get("/workspaces/{repo_owner}/{repo_name}/worktrees-fragment")
-async def worktree_list_fragment(
-    request: Request,
-    repo_owner: str,
-    repo_name: str,
-    db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_super_admin),
-    user_prefs: dict = Depends(get_user_preferences),
-):
-    """返回指定仓库的 worktree 列表 HTML 片段。"""
-    service = AgentTeamWorkspaceService()
-    worktrees = await asyncio.to_thread(service.list_worktrees, repo_owner, repo_name)
-
-    # 查询各 task 的状态，用于标识活跃/孤立 worktree
-    task_ids = [w.task_id for w in worktrees if w.task_id is not None]
-    task_status_map: dict[int, str] = {}
-    if task_ids:
-        rows = (
-            await db.execute(
-                select(AgentTeamTask.id, AgentTeamTask.status).where(
-                    AgentTeamTask.id.in_(task_ids)
-                )
-            )
-        ).all()
-        task_status_map = {row.id: row.status for row in rows}
-
-    active_statuses = set(AGENT_TEAM_ACTIVE_STATUSES)
-
-    worktree_items = []
-    for w in worktrees:
-        task_status = task_status_map.get(w.task_id, "") if w.task_id else ""
-        is_active = task_status in active_statuses
-        worktree_items.append(
-            {
-                "dir_name": w.dir_name,
-                "task_id": w.task_id,
-                "branch_slug": w.branch_slug,
-                "file_count": w.file_count,
-                "total_size_bytes": w.total_size_bytes,
-                "size_label": _format_bytes(w.total_size_bytes),
-                "modified_at": from_unix_timestamp(w.modified_at)
-                if w.modified_at is not None
-                else None,
-                "task_status": task_status,
-                "is_active": is_active,
-            }
-        )
-
-    orphans = [w for w in worktree_items if not w["is_active"]]
-    has_orphans = len(orphans) > 0
-
-    return render_template(
-        "components/agent_team_worktree_list_fragment.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        repo_owner=repo_owner,
-        repo_name=repo_name,
-        worktrees=worktree_items,
-        has_orphans=has_orphans,
-        orphan_count=len(orphans),
-    )
-
-
-@router.post("/workspaces/worktrees/delete")
 async def delete_worktree(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
@@ -1638,8 +1295,6 @@ async def delete_worktree(
     )
     return JSONResponse({"success": True, "dir_name": dir_name})
 
-
-@router.post("/workspaces/worktrees/clean-orphans")
 async def clean_orphan_worktrees(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
@@ -1691,7 +1346,6 @@ async def clean_orphan_worktrees(
 
     return JSONResponse({"success": True, "cleaned": cleaned})
 
-
 async def _manual_dispatch_pending_response(db, user):
     from backend.webui.config_feedback import config_api_language
     from backend.webui.i18n import i18n
@@ -1706,7 +1360,6 @@ async def _manual_dispatch_pending_response(db, user):
         },
         status_code=503,
     )
-
 
 async def _run_agent_task_background(
     task_id: int, receipt_id: str | None = None
@@ -1737,7 +1390,6 @@ async def _run_agent_task_background(
             "Agent 后台任务提交失败: task_id={}, error={}", task_id, exc
         )
 
-
 async def _resume_agent_task_background(task_id: int) -> None:
     """后台续跑 Agent 任务，避免阻塞 WebUI 请求。"""
     if register_current_background_task("agent_team_webui_resume") is None:
@@ -1750,7 +1402,6 @@ async def _resume_agent_task_background(task_id: int) -> None:
         logger.opt(exception=True).error(
             "Agent 后台任务续跑失败: task_id={}, error={}", task_id, exc
         )
-
 
 async def _load_stats(db: AsyncSession, user: dict | None = None) -> dict:
     owner_filter = _build_task_owner_filter(user) if user else None
@@ -1796,21 +1447,6 @@ async def _load_stats(db: AsyncSession, user: dict | None = None) -> dict:
         "status_counts": {status: count for status, count in status_rows.all()},
     }
 
-
-def _load_workspace_summary() -> dict:
-    """读取工作区摘要，用于页面顶部快捷展示。"""
-    service = AgentTeamWorkspaceService()
-    workspaces = service.list_workspaces()
-    return {
-        "root": str(service.base_dir),
-        "count": len(workspaces),
-        "total_size_bytes": sum(item.total_size_bytes for item in workspaces),
-        "total_size_label": _format_bytes(
-            sum(item.total_size_bytes for item in workspaces)
-        ),
-    }
-
-
 def _workspace_info_to_dict(info) -> dict:
     """将工作区信息转换为模板友好结构。"""
     return {
@@ -1829,7 +1465,6 @@ def _workspace_info_to_dict(info) -> dict:
         "worktree_count": info.worktree_count,
     }
 
-
 def _format_bytes(value: int) -> str:
     """格式化字节数。"""
     size = float(value or 0)
@@ -1839,75 +1474,6 @@ def _format_bytes(value: int) -> str:
         size /= 1024
     return f"{size:.1f} GB"
 
-
-# ── Live View API 端点 ──────────────────────────────────
-
-
-@router.get("/api/active-tasks")
-async def list_active_tasks(
-    user: dict = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-):
-    """获取活跃任务列表（供 Live View 下拉框使用，含最近完成的任务以便回看对话）。"""
-    owner_filter = _build_task_owner_filter(user)
-    base_filters = [
-        AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES)
-        | (
-            AgentTeamTask.status.in_(
-                [
-                    AgentTeamTaskStatus.COMPLETED.value,
-                    AgentTeamTaskStatus.FAILED.value,
-                    AgentTeamTaskStatus.CANCELLED.value,
-                    AgentTeamTaskStatus.PR_OPENED.value,
-                ]
-            )
-            & AgentTeamTask.completed_at.isnot(None)
-        )
-    ]
-    if owner_filter is not None:
-        base_filters.append(owner_filter)
-    rows = (
-        (
-            await db.execute(
-                select(AgentTeamTask)
-                .where(*base_filters)
-                .order_by(desc(AgentTeamTask.updated_at))
-                .limit(30)
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-    return JSONResponse(
-        {
-            "success": True,
-            "tasks": [
-                {
-                    "id": t.id,
-                    "title": t.title,
-                    "status": t.status,
-                    "repo_full_name": t.repo_full_name,
-                    "current_phase": t.current_phase,
-                    "branch_name": t.branch_name,
-                    "base_branch": t.base_branch,
-                    "pr_number": t.pr_number,
-                    "pr_url": t.pr_url,
-                    "iteration_count": t.iteration_count,
-                    "updated_at": format_rfc3339(t.updated_at)
-                    if t.updated_at
-                    else None,
-                    "completed_at": format_rfc3339(t.completed_at)
-                    if t.completed_at
-                    else None,
-                }
-                for t in rows
-            ],
-        }
-    )
-
-
-@router.get("/api/tasks/{task_id}/stream-data")
 async def task_stream_data(
     task_id: int,
     after_id: int = 0,
@@ -2086,8 +1652,6 @@ async def task_stream_data(
         }
     )
 
-
-@router.post("/api/tasks/{task_id}/prompts")
 async def submit_user_prompt(
     task_id: int,
     content: str = Form(...),
@@ -2227,8 +1791,6 @@ async def submit_user_prompt(
         }
     )
 
-
-@router.get("/api/tasks/{task_id}/prompts")
 async def list_user_prompts(
     task_id: int,
     user: dict = Depends(require_auth),

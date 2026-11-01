@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
 from fastapi.routing import APIRoute
 
+from backend.api.v1 import settings_webui
+from backend.api.v1.deps import require_api_super_admin
 from backend.core import config_sections
 from backend.core.config_section_defaults import (
     LABEL_SECTION_DEFAULTS,
@@ -37,9 +39,7 @@ from backend.services.system_config_service import (
     SYSTEM_CONFIG_GROUPS,
     SYSTEM_CONFIG_KEYS,
 )
-from backend.webui.deps import require_csrf, require_super_admin
-from backend.webui.routes import config as config_routes
-from backend.webui.routes.config import router
+from backend.webui.deps import require_csrf_header
 
 
 def _ai_account_record(
@@ -703,57 +703,8 @@ async def test_runtime_restore_protects_both_connection_anchors(include_redis):
     assert "redis_url" not in result.deleted_keys
 
 
-class _BackupUpload:
-    filename = "backup.json"
-
-    async def read(self, _limit):
-        return b"backup"
-
-    async def close(self):
-        return None
-
-
-@pytest.mark.asyncio
-async def test_runtime_backup_route_passes_database_url_guard(monkeypatch):
-    sections = {
-        SYSTEM_SECTION: [
-            BackupRecord(
-                "database_url",
-                "mysql+asyncmy://new/db",
-                "database_url",
-            )
-        ]
-    }
-    restore = AsyncMock(
-        side_effect=ConfigBackupError("database_url restore database_url through Setup")
-    )
-    monkeypatch.setattr(config_routes, "parse_config_backup", lambda _content: sections)
-    monkeypatch.setattr(config_routes, "restore_config_backup", restore)
-    monkeypatch.setattr(config_routes, "detect_language", lambda: "en")
-    monkeypatch.setattr(
-        config_routes,
-        "toast_redirect",
-        lambda *_args, **kwargs: kwargs,
-    )
-
-    db = object()
-    result = await config_routes.upload_config_backup(
-        _BackupUpload(),
-        db=db,
-        user={"user_id": 1, "sub": "admin"},
-        csrf_token="csrf",
-    )
-
-    restore.assert_awaited_once_with(
-        db,
-        sections,
-        allow_database_url=False,
-    )
-    assert "Setup" in result["reason"]
-
-
 def _route(path: str, method: str) -> APIRoute:
-    for route in router.routes:
+    for route in settings_webui.router.routes:
         if (
             isinstance(route, APIRoute)
             and route.path == path
@@ -770,21 +721,21 @@ def _dependency_calls(route: APIRoute) -> list[object]:
 @pytest.mark.parametrize(
     ("path", "method"),
     [
-        ("/config/backup", "GET"),
-        ("/config/backup/export/{scope}", "POST"),
-        ("/config/backup/import", "POST"),
+        ("/webui/backup", "GET"),
+        ("/webui/backup/export/{scope}", "POST"),
+        ("/webui/backup/import", "POST"),
     ],
 )
 def test_config_backup_routes_require_super_admin(path: str, method: str):
-    assert require_super_admin in _dependency_calls(_route(path, method))
+    assert require_api_super_admin in _dependency_calls(_route(path, method))
 
 
 @pytest.mark.parametrize(
     "path",
-    ["/config/backup/export/{scope}", "/config/backup/import"],
+    ["/webui/backup/export/{scope}", "/webui/backup/import"],
 )
 def test_config_backup_mutations_require_form_csrf(path: str):
-    assert require_csrf in _dependency_calls(_route(path, "POST"))
+    assert require_csrf_header in _dependency_calls(_route(path, "POST"))
 
 
 @pytest.mark.asyncio
@@ -801,10 +752,10 @@ async def test_download_response_is_attachment_and_never_cached(monkeypatch):
     async def fake_log(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(config_routes, "export_config_backup", fake_export)
-    monkeypatch.setattr(config_routes, "log_admin_action", fake_log)
+    monkeypatch.setattr(settings_webui, "export_config_backup", fake_export)
+    monkeypatch.setattr(settings_webui, "log_admin_action", fake_log)
 
-    response = await config_routes.download_config_backup(
+    response = await settings_webui.download_config_backup(
         "global",
         db=object(),
         user={"user_id": 1, "sub": "root"},

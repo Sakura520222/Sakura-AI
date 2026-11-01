@@ -89,7 +89,66 @@ async def test_github_entry_binds_new_ui_target_to_server_side_state(
     assert len(params["state"][0]) >= 32
 
 
-async def test_totp_requires_pending_cookie_and_csrf_before_verifying(browser_api, monkeypatch):
+@pytest.mark.parametrize("redirect", ["/", "/app/", "/settings/"])
+async def test_oauth_callback_sends_all_pending_mfa_sessions_to_spa(
+    monkeypatch, redirect
+):
+    authority = auth_webui.legacy
+    monkeypatch.setattr(
+        authority, "_get_oauth_state", AsyncMock(return_value={"redirect": redirect})
+    )
+    consumed = AsyncMock()
+    monkeypatch.setattr(authority, "_delete_oauth_state", consumed)
+    monkeypatch.setattr(
+        authority,
+        "GitHubOAuthProvider",
+        lambda _settings: SimpleNamespace(
+            exchange_code=AsyncMock(
+                return_value=SimpleNamespace(
+                    account=SimpleNamespace(
+                        username="alice", provider_user_id="17", avatar_url=None
+                    )
+                )
+            )
+        ),
+    )
+    user = SimpleNamespace(id=17, role="user", email=None, email_verified=False)
+    monkeypatch.setattr(
+        authority.auth_service, "authenticate_github", AsyncMock(return_value=user)
+    )
+    session = AsyncMock()
+    monkeypatch.setattr(authority.db_module, "async_session", lambda: session)
+    monkeypatch.setattr(
+        authority, "user_has_any_mfa_method", AsyncMock(return_value=True)
+    )
+
+    response = await authority.github_callback(
+        request=None,
+        code="fixture-code",
+        state="fixture-state",
+        error=None,
+        error_description=None,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/app/login?step=mfa"
+    cookies = response.headers.getlist("set-cookie")
+    assert any(
+        authority.MFA_PENDING_COOKIE_NAME in cookie
+        and "Secure" in cookie
+        and "HttpOnly" in cookie
+        for cookie in cookies
+    )
+    assert any(
+        WEBUI_TOKEN_COOKIE_NAME in cookie and "Max-Age=0" in cookie
+        for cookie in cookies
+    )
+    consumed.assert_awaited_once_with("fixture-state")
+
+
+async def test_totp_requires_pending_cookie_and_csrf_before_verifying(
+    browser_api, monkeypatch
+):
     _, client, _ = browser_api
     verify = AsyncMock()
     monkeypatch.setattr(auth_webui.token_auth, "verify_two_factor", verify)
@@ -112,7 +171,12 @@ async def test_totp_delegates_to_existing_authority_without_exposing_issued_toke
     pending = create_mfa_pending_token({"user_id": 17, "sub": "alice", "role": "user"})
     client.cookies.set(auth_webui.legacy.MFA_PENDING_COOKIE_NAME, pending)
     result = JSONResponse(
-        {"success": status == 200, "data": {"access_token": "issued-server-only-token"} if status == 200 else None},
+        {
+            "success": status == 200,
+            "data": {"access_token": "issued-server-only-token"}
+            if status == 200
+            else None,
+        },
         status_code=status,
     )
     verify = AsyncMock(return_value=result)
@@ -129,8 +193,17 @@ async def test_totp_delegates_to_existing_authority_without_exposing_issued_toke
     cookies = response.headers.get_list("set-cookie")
     if status == 200:
         assert response.json()["data"]["redirect"] == "/app/"
-        assert any("issued-server-only-token" in cookie and "Secure" in cookie and "HttpOnly" in cookie for cookie in cookies)
-        assert any(auth_webui.legacy.MFA_PENDING_COOKIE_NAME in cookie and "Max-Age=0" in cookie for cookie in cookies)
+        assert any(
+            "issued-server-only-token" in cookie
+            and "Secure" in cookie
+            and "HttpOnly" in cookie
+            for cookie in cookies
+        )
+        assert any(
+            auth_webui.legacy.MFA_PENDING_COOKIE_NAME in cookie
+            and "Max-Age=0" in cookie
+            for cookie in cookies
+        )
     else:
         assert not cookies
 
@@ -141,11 +214,19 @@ async def test_passkey_boundary_keeps_native_challenge_and_cookie_results(
 ):
     _, client, _ = browser_api
     expected = JSONResponse({"success": True, "data": {"redirect": "/"}})
-    expected.set_cookie(WEBUI_TOKEN_COOKIE_NAME, "server-credential", httponly=True, secure=True)
+    expected.set_cookie(
+        WEBUI_TOKEN_COOKIE_NAME, "server-credential", httponly=True, secure=True
+    )
     target = "two_factor_passkey_verify" if pending else "passkey_verify_discover"
     verify = AsyncMock(return_value=expected)
     monkeypatch.setattr(auth_webui.legacy, target, verify)
-    body = {"challenge_id": "test-challenge", "credential": {"id": "credential-id", "response": {"signature": "opaque-bytes"}}}
+    body = {
+        "challenge_id": "test-challenge",
+        "credential": {
+            "id": "credential-id",
+            "response": {"signature": "opaque-bytes"},
+        },
+    }
     response = await client.post(
         f"/api/v1/webui/auth/{'mfa/' if pending else ''}passkeys/verify",
         json=body,
@@ -161,7 +242,13 @@ async def test_spa_login_is_public_but_only_enrollment_may_bypass_mfa(
     browser_api, monkeypatch, tmp_path
 ):
     _, client, _ = browser_api
-    monkeypatch.setattr(spa, "WEB_DIST", tmp_path)
+
+    async def serve_fixture_distribution(_repo):
+        # spa.py resolves the build through webui_distribution; pin the
+        # resolver to a throwaway directory instead of the GitHub artifact.
+        return tmp_path
+
+    monkeypatch.setattr(spa, "get_distribution", serve_fixture_distribution)
     (tmp_path / "index.html").write_text("React fixture", encoding="utf-8")
     full_user = AsyncMock(return_value={"user_id": 17})
     guarded = AsyncMock(side_effect=HTTPException(428))
@@ -173,5 +260,7 @@ async def test_spa_login_is_public_but_only_enrollment_may_bypass_mfa(
     assert (await client.get("/app/security")).status_code == 200
     full_user.assert_awaited_once()
     response = await client.get("/app/settings/ai", follow_redirects=False)
-    assert response.status_code == 302 and response.headers["location"] == "/app/security"
+    assert (
+        response.status_code == 302 and response.headers["location"] == "/app/security"
+    )
     guarded.assert_awaited_once()

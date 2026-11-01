@@ -16,6 +16,7 @@ from backend.services.agent_team.ai_client import (
     AgentTeamAIConfig,
     load_agent_team_ai_config,
 )
+from backend.services.agent_team.api_operations import AGENT_TEAM_ACTIVE_STATUSES
 from backend.services.agent_team.candidate_service import (
     AgentCandidate,
     _parse_ai_filter_response,
@@ -30,7 +31,6 @@ from backend.services.agent_team.fullstack_expert import (
 )
 from backend.services.agent_team.prompt_config import build_implementation_user_message
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
-from backend.webui.routes.agent_team import AGENT_TEAM_ACTIVE_STATUSES
 
 AGENT_TEAM_DYNAMIC_KEYS = set(DYNAMIC_CONFIG_GROUPS["agent_team"]["keys"])
 

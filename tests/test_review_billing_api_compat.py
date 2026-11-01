@@ -2,7 +2,6 @@
 
 from decimal import Decimal
 
-import httpx
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -11,20 +10,12 @@ from backend.api.v1.billing import RefundRequest
 from backend.core.config import DYNAMIC_CONFIG_SELECT_OPTIONS, Settings
 from backend.models.billing_models import BillingTransaction
 from backend.models.payment_models import Order, Plan
+from backend.services.config_center_service import ConfigError, validate_field
+from backend.services.config_metadata import field_catalog
 from backend.services.payment_service import PaymentService
-from backend.webui.auth import WEBUI_TOKEN_COOKIE_NAME
-from backend.webui.deps import generate_csrf_token
-from backend.webui.routes.config import (
-    _DynamicConfigValidationError,
-    _validate_dynamic_config_value,
-)
-from tests.billing_webui_fixtures import pricing_app as app_fixture
 from tests.test_billing_credits_api import billing_client as client_fixture
-from tests.test_billing_usage_attribution import sql_runtime as sql_fixture
 
 billing_client = client_fixture
-pricing_app = app_fixture
-sql_runtime = sql_fixture
 
 
 async def seed_plan(factory, *, concurrency_limit=3):
@@ -100,43 +91,6 @@ async def test_grant_header_is_replayable_and_conflicts_are_rejected(billing_cli
 
 
 @pytest.mark.asyncio
-async def test_web_legacy_grant_returns_key_for_header_replay(billing_client):
-    client, factory = billing_client
-    plan_id = await seed_plan(factory)
-    headers = {"x-test-identity": "operator"}
-    payload = {"user_id": 1, "plan_id": plan_id, "csrf_token": generate_csrf_token()}
-    first = await client.post("/billing/admin/grant", data=payload, headers=headers)
-    assert first.status_code == 302
-    key = first.headers["Idempotency-Key"]
-    replay = await client.post(
-        "/billing/admin/grant",
-        data=payload,
-        headers={
-            **headers,
-            "Idempotency-Key": key,
-        },
-    )
-    assert replay.status_code == 302 and replay.headers["Idempotency-Key"] == key
-    async with factory() as db:
-        orders = (await db.execute(select(Order))).scalars().all()
-        assert len(orders) == 1 and orders[0].grant_idempotency_key == key
-        assert (
-            len(
-                (
-                    await db.execute(
-                        select(BillingTransaction).where(
-                            BillingTransaction.kind == "grant"
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            == 1
-        )
-
-
-@pytest.mark.asyncio
 async def test_api_explicit_null_clears_limit_omission_preserves_it(billing_client):
     client, factory = billing_client
     plan_id = await seed_plan(factory)
@@ -154,28 +108,6 @@ async def test_api_explicit_null_clears_limit_omission_preserves_it(billing_clie
         assert (await db.get(Plan, plan_id)).concurrency_limit is None
 
 
-@pytest.mark.asyncio
-async def test_web_blank_limit_clears_omission_preserves(pricing_app):
-    app, factory, token = pricing_app
-    plan_id = await seed_plan(factory)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        client.cookies.set(WEBUI_TOKEN_COOKIE_NAME, "isolated")
-        client.cookies.set("csrf_token", token)
-        url = f"/billing/admin/plans/{plan_id}/edit"
-        assert (
-            await client.post(url, data={"csrf_token": token, "name": "Rename"})
-        ).status_code == 302
-        async with factory() as db:
-            assert (await db.get(Plan, plan_id)).concurrency_limit == 3
-        assert (
-            await client.post(url, data={"csrf_token": token, "concurrency_limit": ""})
-        ).status_code == 302
-        async with factory() as db:
-            assert (await db.get(Plan, plan_id)).concurrency_limit is None
-
-
 def test_refund_key_schema_matches_service_boundary():
     assert RefundRequest(idempotency_key="x" * 160).idempotency_key == "x" * 160
     with pytest.raises(ValidationError):
@@ -190,14 +122,8 @@ def test_alipay_currency_is_cny_only_in_settings_and_forms():
     assert Settings(alipay_currency="cny").alipay_currency == "CNY"
     with pytest.raises(ValidationError):
         Settings(alipay_currency="USD")
-    with pytest.raises(_DynamicConfigValidationError):
-        _validate_dynamic_config_value(
-            "alipay_currency",
-            "USD",
-            expected_type=str,
-            ranges={},
-            select_options=DYNAMIC_CONFIG_SELECT_OPTIONS,
-        )
+    with pytest.raises(ConfigError):
+        validate_field(field_catalog()["global/alipay_currency"], "USD")
 
 
 @pytest.mark.asyncio

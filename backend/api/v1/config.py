@@ -64,6 +64,20 @@ async def _billing_validation_response(db, user, exc):
     )
 
 
+def _billing_issues(exc, lang):
+    errors = [config_issue(lang=lang, **issue) for issue in exc.issues]
+    for error in errors:
+        if error.get("details"):
+            localized = []
+            for route in error["details"]:
+                kind = route.rsplit("/", 1)[-1]
+                key = "billing.form." + kind
+                label = i18n.t(key, lang=lang)
+                localized.append(route + " — " + label if label != key else route)
+            error["details"] = localized
+    return errors
+
+
 async def _section_validation_response(db, user, exc):
     lang = await config_api_language(db, user)
     if isinstance(exc, SectionConfigValidationError):
@@ -316,10 +330,16 @@ async def save_ai_account(
         try:
             saved = await account_store.save_account(account)
         except BillingError as exc:
-            from backend.webui.routes.config import _billing_issues
-
             issues = _billing_issues(exc, await config_api_language(db, user))
-            return JSONResponse(status_code=400, content={"success": False, "error": issues[0]["message"], "code": exc.code, "errors": issues})
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "error": issues[0]["message"],
+                    "code": exc.code,
+                    "errors": issues,
+                },
+            )
         except account_store.AccountConflictError:
             return error_response(
                 "Account changed; reload before saving",
@@ -506,11 +526,17 @@ async def put_ai_strategy_settings(
         from backend.services.billing_service import BillingError
 
         if isinstance(exc.__cause__, BillingError):
-            from backend.webui.routes.config import _billing_issues
-
             lang = await config_api_language(db, user)
             issues = _billing_issues(exc.__cause__, lang)
-            return JSONResponse(status_code=400, content={"success": False, "error": issues[0]["message"], "code": exc.__cause__.code, "errors": issues})
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "error": issues[0]["message"],
+                    "code": exc.__cause__.code,
+                    "errors": issues,
+                },
+            )
         return error_response(exc.code)
     logger.info(
         f"AI 调用策略已更新 / ai strategy saved: {list(payload.keys())}, by={user['sub']}"
@@ -714,16 +740,36 @@ async def update_general_config(
         changes = await config_center_service.save_app_updates(db, configs)
     except ConfigError as exc:
         from backend.services.billing_service import BillingError
-        from backend.webui.routes.config import _billing_issues
 
         lang = await config_api_language(db, user)
         if isinstance(exc.__cause__, BillingError):
             issues = _billing_issues(exc.__cause__, lang)
-            return JSONResponse(status_code=400, content={"success": False, "error": issues[0]["message"], "code": exc.__cause__.code, "errors": issues})
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "error": issues[0]["message"],
+                    "code": exc.__cause__.code,
+                    "errors": issues,
+                },
+            )
         field = exc.field_id.removeprefix("global/")
         if field.endswith("_currency"):
-            issue = config_issue(lang=lang, field=field, code="invalid_currency", message_key="billing.validation.currency")
-            return JSONResponse(status_code=400, content={"success": False, "error": issue["message"], "code": "invalid_currency", "errors": [issue]})
+            issue = config_issue(
+                lang=lang,
+                field=field,
+                code="invalid_currency",
+                message_key="billing.validation.currency",
+            )
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "error": issue["message"],
+                    "code": "invalid_currency",
+                    "errors": [issue],
+                },
+            )
         return error_response(exc.code)
 
     logger.info(f"API 更新全局配置: {list(configs.keys())}, by={user['sub']}")

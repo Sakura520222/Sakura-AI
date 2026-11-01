@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -515,24 +514,3 @@ async def test_save_result_drops_stale_worker_after_close_wins_race():
     assert result is None
     assert record.status == "cancelled"
     assert record.issue_state == "closed"
-
-
-def test_issue_templates_render_cancelled_status_and_filter():
-    template_root = Path(__file__).resolve().parents[1] / "backend" / "webui" / "templates"
-    detail = (template_root / "issue_detail.html").read_text(encoding="utf-8")
-    fragment = (
-        template_root / "components" / "issue_detail_fragment.html"
-    ).read_text(encoding="utf-8")
-    listing = (
-        template_root / "components" / "issue_list_fragment.html"
-    ).read_text(encoding="utf-8")
-    filters = (
-        template_root / "components" / "issue_filters.html"
-    ).read_text(encoding="utf-8")
-
-    assert detail.count("analysis.status == 'cancelled'") == 1
-    assert "{{ _('issue.cancelled_status') }}" in detail
-    assert "analysis.status == 'cancelled'" in fragment
-    assert "{{ _('issue.cancelled_status') }}" in fragment
-    assert "a.status == 'cancelled'" in listing
-    assert '<option value="cancelled"' in filters
