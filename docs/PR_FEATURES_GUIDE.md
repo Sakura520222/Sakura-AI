@@ -1,12 +1,12 @@
 # PR 功能指南
 
-> Sakura AI 与 Pull Request 内容增强和审查稳定性相关的功能说明，覆盖变更总结、依赖图、自动审查开关、compact diff 和 AI API 超时治理。
+> PR 变更总结、依赖图、增量审查、Check Runs、大型 PR 上下文与超时配置。
 
 ← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 
-本文档说明 Sakura AI 中与 Pull Request 内容增强和审查稳定性相关的功能，覆盖 PR 变更总结、PR 依赖图、自动审查开关、大型 PR compact diff 以及 AI API 超时治理。
+本文档说明 Sakura AI 的 PR 功能与审查流程，包括变更总结、依赖图、审查生命周期、大型 PR compact diff 和 AI API 超时治理。
 
 ## 功能概览
 
@@ -64,6 +64,12 @@ PR 审查通常包含模型调用、工具调用、摘要生成、依赖图生�
 | `ai_api_total_timeout_seconds` | 一次 AI 调用在重试循环中的总耗时上限 |
 
 当模型服务响应慢、网络不稳定或大型 PR 触发长输出时，可适当调大总超时；当需要快速失败和释放队列资源时，可适当调小。
+
+## 审查生命周期
+
+PR 后续推送提交时，审查会从上一轮的消息历史继续运行，续跑仍受上下文压缩管理。上一轮审查尚未结束时到达的新提交会合并入队，等待当前审查完成后处理，不会并行启动第二轮审查。
+
+GitHub Checks 的主 Check 按五个阶段展示进度，`Analysis` 和 `Findings` 子项用于呈现审查状态。它们是进度展示，不构成合并门禁。来自 GitHub Actions、Codecov 或 lint App 等外部 CI 的错误会作为不可信证据提供给审查，不会被当作可信指令。输出格式、证据边界和验证规则见 [PR 审查输出协议](PR_REVIEW_PROTOCOL.md)。
 
 ## 配置项
 

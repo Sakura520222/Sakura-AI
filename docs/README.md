@@ -12,6 +12,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [快速开始](quick-start.md) | 在线体验、自行部署与初始化流程 |
+| [功能指南](features.md) | PR、Issue、扫描、Agent、仓库互助与管理功能 |
 | [部署指南](DEPLOYMENT.md) | Docker、源码、GitHub App、数据库、Updater 与 Agent 沙箱 |
 | [配置参考](CONFIGURATION.md) | WebUI 配置项、优先级与生效方式 |
 | [统一配置中心](configuration-center.md) | 配置项组织、默认值、变更生效与回滚机制 |
@@ -21,7 +22,8 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [PR 功能指南](PR_FEATURES_GUIDE.md) | PR 摘要、自动审查、依赖图 |
+| [PR 功能指南](PR_FEATURES_GUIDE.md) | PR 摘要、增量审查、依赖图与进度 |
+| [Issue 分析与关系](issue-analysis.md) | 图片与模板、重复检测、PR 关联及检索调参 |
 | [手动审查](MANUAL_REVIEW_FEATURE.md) | 评论命令及显式触发流程 |
 | [审查批准](APPROVAL_FEATURE_SUMMARY.md) | 智能审查批准能力 |
 | [审查协议](PR_REVIEW_PROTOCOL.md) | 审查输出协议与校验 |
@@ -53,6 +55,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [开发指南](development.md) | 支持平台、Python 版本策略、安装、测试与热重载 |
 | [技术架构](ARCHITECTURE.md) | 系统架构、技术栈、模块和数据流 |
 | [API v1](api-v1-reference.md) | REST API、鉴权、MFA、SSE |
 | [重命名迁移](RENAME_MIGRATION_GUIDE.md) | 老版本部署或品牌迁移 |

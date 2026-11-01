@@ -12,16 +12,22 @@
 
 **宿主机要求：** Linux x86_64/arm64、glibc ≥ 2.36（如 Debian 12+、Ubuntu 24.04+），已安装 Docker，且 systemd 作为 PID 1 正常运行。Ubuntu 20.04/22.04、Debian 11 和 Alpine 不满足此全量部署的 Host Updater 要求；这些宿主机可在支持官方镜像的 Docker 环境中使用[仅 Web 容器方案](DEPLOYMENT.md#web-only-deployment)，并手动更新镜像。其他 CPU 架构需改用受支持的 x86_64/arm64 主机。
 
-运行前请先检查安装脚本内容，并了解它需要管理员权限。以下命令与仓库 [README](https://github.com/Sakura520222/Sakura-AI#readme) 中的稳定频道部署入口一致：
+下面的管道命令会以管理员权限运行下载的 `start.sh`。执行前请检查脚本内容；如需先下载再检查，请按[部署指南分步安装](DEPLOYMENT.md#full-deployment)。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --prod
 ```
 
-安装过程包含镜像检查、数据库与沙箱组件的准备，不能等同于简单的单容器启动。需要手动下载并检查脚本时，使用[部署指南中的分步方式](DEPLOYMENT.md#full-deployment)。
+安装过程包含镜像检查、数据库与沙箱组件的准备，并非单容器启动。
 
 ::: tip 版本选择
-上述命令部署正式（stable）频道。开发版可能包含未发布或仍在变更的功能，生产环境应优先选用正式版。
+默认部署正式（stable）频道。如需首次部署就使用 development，在检查脚本后执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --channel=development --prod
+```
+
+开发镜像可能包含未发布或仍在变更的功能，生产环境应优先选用正式版。已安装实例的频道切换和 Tag 说明见[部署指南](DEPLOYMENT.md)。
 :::
 
 ## 方式三：使用已有数据库
@@ -33,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.s
 ## 初始化与首次登录
 
 1. 访问部署站点的 `/setup`，例如本机默认的 `http://localhost:8000/setup`。
-2. 使用首次部署验证 Token 完成 Setup Wizard。
+2. 读取本机私有文件中的[验证 Token](DEPLOYMENT.md#安全验证)，完成 Setup Wizard 安全验证。
 3. 按向导配置数据库、GitHub App、AI 模型与必要的集成选项。
 4. 登录 WebUI，按实际需要管理仓库、PR 审查、Issue 分析和 Agent。
 
@@ -43,6 +49,7 @@ curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.s
 
 ## 下一步
 
+- [开发指南](development.md)：准备本地 Python 环境、运行测试和调试 Setup Wizard。
 - [配置参考](CONFIGURATION.md)：查看 WebUI 配置项及生效方式。
 - [PR 功能指南](PR_FEATURES_GUIDE.md)：了解审查与依赖图。
 - [Agent Harness 2.0](AGENT_HARNESS_RUNTIME.md)：了解 Agent 运行机制与限制。
