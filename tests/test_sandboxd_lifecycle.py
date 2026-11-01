@@ -113,6 +113,7 @@ source ./start.sh
 case_dir="$(mktemp -d)"
 trap 'rm -rf "$case_dir"' EXIT
 SANDBOX_INSTANCE_ID_FILE="$case_dir/instance.id"
+DEPLOY_DIR="$case_dir"
 printf 'sandbox-existing1234\n' > "$SANDBOX_INSTANCE_ID_FILE"
 SANDBOX_CONFIGURED_INSTANCE_ID=""
 SANDBOX_EGRESS_NETWORK=bridge
@@ -640,11 +641,11 @@ sandbox_instance_id() { printf 'sandbox-12345678\n'; }
 sandbox_read_container_id() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'; }
 sandbox_container_matches_expected() { return 0; }
 sandbox_health_payload() {
-    printf '%s\n' '{"protocol_version":2,"sandboxd_version":"0.1.0","data":{"ready":true,"runtime":"docker","profiles":["agent","dependency"],"instance_id":"sandbox-12345678","egress_capability":"egress","workspace_root":"/workspace","runner_image_digest":"ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
+    printf '%s\n' '{"protocol_version":2,"sandboxd_version":"0.1.0","data":{"ready":true,"runtime":"docker","profiles":["agent","dependency","read_only"],"instance_id":"sandbox-12345678","egress_capability":"egress","workspace_root":"/workspace","runner_image_digest":"ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
 }
 sandbox_health_ready
 sandbox_health_payload() {
-    printf '%s\n' '{"protocol_version":2,"sandboxd_version":"0.1.0","data":{"ready":true,"runtime":"docker","profiles":["agent","dependency"],"instance_id":"sandbox-12345678","egress_capability":"none","workspace_root":"/workspace","runner_image_digest":"ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
+    printf '%s\n' '{"protocol_version":2,"sandboxd_version":"0.1.0","data":{"ready":true,"runtime":"docker","profiles":["agent","dependency","read_only"],"instance_id":"sandbox-12345678","egress_capability":"none","workspace_root":"/workspace","runner_image_digest":"ghcr.io/sakura520222/sakura-ai-agent-runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
 }
 if sandbox_health_ready; then
     exit 1
