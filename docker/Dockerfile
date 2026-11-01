@@ -5,7 +5,7 @@ ARG SAKURA_BUILD_REVISION=unknown
 ARG SAKURA_BUILD_CREATED=1970-01-01T00:00:00Z
 
 # Stage 1: builder — Python 依赖构建（含编译头文件）
-FROM python:3.14-bookworm AS builder
+FROM python:3.15-bookworm AS builder
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -32,7 +32,7 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install -r requirements.txt
 
 # Stage 2: runtime — 只保留运行所需
-FROM python:3.14-slim-bookworm AS runtime
+FROM python:3.15-slim-bookworm AS runtime
 
 ARG SAKURA_BUILD_CHANNEL=source
 ARG SAKURA_BUILD_VERSION=unknown
