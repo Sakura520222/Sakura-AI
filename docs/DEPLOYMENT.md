@@ -26,6 +26,8 @@
 
 ### 1.1 全量部署（MySQL + Redis 一并拉起）
 
+首次通过管道运行 `start.sh` 时，脚本会将自身安装到 `/opt/sakura-ai`。可用 `SAKURA_INSTALL_ROOT` 更改安装目录；生产 Compose 文件按频道从 `main`（stable）或 `develop`（development）下载，也可用 `SAKURA_DIST_BASE_URL` 指定分发源。安装后在安装目录内通过 `sudo ./start.sh` 管理部署。
+
 **Linux（包含 Host Updater，推荐）**：
 
 ```bash
@@ -185,6 +187,12 @@ Remove-Item Env:SAKURA_AI_IMAGE
 
 镜像仍保留 packaged YAML 三路合并机制（`/app/config-defaults` 基线 + 卷内隐藏 baseline），但当前管理文件列表为空；旧部署卷内残留的 `strategies.yaml` / `labels.yaml` 不会被读取或修改，可在确认迁移完成后手动清理。
 
+### 1.6 从 3.1.3 升级到 3.2.0
+
+首次启动会幂等迁移旧身份数据，创建通知相关新表，并将 `telegram_users` 中的 Telegram ID、GitHub 用户名和邮箱迁移到通知端点与外部身份；原有用户 ID、角色、配额、业务数据和外键保持不变。Telegram-only 账号如需改用 GitHub OAuth 登录认领原账号，应先由管理员在用户页填写其 GitHub 用户名。用户备份兼容 v1/v2，旧字段会自动映射；新备份包含身份、通知端点和邮件信息。恢复配置不会覆盖部署连接设置，SMTP 密码仍会脱敏。
+
+Email/SMTP 通知自 3.2.0 起提供。请在「系统核心配置」页设置 SMTP；465 端口选择 SSL/TLS（隐式 TLS），587 端口选择 STARTTLS，发件昵称默认 Sakura-AI。导入旧配置备份时，旧 `smtp_tls` 布尔字段会映射为新的安全模式。
+
 ---
 
 ## 二、环境要求
@@ -236,7 +244,11 @@ sudo mysql -e "FLUSH PRIVILEGES;"
 
 ## 五、源码部署 / 开发模式
 
+[开发指南](development.md)集中介绍支持平台、依赖安装、本地启动、测试、代码检查和 Setup 调试。本节保留源码运行及生产服务边界。部署协作流程见 [CONTRIBUTING.md](https://github.com/Sakura520222/Sakura-AI/blob/develop/CONTRIBUTING.md)。
+
 正式 Release 源码包和容器镜像已经包含对应的前端 dist。Git 安装及源码更新后的首次启动会自动获取并校验匹配的前端包，无需安装 Node.js 或手动构建前端；更新源码和 Python 依赖后重启应用即可。已有匹配资源可离线使用，下载失败不会覆盖现有文件。分发与缓存约定见 [WebUI 运行说明](webui-2.md#published-frontend-artifacts)。
+
+通过 `python -m backend.main` 启动时，监督循环会在环境中未指定 `SAKURA_DEPLOY_MODE` 且没有镜像构建标记 `SAKURA_BUILD_CHANNEL` 时，将应用子进程识别为 `source`；显式设置的部署模式优先。开发环境的 `backend/` 代码改动通常在子进程内模块级热重载，进程级模块（如 `backend/main.py` 和数据库模型）仍需手动重启。Setup 完成或管理员请求重启时，监督循环会重新拉起应用进程。开发环境准备和 Setup Wizard 调试见[开发指南](development.md)。
 
 ```bash
 git clone https://github.com/Sakura520222/Sakura-AI.git
@@ -314,7 +326,7 @@ py scripts/dev_bootstrap.py --reset
 
 ### 安全验证
 
-首次启动生成随机验证 Token，访问 `/setup/verify` 时输入。Token 不进入任何日志；本机管理员读取 `config/.setup-token`（Linux 权限 `0600`，Windows 在创建文件时设置仅允许进程用户访问的受保护 ACL，要求文件系统支持 ACL），或由 `start.sh` 在部署成功后读取并显示：
+首次启动生成随机验证 Token，访问 `/setup/verify` 时输入。Token 不进入任何日志；默认文件位置是 `config/.setup-token`，启用 `SAKURA_CONNECTION_CONFIG_PATH` 后，Token 文件改放在指定连接配置文件旁。Linux 文件权限为 `0600`；Windows 创建文件时会设置仅允许进程用户访问的受保护 ACL，要求文件系统支持 ACL。本机管理员也可由 `start.sh` 在部署成功后读取并显示：
 
 ```bash
 docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
@@ -436,7 +448,7 @@ $COMPOSE exec web cat /app/config/.setup-token
 
 ## 九、Host Updater 守护进程
 
-Host updater 是一个独立的 Linux 宿主守护进程。Backend 会定期检查新 Release；超级管理员在 WebUI 版本管理器中确认稳定版更新后，Host Updater 同时读取严格 v1 `update-manifest.json` 和同版本 `agent-sandbox-manifest.json`，预检并拉取 Web、sandboxd、runner 三个不可变镜像，原子更新部署状态，先重建并验证 sandboxd，再激活 Web。任一步失败时会恢复三项旧镜像状态并收敛旧 sidecar/Web；legacy 部署没有旧 sandbox pair 时会先卸载本次 sidecar，只有确认成功后才恢复旧 Web。它不会无人值守安装更新。
+Host updater 是一个独立的 Linux 宿主守护进程。Backend 会定期检查新 Release；超级管理员在 WebUI 版本管理器中确认稳定版更新后，Host Updater 同时读取严格 v1 `update-manifest.json` 和同版本 `agent-sandbox-manifest.json`，预检并拉取 Web、sandboxd、runner 三个不可变镜像，原子更新部署状态，先重建并验证 sandboxd，再激活 Web。更新激活前会验证完整回滚镜像对；若部署状态只记录了一个沙箱镜像 digest，会根据已验证的运行时身份恢复 sandboxd/runner 镜像对，并确保两者都可用，必要时先拉取缺失镜像。任一步失败时会恢复三项旧镜像状态并收敛旧 sidecar/Web；legacy 部署没有旧 sandbox pair 时会先卸载本次 sidecar，只有确认成功后才恢复旧 Web。Updater 不可用时不会降级为只更新 Web。它不会无人值守安装更新。
 
 **运行环境要求**：自 2026-08-21 起，updater 发布二进制在 Python 3.14 Bookworm（glibc 2.36）环境中构建，宿主机需要 glibc ≥ 2.36（Debian 12+、Ubuntu 24.04+）。更早版本基于 Bullseye（glibc 2.31）构建，可运行于更老的发行版；宿主机仍为 Ubuntu 20.04/22.04 或 Debian 11 等旧系统时，请勿升级到新二进制（自动更新确认前请先确认发行版满足要求），或改为仅容器部署并手动更新镜像。
 
@@ -498,6 +510,8 @@ sudo curl --fail --silent --show-error \
 ```
 
 `install` 不会下载 `latest` updater，而是根据部署状态解析具体 Sakura AI 版本并下载同一 Release 的架构资产。它本身**不提供应用健康门禁**：当 `deployment.env` 已包含具体的 `SAKURA_AI_IMAGE=:vX.Y.Z` 时，安装器可以直接采用该版本，无需查询 `/health`。因此，“`/health` 成功返回预期目标版本”仍是管理员重新安装 updater binary 前必须手动完成的检查。三镜像应用更新本身则由当前 updater 事务执行 health 与 rollback 门禁。
+
+更新成功、三镜像运行身份验证通过且回滚事务结束后，Host Updater 会尝试删除未被任何容器引用的旧版 Sakura AI 官方镜像。它会保留当前部署镜像、其他容器仍在使用的镜像及非 Sakura AI 镜像。清理结果写入更新任务日志；清理失败只会产生警告，不会改变已成功的更新状态。
 
 ### 生产首次安装
 

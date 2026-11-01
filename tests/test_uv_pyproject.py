@@ -94,17 +94,16 @@ def test_uv_lock_declares_supported_environments() -> None:
     )
 
 
-def test_development_cheatsheet_pip_annotation_includes_updater() -> None:
-    """开发指南速查块的 pip 注释必须包含 updater editable 安装。
+def test_development_guide_installs_updater_for_pip_tests() -> None:
+    """文档站的 pip 开发入口须同时安装 updater 与测试驱动。
 
     根测试套件递归收集 updater/tests 并导入 src layout 的
-    sakura_ai_updater;pip 环境缺少 `pip install -e './updater[dev]'`
-    时会在收集期直接失败。
+    sakura_ai_updater；requirements-dev.txt 包含其 editable 安装。
     """
-    for name, heading in (
-        ("README.md", "## 开发指南"),
-        ("README_EN.md", "## Development"),
-    ):
+    guide = (ROOT / "docs" / "development.md").read_text(encoding="utf-8")
+    assert "python -m pip install -r requirements-dev.txt" in guide
+    assert "updater[dev]" in guide
+
+    for name in ("README.md", "README_EN.md"):
         text = (ROOT / name).read_text(encoding="utf-8")
-        section = text.split(heading, 1)[1].split("\n## ", 1)[0]
-        assert "updater[dev]" in section, name
+        assert "https://sakura520222.github.io/Sakura-AI/development.html" in text

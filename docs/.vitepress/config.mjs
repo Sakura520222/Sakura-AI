@@ -46,6 +46,7 @@ export default defineConfig({
         items: [
           { text: '文档目录', link: '/README' },
           { text: '快速开始', link: '/quick-start' },
+          { text: '功能指南', link: '/features' },
           { text: '部署指南', link: '/DEPLOYMENT' },
           { text: '配置参考', link: '/CONFIGURATION' },
           { text: '配置中心', link: '/configuration-center' },
@@ -57,6 +58,7 @@ export default defineConfig({
         collapsed: true,
         items: [
           { text: 'PR 功能', link: '/PR_FEATURES_GUIDE' },
+          { text: 'Issue 分析与关系', link: '/issue-analysis' },
           { text: '手动审查', link: '/MANUAL_REVIEW_FEATURE' },
           { text: '审查批准', link: '/APPROVAL_FEATURE_SUMMARY' },
           { text: '审查协议', link: '/PR_REVIEW_PROTOCOL' },
@@ -91,6 +93,7 @@ export default defineConfig({
         text: '开发与参考',
         collapsed: true,
         items: [
+          { text: '开发指南', link: '/development' },
           { text: '技术架构', link: '/ARCHITECTURE' },
           { text: 'API v1 参考', link: '/api-v1-reference' },
           { text: '改名迁移', link: '/RENAME_MIGRATION_GUIDE' },

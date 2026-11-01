@@ -4,463 +4,93 @@
 
 <a href="res/cover-google.png"><img src="res/cover-google.png" alt="Sakura AI cover" width="936" height="468"></a>
 
-> AI-powered intelligent GitHub Pull Request code review and Issue analysis bot with proactive codebase exploration capabilities
+GitHub PR reviews, Issue analysis and Agent-assisted fixes
+
+[Try it online](https://ai.firefly520.top/) · [Documentation](https://sakura520222.github.io/Sakura-AI/) · [Get started](https://sakura520222.github.io/Sakura-AI/quick-start.html)
 
 **English** | [中文](README.md)
 
 [![Version](https://img.shields.io/badge/Version-3.2.5-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Sakura520222/Sakura-AI)](https://github.com/Sakura520222/Sakura-AI/stargazers)
-[![Last Commit](https://img.shields.io/github/last-commit/Sakura520222/Sakura-AI)](https://github.com/Sakura520222/Sakura-AI/commits)
-[![Live Demo](https://img.shields.io/badge/🌐_Free_Demo-Online-success.svg)](https://ai.firefly520.top/)
-[![Android App](https://img.shields.io/badge/Android_App-🚧_In_Development-orange.svg)](https://github.com/Sakura520222/Sakura-AI-APP)
 
 </div>
 
----
+Sakura AI connects to GitHub repositories to help with day-to-day PR and Issue maintenance. During a review, it reads related files, searches code and follows dependencies as needed. You can delegate fixes to an Agent, then review the Draft PR it creates.
 
-## Official Service
+Use the [hosted service](https://ai.firefly520.top/) with free trial credits after registration, or deploy your own instance.
 
-**Official Service Platform**: [https://ai.firefly520.top/](https://ai.firefly520.top/)
+## What it does
 
-- **Free Quota**: Register to receive free trial credits for PR review, Issue analysis, and other core features
-- **Full Features**: Experience all features including PR review, Issue analysis, Agent task delegation, Repository Aid, and more
-- **No Deployment Required**: Ready to use out of the box — no need to set up servers or configure environments
+- Reviews PRs with change summaries, categorized findings and inline comments. New commits receive incremental reviews, with progress shown through Check Runs.
+- Analyzes Issue feasibility and priority, recommends labels, investigates code and screenshots, and identifies duplicate reports and related PRs.
+- Accepts Agent tasks from Issues or PRs. Each task gets an isolated workspace to edit code, install dependencies, run tests and create a Draft PR. It never auto-merges.
+- Scans repositories periodically and publishes code quality and security findings as report Issues.
+- Provides a WebUI for repositories, models and tasks, with AI conversations, tool calls, usage tracking and optional Email, Telegram or Webhook subscriptions.
 
-> If you want to self-host or contribute to development, refer to the [Quick Start](#quick-start) section below.
+You can use multiple AI providers or custom compatible endpoints, choose separate models for reviews, summaries and Agent tasks, and configure fallback chains. Agents support repository instructions, Skills, MCP and Hooks. Production deployments run commands in a separate Linux container sandbox.
 
----
+See the [feature guide](https://sakura520222.github.io/Sakura-AI/features.html#english-summary) for details and limitations.
 
-## Core Features
+## Screenshots
 
-### Review Capabilities
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <p>Overview</p>
+      <a href="docs/images/showcase/overview.jpg"><img src="docs/images/showcase/overview.jpg" alt="Overview: review status and activity trends" width="468" height="296"></a>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <p>Agent workspace</p>
+      <a href="docs/images/showcase/agent.jpg"><img src="docs/images/showcase/agent.jpg" alt="Agent workspace: task management and execution" width="468" height="296"></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <p>AI & models</p>
+      <a href="docs/images/showcase/ai-settings.jpg"><img src="docs/images/showcase/ai-settings.jpg" alt="AI and models: accounts, models and invocation settings" width="468" height="296"></a>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <p>Review settings</p>
+      <a href="docs/images/showcase/review-settings.jpg"><img src="docs/images/showcase/review-settings.jpg" alt="Review settings: grouped fields and editing" width="468" height="296"></a>
+    </td>
+  </tr>
+</table>
 
-- **AI Reasoning Mode** — Deep code analysis, proactively invoking tools to inspect project structure and arbitrary files
-- **Cross-file Dependency Understanding** — Multi-turn dialogue with a global view of complex inter-module dependencies
-- **Adaptive Review Strategy** — Auto-selects quick / standard / deep mode based on PR size
-- **Large PR Compact Review** — Switches to compact diff mode near the context threshold; AI inspects changes on demand
-- **Structured Review Reports** — Overall score + categorized issues (Critical / Important / Suggestion) + collapsible sections
-- **Incremental Review Continuation** — Restores the previous reviewer's full ActivitySession message history instead of summary injection
-- **In-flight Increment Queue** — New `synchronize` commits queued during an active review instead of launching a parallel review
-- **On-demand Diff Control** — No hardcoded truncation; content size governed by tool-driven inspection and compression
-- **Smart Review Approval** — Auto-decides APPROVE / REQUEST_CHANGES / COMMENT based on AI scores
-- **Strict Review Output Contract** — `<SAKURA_REVIEW>` envelope + field validation + multi-round auto-repair + safe degradation, fully observable
-- **PR Change Summary** — AI auto-generates and incrementally updates PR summaries
-- **PR Dependency Graph** — AI / static dual-mode Mermaid graphs, incrementally stacked with history preserved
-- **Token Consumption Tracking** — Real-time tracking of token usage and estimated costs across all AI calls
-- **New Live Monitor** — Conversation-first console, Session + Thread, full-chain Provider Attempt / tool / compression projection, encrypted storage with audited decrypt
-- **One-click Revoke** — `/revoke` instantly withdraws all AI comments and reviews
-- **Auxiliary Model Support** — Independently configure lightweight models for summarization, label recommendation, etc.
-- **Inline Comments Toggle** — `enable_inline_comments` controls inline comments on PR diffs
-- **Controlled Auto Review** — `enable_auto_review` controls webhook auto-enqueueing
-- **Check Runs Progress Visualization** — Main Check 5-step flow + sub Analysis / Findings, display-only semantics that never block merges
-- **External CI Failure Injection** — Collects failures from other CI (GitHub Actions / Codecov / lint Apps) as untrusted evidence
-- **Review Comment Label Interaction** — Report contains label checkboxes; checking applies/removes labels automatically
-- **AI-generated PR Descriptions** — Agents auto-generate descriptions with metadata markers when creating PRs
+## Quick start
 
-### AI Tools & Knowledge Base
+The [hosted service](https://ai.firefly520.top/) needs no server setup. A full self-hosted instance requires Linux x86_64/arm64, glibc ≥ 2.36, Docker and systemd running as PID 1. Debian 12+ or Ubuntu 24.04+ is recommended.
 
-- **AI Tool System** — read_file / list_directory / search_in_files / get_git_info / list_commits / search_web / read_sakura_docs, invoked on demand
-- **Cross-file Code Search** — Locates all usages of functions / variables / classes
-- **Git Information Query** — Repository info, branch lists, commit history
-- **Web Search Enhancement** — DuckDuckGo / Tavily
-- **URL Fetching** — Expands external context needed for review
-- **Repository-level Knowledge Base (RAG)** — Vector semantic retrieval of project documentation
-- **PR Code Auto-indexing** — Syntax-aware chunking + semantic search for precise code location
-- **Project Memory System** — Self-reflection and knowledge accumulation based on `.sakura/`. See [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) (Chinese)
-
-### Repository Scanning
-
-- **AI Full Repository Scan** — Periodic AI-powered scan detecting code quality issues and security vulnerabilities
-- **Strict Scan Output Contract** — `<SAKURA_SCAN>` protocol envelope with multi-round format repair and safe degradation
-- **Live Scan Conversation Monitoring** — AI dialogue and tool calls during scans are recorded into activity observability in real time, visible on the WebUI activity page
-- **Auto-create Issues** — AI summary, trend comparison, severity/category matrix, hotspot files, and folded details; superseded report issues are closed automatically
-- **Flexible Scan Configuration** — Interval, cooldown, token budget, concurrency, etc.; the scan prompt focus is editable in the unified config page `strategy.scan` section
-- **Scan Management UI** — View scan list, details, and statistics in WebUI
-- **Scan Results** — Available through GitHub report Issues and WebUI
-
-### Issue Analysis
-
-- **Intelligent Issue Analysis** — Auto-classification, priority, label recommendation, duplicate detection, linked PR discovery
-- **Adaptive Analysis and Concise Comments** — Code investigation scales with validity, information, impact and complexity. Ads/spam, incomplete reports and simple questions receive brief handling; complex or high-risk issues retain evidence-based investigation. Chinese and English default comments lead with conclusions and recommended actions, fold metadata and hide empty suggestions. Existing custom templates remain supported; only `{summary}` and `{feasibility}` are required, and other supported variables may be omitted.
-- **Image Multimodal Analysis** — Screenshots in Issue bodies and comments are downloaded safely with GitHub credentials; images over 5 MiB are compressed toward 500 KiB before being fed to the AI as multimodal input (requires the per-model "supports image input" capability and the unified config toggle)
-- **Strict Issue Output Contract** — `<SAKURA_ISSUE_ANALYSIS>` envelope + multi-round repair + safe degradation
-- **Auto-labeling** — High-confidence labels applied automatically
-- **Auto-assignment** — Assigns to appropriate repository collaborators
-- **Title Rewriting** — Auto-improves vague or inaccurate titles
-- **Analysis Comment Publishing** — Auto-publishes results and reports status via user-scoped events
-- **PR-Issue Linking** — Parses Issue references and injects context
-- **Semantic PR-Issue Linking** — Recall open candidates from the shared Issue corpus, then independently verify the human description, actual patch and Issue requirements. Complete fixes emit `Closes`; partial relationships emit `Related to`. Successful verification replaces or clears the old machine link block while preserving human references. Retrieval, reranking or verification failures never infer new links.
-- **Issue Relationship Pre-analysis** — Before main analysis, compare open Issues as `duplicate` / `related` / `none`. Only when no open duplicate is verified, compare closed Issues as `previously_resolved`, `regression`, `duplicate_closed`, `previously_rejected` or `related` historical context. Independent occurrences such as different workflow executions cannot become duplicates on title similarity alone. Decisions require confidence, reason, similarities, differences and traceable source quotes. The main model cannot override verification. API responses, comments and detail pages expose additive `issue_relations`, retaining compatible `duplicate_of`.
-
-Relationship settings can be changed dynamically on the unified `/config` page. Settings supplies the defaults:
-
-| Setting | Default | Purpose |
-| --- | --- | --- |
-| `issue_detect_duplicates` | `true` | Enable open and historical Issue relationship pre-analysis |
-| `issue_include_comments` | `true` | Enable main-analysis comments and a fresh bounded comment sample for the relation model |
-| `issue_relation_max_candidates` | `5` | Candidate limit per open or historical phase, from 1 to 200; validated before source reads and retrieval |
-| `issue_relation_max_input_tokens` | `64000` | Estimated complete request input limit per open/historical phase, including bodies, comments, JSON, language and system instructions; all summary candidates context, output and reserve limits also apply. Exceeded or unknown budgets admit no duplicate, retain usage, and continue main analysis |
-| `issue_relation_candidate_max_comments` | `20` | Lazy newest-comment limit for the current Issue and each candidate when `issue_include_comments` is enabled (the existing setting name is retained); inference receives provenance and omitted discussion bounds |
-| `issue_relation_candidate_comment_max_chars` | `4000` | Exact source character limit per current-Issue or candidate comment; truncation is explicit and omitted discussion cannot prove a fix or rejection |
-| `issue_relation_similarity_threshold` | `0.75` | Issue relationship recall cosine threshold |
-| `issue_relation_confidence_threshold` | `0.85` | Related and historical verification threshold |
-| `issue_duplicate_confidence_threshold` | `0.95` | Open duplicate verification threshold |
-| `enable_semantic_issue_linking` | `true` | Enable semantic PR links |
-| `semantic_issue_similarity_threshold` | `0.65` | PR candidate cosine threshold; must be a finite number from 0 to 1, checked before retrieval |
-| `semantic_issue_max_links` | `5` | PR candidate limit, from 1 to 200; Settings and runtime admission enforce the same range before retrieval |
-| `pr_issue_related_confidence_threshold` | `0.85` | PR related verification threshold; must be a finite number from 0 to 1 |
-| `pr_issue_closing_confidence_threshold` | `0.95` | PR complete-fix verification threshold; must be a finite number from 0 to 1 |
-| `pr_issue_max_files` | `128` | Lazy PR verification file limit; preserve existing links when exceeded or patches are incomplete |
-| `pr_issue_max_input_tokens` | `64000` | Estimated input token limit for the entire verification request (description, Issues, JSON, system prompt); also bounded by context, configured output, and protocol reserve of all summary-role candidates |
-| `issue_corpus_freshness_seconds` | `60` | Minimum shared corpus sync interval; `0` reconciles every retrieval |
-| `issue_corpus_batch_size` | `100` | Corpus embedding/write batch limit |
-| `issue_candidate_pool_multiplier` | `3` | From 1 to 10, checked before corpus reconciliation; the fixed recall pool is the candidate limit × this multiplier, capped by corpus count; exclusions never enlarge it or trigger paging refill |
-| `rerank_score_threshold` | `0.6` | PR/Issue relation reranking threshold; must be a finite number from 0 to 1; enabled reranking rejects an invalid threshold before the provider request |
-
-Initial corpus synchronization includes open and closed Issues; later synchronization updates titles, bodies, state, labels and closure reason without requiring prior AI analysis. Generated body sections are excluded from recall. Candidate hydration reads current GitHub facts. Retrieval and verification failures retain observable status, and cancellation propagates. Relationship verification uses the `summary` role and shared soft deadline; auxiliary failure leaves main Issue analysis running. Corpus writes and PR link synchronization are serialized within the shipped deployment's single process and event loop. Independent processes or instances writing the same corpus require additional coordination.
-
-PR recall defaults to a cosine floor of `0.65` to help short PR descriptions recall Issues with longer bodies; candidates still require reranking and independent relation verification. Each successful retrieval, including an empty result, emits an INFO summary: `recalled` counts vector-pool rows, `eligible` counts rows passing identity and exclusion checks, `cosine_matches` counts rows meeting the cosine threshold, `hydrated` counts valid current GitHub facts, `candidates` counts reranked results, and `max_cosine` is the highest eligible score before cosine filtering (`none` when no score is available). The log contains no query, Issue title or body. It distinguishes an empty corpus, cosine filtering and reranking that yields no candidates.
-
-Existing `app_config` values and explicit environment settings override the new default. An upgrade does not automatically change a saved `0.8` to `0.65`. Existing deployments can set `semantic_issue_similarity_threshold` to `0.65` on the unified `/config` page, then use the INFO summary for further calibration. Lowering recall alone never establishes or closes a relation.
-
-Invalid PR confidence or semantic recall thresholds explicitly fail synchronization, including an empty candidate set, and preserve existing database links and the generated PR block. The Issue candidate limit is also checked at runtime so older settings or writes outside the form cannot trigger unbounded retrieval.
-
-PR and Issue relation workflows each allow at most 200 target candidates and a multiplier of at most 10, so the initial recall pool contains at most 2,000 entries. Settings, dynamic configuration and runtime admission enforce the same bounds without silently clamping invalid values. Strict reranking validates the effective threshold before sending a request; failure preserves existing PR relations and records an Issue relation failure while main analysis continues. Explicitly disabled reranking and ordinary RAG's non-strict fallback retain their existing behavior.
-
-Calls to `IssueService.detect_duplicates` must supply a positive integer `current_issue_number` so the actual Issue source can be hydrated and revalidated. Omitting the argument or passing an invalid number such as `None` raises an error instead of returning a success-shaped empty list. Calls with a valid number retain their argument and duplicate-result formats.
-
-Relationship pre-analysis freshly reads the current Issue body, state, labels, closure reason and update version from GitHub and gives that exact source to the relation model. The caller payload and historical body used by main analysis remain intact. When comments are enabled, the current Issue and candidates use the existing `candidate_*` bounds for a newest-comment sample with IDs, bodies, creation/update versions, total counts and truncation context. After inference, current and accepted candidate sources are read again; a later historical phase rechecks earlier accepted open relations, and empty/none decisions still require current-source consistency. Changed sources return observable `stale_source`; missing, unavailable or malformed facts return `source_unavailable`. These failures admit no duplicate, retain token usage and leave main analysis running. The comparison holds at the return boundary; GitHub offers no atomic conditional write covering later remote publication.
-
-For legacy records with NULL Issue state, reanalysis checks database repository ownership before resolving the current GitHub state. Only a confirmed open Issue is queued; a closed source returns 409, and unavailable or malformed sources return an explicit safe error. Historical short and full repository names share owner-scoped analysis version numbering. The queued payload retains historical title, body and author, while the relation phase independently uses the fresh source above.
-
-PR patch verification parses actual added/deleted lines within unified-diff hunks, checking both hunk spans and GitHub line counts. Source beginning with `++` / `--` inside a hunk remains valid changed code for counts and directed evidence. Files explicitly reported by GitHub with zero additions and deletions may have absent or metadata-only patches, such as pure renames or mode changes. They still consume snapshot budgets but cannot supply changed-code evidence. Reported line changes still require complete matching hunks; missing, truncated, malformed or inconsistent patches fail synchronization and preserve existing links.
-
-Existing MySQL deployments idempotently expand `issue_analyses.issue_relations` and `issue_analyses.analysis_detail` to `LONGTEXT` during automatic schema migration, preserving complete relation evidence and analysis JSON. This change has not performed a live migration or deployment.
-
-Before installing the PR-Issue unique index, the database deduplicates historical links by repository, PR, Issue and link type, retaining the greatest-ID row and its evidence per group. The migration does not load the whole table into Python or delete duplicates one at a time. Distinct link types and repository scopes remain separate.
-
-### Agent Expert Team
-
-- **Multi-entry Task Creation** — Super-admin manual launch, Issue `/agent` delegation, PR `/agent` one-click fix
-- **Multi-branch Parallel Workspaces** — Each task uses an isolated Git worktree, supporting parallel execution
-- **Dynamic Read-only Subagents** — The main Agent implements changes and can delegate independent investigations, wait for or cancel children, and collect structured results
-- **Context Compression & Resume** — Long tasks auto-compress history and persist checkpoints for recovery
-- **OS-level Tool Isolation** — Agent shell, search, and dependency installation run in one-shot non-root containers with ordinary Shell offline under the default policy, a read-only root filesystem, dropped capabilities, and only the current task worktree mounted
-- **Temporary Dependency Egress** — The default `web_tools` policy allows controlled Web tools and implicit Dependency egress. `run_command` can explicitly set `network_capability=dependency_egress` for any current command and its package hooks to reach arbitrary public destinations, with no command or domain allowlist. Egress ends with that container execution; the next ordinary Shell remains offline. `offline` denies egress; `full_access` allows all runner egress. Local is source-only, requires `full_access`, and uses the host network without OS isolation. [Python, Node, Rust, Go, and JVM examples](docs/CONFIGURATION.md#agent-专家团队)
-- **Dependency Auto-install & Validation** — Detects and installs `pyproject.toml` / `requirements.txt` dependencies and runs project tests inside the same sandbox boundary, without relying on high-false-positive command blacklists
-- **Dependency Install Recovery** — Transient network failures get up to 3 attempts by default, with 2- and 4-second backoff; permanent errors are not retried. Final failures retain sanitized diagnostics for the Agent to repair installation or continue static analysis and report tests it could not run. Attempts and delay are adjustable on the unified configuration page
-- **Sakura Knowledge Integration** — Browses `.sakura/` knowledge and reflection files to assist fixes
-- **Agent Skills & Built-in Ruff** — Install skills from files / ZIP / GitHub; built-in Ruff lint / format
-- **Unified Plugin Management** — Super admins manage MCP services, lifecycle hooks, runtime profiles and Skills at `/agent-plugins/`. Configuration lives in the database, credentials are masked, and ordinary execution needs no per-tool approval. See the [plugin configuration guide](docs/AGENT_PLUGINS.md#english-summary)
-- **Repository Instructions & Skills** — Load scoped `AGENTS.md` and Sakura rules, discover `.agents/skills` / `.sakura/skills`, and read bodies on demand. Historical workflow restrictions survive resume; see the [switch, scope, and size guide](docs/AGENT_REPOSITORY_CONTEXT.md#english-summary)
-- **Real-time Admin Intervention** — Inject guidance via WebUI Live View
-- **Completion & Recovery Contracts** — Only a successful `finish_task` completes a session. Model rounds and cumulative tool calls are unlimited. Ten identical calls or text responses trigger a strategy self-check without ending work, forcing a summary or switching models. Safe reads run in parallel; writes, Shell, Skill admission and finish are exclusive. Interrupted reads may retry, uncertain writes need reconciliation, and persisted completion is never replayed. Cancellation and fault recovery remain, with no per-tool manual approval.
-- **Agent Harness 2.0** — Read-only subagents, MCP, system hooks, capability boundaries and durable audit are wired into autonomous execution. See the [runtime guide](docs/AGENT_HARNESS_RUNTIME.md#english-summary) for deployment prerequisites, recovery and backend compatibility.
-- **Task Cancellation** — Cancel anytime with safe workspace cleanup
-- **PR Creation Loop** — Draft PR + Sakura PR review + human feedback iteration; never auto-merges
-- **Non-admin Access Control** — Repository allowlist + dedicated Agent quotas
-- **GitHub App Authorization Center** — Users view their own installations and repository access, then manage or extend authorization on GitHub
-
-### Repository Aid
-
-- **Mutual Star Plan** — Stars other members' displayed repositories on your behalf after authorization
-- **GitHub App User-to-Server Authorization** — Token stored as encrypted ciphertext, never printed in logs
-- **Displayed Repository Selection** — Members choose public repositories to display, with AI-generated summaries
-- **Auto-star Scheduling** — Randomized intervals, governed by per-user / per-repository daily limits
-- **Idempotency & Audit** — star / unstar / skip / fail all audited; same (actor, target, action) keeps final state
-- **Manual Star** — Manually star from the display list, sharing idempotency logic
-- **Member & Permission Governance** — Join / leave / pause / ban; offending repositories can be disabled
-- **Security Checks** — Rejects cross-user state reuse; GitHub account must match the logged-in user
-- **WebUI Management Page** — Members / displayed repositories / today's usage / feature toggles; member and repository filters and pagination retain each other's state, and searches treat `%` and `_` literally
-
-### Management & Operations
-
-- **Setup Wizard** — First-launch guidance with resume support, database preflight before migration, and automatic Billing Guard repair through a temporary administrator session
-- **System Core Configuration** — Modify infrastructure settings at runtime via WebUI, audit-logged; super administrators can set an IANA application timezone (restart required)
-- **Dynamic Configuration** — Ordinary WebUI changes take effect immediately; restart-required keys such as the application timezone are applied after restart
-- **AI API Timeout Control** — `ai_api_timeout_seconds` + `ai_api_total_timeout_seconds`
-- **Per-user Config Overrides** — UserConfig → AppConfig → Settings fallback
-- **AI Provider Registry** — 20+ built-in vendors, protocol-family-aware model discovery and context windows
-- **Persistent AI Account Configuration** — Multiple accounts + role bindings + fallback chains, per-model capability overrides
-- **Multi-Protocol Adaptation Layer** — Unified runtime for OpenAI / Anthropic / Gemini native / compatible endpoints
-- **Cross-Protocol Fallback** — Backoff retry + cross-vendor switch + context overflow compression
-- **GitHub App Repository Management** — Administrators view global installations, indexing, and scan status
-- **Security Center & MFA** — TOTP / recovery codes / Passkeys / global or per-user MFA enforcement / failure lockout
-- **SSE Real-time Push** — Multi-process real-time communication via Redis Pub/Sub
-- **Quota-based Access Control** — User self-registration + UTC daily / weekly / monthly auto-reset
-- **Paid Quota System** — Plan and redeem code CRUD + admin manual grants
-- **External Payments & Refunds** — Stripe / Paddle / Alipay (CNY) / NOWPayments / TRON USDT; order history and refunds remain available when purchases are disabled
-- **Legal Pages** — Built-in terms of service, privacy policy, refund policy, pricing page
-- **Admin Action Audit** — Complete operation logs
-- **WebUI Dashboard** — A React + TypeScript SPA backed by `/api/v1` JSON endpoints; previous page URLs redirect to `/app/*` without Jinja templates. Navigation groups Reviews & Analysis, Repositories, Agent, Repository Aid, Observability, Billing, Administration, and Settings, with repository and date filters on the PR review page. Frontend unit tests, browser regressions, and bilingual translation checks are maintained together in `web/`.
-- **Billing 2.0** — Credits wallets, actual AI Usage pricing, source-traced purchases/refunds and bills; model pricing selects configured AI accounts and discovers their models automatically, with one tariff for streaming and non-streaming calls and dropdown currency selection. Service execution capacity is shared across Workers; plans independently limit each user's admitted executions. Request counts and concurrency control admission. Low-balance alerts appear in Notification Center, with Email/private Telegram delivery by subscription; unknown refunds remain under reconciliation, and remaining subscription periods stay continuous after a refund. Charging defaults off while non-charging executions can still resume and continue automatically. Read the [configuration, migration and reconciliation guide](docs/billing-2.md) before enabling it.
-  Malformed reranks retain actual usage and follow the frozen failed-call policy; historical redemptions do not reissue benefits, early Stripe refunds replay automatically, and external full refunds reconcile remaining subscription entitlements.
-  Embeddings are validated before metering completes; scans freeze billing ownership at submission, streamed usage requests have a model compatibility switch, reconciled usage totals use the selected record, and external partial refunds follow the configured policy.
-- **Batch Issue Indexing** — Vector cache refresh + AI metadata enrichment
-- **Health Check Endpoint** — `/health` + Docker Compose auto health detection
-- **Unified Authentication** — GitHub OAuth (`user:email`, preferring the verified primary email) and Passkeys share the internal user ID; Telegram never determines login or permissions
-- **Unified Notification Center** — PR reviews, Issue analysis, scans, Agent tasks, announcements, security, quotas, payments and refunds publish durable business events to WebUI, Email, Telegram and generic Webhooks. Personal Settings supports endpoint verification, names, enable/disable, tests and preferences by event, resource and severity. The Announcement Center includes inbox history, read state and administrator diagnostics. External business notifications require explicit subscriptions; sensitive account events use verified private destinations. Scan notifications require administrator access; Agent notifications are scoped to task initiators and authorized administrators, with details selecting the task in the console. See [notification architecture and migration](docs/NOTIFICATION_CENTER.md).
-- **Announcement Center** — Super admins can save and publish in one step, including editing a published announcement into a new send round; users can track unread/read/all-read state, while version-guarded broadcasts retain historical content and delivery outcomes
-- **GitHub OAuth Login** — Direct signup/login without requiring Telegram configuration
-
-### Upgrade and Compatibility
-
-- **Upgrading from 3.1.3 to 3.2.0**: Old data is migrated automatically and idempotently on the first startup after the upgrade — no manual steps. New tables (announcements, notification deliveries, notification endpoints, external identities) are created automatically; legacy `telegram_users` Telegram IDs, GitHub usernames, and emails are backfilled as described in the next bullet; existing user IDs, roles, quotas, business data, and foreign keys are untouched. Email/SMTP notifications are new in 3.2.0 (3.1.3 has no mail settings): to enable them, fill in the SMTP fields on the System Core Config page — choose "SSL/TLS (implicit TLS)" for port 465 or "STARTTLS" for port 587; the sender display name defaults to Sakura-AI. Legacy field names in imported config backups are mapped automatically (e.g. the boolean `smtp_tls` becomes a security mode).
-- On first startup, legacy `telegram_users` identity data is migrated idempotently: original user IDs, roles, quotas, business data, and foreign keys are preserved while Telegram IDs and GitHub usernames are backfilled as notification endpoints and external identities. For a Telegram-only account, an administrator should assign its GitHub username in the user page before the user signs in with OAuth to claim the existing account.
-- User backups v1/v2 are accepted with automatic legacy-field mapping; new backups include identities, notification endpoints, and email. Config restore never overwrites deployment connection settings, and SMTP passwords remain redacted as sensitive values.
-
----
-
-## Quick Start
-
-### Online Demo (Fastest)
-
-Visit [https://ai.firefly520.top/](https://ai.firefly520.top/) — register for free credits, no deployment needed.
-
-### Docker One-Click Deployment (Recommended for Self-hosting)
-
-**Linux full deployment** (Web + MySQL + Redis + Host Updater + Agent sandboxd):
+Read the [deployment requirements](https://sakura520222.github.io/Sakura-AI/quick-start.html), inspect the installation script and confirm its administrator privileges before running:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --prod
 ```
 
-This deploys the **stable channel** by default. To deploy the **development channel** (latest builds from the develop branch) from the very first deployment:
+This installs the stable channel with Web, MySQL, Redis, Host Updater and the Agent sandbox. When installation finishes, follow the script's instructions to open `/setup` and initialize the instance using the verification token from its private local file. The token is never written to application logs.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --channel=development --prod
-```
+See the [deployment guide](https://sakura520222.github.io/Sakura-AI/DEPLOYMENT.html) for other installation options, the development channel, upgrades and uninstalling. For source development on Windows/macOS, use the [development guide](https://sakura520222.github.io/Sakura-AI/development.html#english-summary). A Web-only container does not include the Linux Agent sandbox or Host Updater.
 
-The interactive menu's production deployment also asks for the channel on first setup; switch channels later via the menu's channel switch entry.
+## Documentation and development
 
-`start.sh` runs from any location or pipe: the first execution installs itself into `/opt/sakura-ai` (override with `SAKURA_INSTALL_ROOT`) and downloads the production compose file for the selected image channel (stable from `main`, development from `develop`; override the distribution source with `SAKURA_DIST_BASE_URL`); all later management stays in `/opt/sakura-ai` via `sudo ./start.sh`.
+| Topic | Links |
+| --- | --- |
+| Features and usage | [Feature guide](https://sakura520222.github.io/Sakura-AI/features.html#english-summary) · [PR reviews](https://sakura520222.github.io/Sakura-AI/PR_FEATURES_GUIDE.html) · [Issue analysis](https://sakura520222.github.io/Sakura-AI/issue-analysis.html#english-summary) |
+| Instance configuration | [Configuration reference](https://sakura520222.github.io/Sakura-AI/CONFIGURATION.html) · [Configuration centre](https://sakura520222.github.io/Sakura-AI/configuration-center.html) |
+| Running and extending Agents | [Runtime](https://sakura520222.github.io/Sakura-AI/AGENT_HARNESS_RUNTIME.html) · [Repository instructions and Skills](https://sakura520222.github.io/Sakura-AI/AGENT_REPOSITORY_CONTEXT.html) · [Plugins](https://sakura520222.github.io/Sakura-AI/AGENT_PLUGINS.html) |
+| Contributing or building a client | [Development guide](https://sakura520222.github.io/Sakura-AI/development.html#english-summary) · [Architecture](https://sakura520222.github.io/Sakura-AI/ARCHITECTURE.html) · [API](https://sakura520222.github.io/Sakura-AI/api-v1-reference.html) |
 
-`sudo ./start.sh --prod` creates deployment state, resolves immutable Web, sandboxd, and Agent runner image references for the current Release, starts and verifies the independent sandboxd first, then starts Web/MySQL/Redis and installs, enables, and starts the Host Updater systemd unit. Production binaries require a usable systemd as PID 1; otherwise the script fails clearly instead of claiming reboot self-start is configured. Only sandboxd receives the Docker socket; neither Web nor one-shot runners do. Pressing `Ctrl+C` only detaches the progress view. Releases are checked automatically but require administrator confirmation. Stable updates use one three-image transaction for preflight, pulls, sidecar replacement, Web activation, and rollback; an unavailable Updater never falls back to a Web-only update. macOS, Windows, and container-only deployments do not provide this Linux OS sandbox or Host Updater; see the [Deployment Guide](docs/DEPLOYMENT.md).
+The backend uses Python 3.14 and FastAPI, the frontend uses React and TypeScript, and storage uses MySQL, Redis and ChromaDB. Browse the [full documentation index](https://sakura520222.github.io/Sakura-AI/README.html) or its Markdown sources in [docs/](docs/). Most detailed guides are in Chinese; the feature, Issue and development guides include English summaries.
 
-After a three-image update succeeds, the running deployment is verified, and the rollback transaction is finalized, the Host Updater attempts to remove old official Sakura-AI images unused by any container. It preserves the current deployment, images used by other containers, and unrelated images. Removals and warnings appear in the update job log; cleanup failures do not turn a successful update into a failure.
+Code, documentation and bug reports are welcome. Create feature branches from `develop` and target PRs at `develop`; see the [contributing guide](CONTRIBUTING_EN.md). An [Android client](https://github.com/Sakura520222/Sakura-AI-APP) is also in development.
 
-Before activation, the Updater checks that local rollback images are available. If deployment state contains only one sandbox image digest, it reconstructs the complete pair from verified runtime identity and checks both images before activation, pulling either one if missing.
+## Security and license
 
-Verify reboot self-start after installation:
+Report vulnerabilities through [GitHub Private Vulnerability Reporting](https://github.com/Sakura520222/Sakura-AI/security/advisories/new) or <sakura520222@outlook.com>, rather than public Issues. See the [security policy](SECURITY.md).
 
-```bash
-sudo systemctl is-enabled sakura-ai-updater.service
-sudo systemctl is-active sakura-ai-updater.service
-sudo systemctl status sakura-ai-updater.service --no-pager
-```
-
-Starting with Host Updater 0.3.0, machine-readable capabilities declare the three-image transaction contract. Version management also shows the build revision, release identity, and protocol. Missing capabilities block updates even when the protocol matches. First run `sudo ./start.sh updater reinstall` using the current `start.sh` to install a Release binary with the required capabilities. A development fallback to a stable asset must pass the same check.
-
-Development targets represent fully published Web, Sandboxd, and Runner images: CI binds their immutable identities into the Web OCI index deployment manifest before advancing `edge`. If Web is current but the sandbox has drifted, select “Verify/reconcile this deployment” in version management to converge normally, without reinstalling or changing the database.
-
-Explicit `SAKURA_UPDATER_DEV=1` source/dev mode keeps the manual daemon lifecycle and does not promise systemd reboot recovery.
-
-> **Synchronizing Host Updater after a WebUI update:** A stable WebUI update transaction updates Web, sandboxd, and the Agent runner together, but it does not replace the currently running Host Updater binary. After the update succeeds and `/health` reports the new version, run the following command in `/opt/sakura-ai` to align the Updater binary with that Release:
->
-> ```bash
-> sudo ./start.sh updater reinstall
-> ```
->
-> `reinstall` first uses the updater's internal lock to atomically close new submissions and prove that no job is active, then stops the systemd service under that maintenance gate, installs the matching Release binary, re-enables and starts the unit, and reports the new state; if installation fails, it attempts to restore the existing daemon. If an older updater lacks the atomic maintenance gate or `service-install`, the command fails closed, does not delete the binary currently on disk, reports the error clearly, and requires an upgrade to a matching updater release. A standalone `install` keeps the restart-required contract: it does not raw-stop a running daemon; use `reinstall` for the safe migration. The installer selects a concrete Sakura AI Release from deployment state, but it does not enforce application health. Treat a successful `/health` response containing the expected new version as a mandatory manual prerequisite; do not continue if the health check fails, is unavailable, or reports a different version. See the [Host Updater section of the Deployment Guide](docs/DEPLOYMENT.md#webui-更新后同步-host-updater) for complete verification steps.
-
-Uninstall has two levels. The standard uninstall preserves Docker data volumes for a later redeployment; explicit `--purge` removes the volumes, all images (Web/MySQL/Redis/sandboxd/Agent runner), and deployment files. In a standalone install such as `/opt/sakura-ai`, full uninstall leaves only `start.sh` for a clean redeployment; source repository files are protected. Both modes share the single `UNINSTALL` confirmation word:
-
-```bash
-sudo ./start.sh uninstall          # Standard uninstall: preserve data for a later redeployment
-sudo ./start.sh uninstall --purge  # Full uninstall: delete data/images; keep only start.sh in a standalone install
-```
-
-**Web image only** (bring your own MySQL/Redis):
-
-```bash
-docker run -d -p 8000:8000 \
-  -e DATABASE_URL=mysql+asyncmy://user:pass@host:3306/sakura_ai \
-  -e REDIS_URL=redis://host:6379/0 \
-  -v $(pwd)/config:/app/config \
-  ghcr.io/sakura520222/sakura-ai:latest
-```
-
-This mode does not include the Host Updater. It can report available releases, but it cannot apply an update from the WebUI.
-
-`latest` always means the stable production channel. Development builds are opt-in from the WebUI Version Manager and require an explicit risk confirmation; updates use the immutable GHCR `dev-...` tag plus manifest digest. `edge` is only a moving development alias and is never persisted as an update target.
-
-After first start, visit `http://localhost:8000/setup`. The verification token is regenerated on startup and handed to the local operator through the private `config/.setup-token` file. Setup completion immediately revokes it and attempts deletion. If a file lock prevents deletion, a cleanup warning is logged and completion/restart still succeeds. It never enters application or Docker logs. `start.sh` displays it after successful deployment; a local administrator can also run:
-
-```bash
-docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
-  -f docker/docker-compose.prod.yml exec web cat /app/config/.setup-token
-# Source checkout: cat config/.setup-token (PowerShell: Get-Content config/.setup-token)
-```
-
-The main menu's **View previous runtime logs** entry reads persisted logs. For live log levels, correlation IDs and storage limits see the [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
-
-### Source Development
-
-Release source archives include the matching frontend dist. Git installations automatically download and verify the matching prebuilt frontend when the application starts; Node.js and manual npm builds are not required. Restart after updating the source and Python dependencies. Frontend contributors can use the [WebUI development guide](docs/webui-2.md).
-
-> Source-development platforms: Windows 11 x86_64, Linux x86_64/arm64 with glibc >= 2.28 (non-musl; Alpine is unsupported), or Apple Silicon macOS 14+. Intel Macs, macOS <=13, musl/Alpine, and glibc <2.28 cannot install the dependencies because upstream onnxruntime ships no Python 3.14 wheel for them (and no sdist); the pip path is limited the same way.
-
-**With uv (recommended)**:
-
-```bash
-git clone https://github.com/Sakura520222/Sakura-AI.git
-cd Sakura-AI
-uv sync                # Creates .venv and installs all dependencies (incl. updater)
-uv run python -m backend.main
-```
-
-**Native Windows development (PowerShell)**: Install Git for Windows and uv, then run these commands from the repository root:
-
-```powershell
-uv sync --locked
-uv run pytest -q
-uv run ruff check .
-uv run python -m backend.main
-```
-
-Dependency installation, backend development, and portable tests require neither WSL nor Git Bash. Running the application still requires MySQL/Redis; tests use service doubles. Windows CI runs the full pytest suite and Ruff. Platform-specific POSIX Bash deployment, systemd, and Linux Landlock/seccomp tests report explicit skips and remain covered by Linux CI. Symlink tests run only when the current account can create links (Windows Developer Mode is optional). See the [Deployment Guide](docs/DEPLOYMENT.md) for the Linux requirements of the Host Updater, sandboxd, and local read-only process isolation.
-
-When no deployment mode or image-build marker is present, the `backend.main` launcher automatically identifies its application child as `source`; a local `local` Agent backend does not need a separate `SAKURA_DEPLOY_MODE` setting. An explicit environment value always takes precedence, and image environments are never inferred to be source checkouts.
-
-**Classic pip (without uv)**:
-
-```bash
-python -m pip install -r requirements-dev.txt
-python -m backend.main
-```
-
-> In local development, changes under `backend/` are hot-reloaded at module level inside the app subprocess (no process restart); changes to process-level modules such as `backend/main.py` or database models log a hint to restart manually. In-app restart requests (Setup completion, admin restart button) still respawn the whole process via the supervision loop.
-
-> Deployment details (image tags, pinned versions, GitHub App creation, database setup, full Setup Wizard flow, Host Updater daemon, upgrade and password rotation) are in the [Deployment Guide](docs/DEPLOYMENT.md) (Chinese).
-
----
-
-## Screenshots
-
-Click a screenshot to view the full image.
-
-<table>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <p><strong>Overview</strong><br><sub>Review status and activity trends</sub></p>
-      <a href="docs/images/showcase/overview.jpg"><img src="docs/images/showcase/overview.jpg" alt="Overview" width="468" height="296"></a>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <p><strong>Sign in</strong><br><sub>GitHub and passkey access</sub></p>
-      <a href="docs/images/showcase/login.jpg"><img src="docs/images/showcase/login.jpg" alt="Sign in" width="468" height="296"></a>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <p><strong>AI & models</strong><br><sub>Accounts, models and invocation settings</sub></p>
-      <a href="docs/images/showcase/ai-settings.jpg"><img src="docs/images/showcase/ai-settings.jpg" alt="AI & models" width="468" height="296"></a>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <p><strong>Review settings</strong><br><sub>Grouped settings and field editing</sub></p>
-      <a href="docs/images/showcase/review-settings.jpg"><img src="docs/images/showcase/review-settings.jpg" alt="Review settings" width="468" height="296"></a>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <p><strong>Agent workspace</strong><br><sub>Task management and execution</sub></p>
-      <a href="docs/images/showcase/agent.jpg"><img src="docs/images/showcase/agent.jpg" alt="Agent workspace" width="468" height="296"></a>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <p><strong>Preferences</strong><br><sub>Language, appearance and account settings</sub></p>
-      <a href="docs/images/showcase/preferences.jpg"><img src="docs/images/showcase/preferences.jpg" alt="Preferences" width="468" height="296"></a>
-    </td>
-  </tr>
-</table>
-
----
-
-## Technical Architecture
-
-```
-GitHub (PR / Issue / OAuth)
-        │ Webhook / OAuth / API
-        ▼
-FastAPI Web Server ── Webhook Handler · PR Analyzer · Comment Service
-        │              WebUI (React + TypeScript + Vite) · SSE Push
-        ▼
-AI Review Engine ── read_file · list_dir · search_files · git_info · commits
-                   search_web · RAG · Code Index · read_sakura_docs/memory
-        ▼
-Data Storage ── MySQL (Business) · Redis (Queue/PubSub) · ChromaDB (Vectors)
-```
-
-**Tech Stack**: FastAPI (Python 3.14+) · React + TypeScript + Vite + Tailwind CSS · Multi-protocol AI (OpenAI / Anthropic / Gemini / compatible) · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
-
-Full architecture diagram, data flow, code structure, and interactive knowledge graph are in the [Architecture Guide](docs/ARCHITECTURE.md) (Chinese).
-
----
-
-## Development
-
-```bash
-uv sync                              # Install dependencies (uv; classic pip: python -m pip install -r requirements-dev.txt, including updater[dev] and test drivers)
-uv run python -m backend.main        # Start the app (pip envs: python -m backend.main)
-python run_ruff.py                   # Lint + fix + format
-python run_ruff.py --check           # Read-only check
-uv run python -m pytest -q           # Run tests (pip envs: python -m pytest -q)
-tail -f "$(ls -t logs/app_*.log | head -n1)"  # Tail latest run log (DEBUG)
-```
-
-First launch enters Bootstrap mode. Read the one-time verification token with `cat config/.setup-token` (PowerShell: `Get-Content config/.setup-token`), enter it at `/setup/verify`, then visit `http://localhost:8000/setup` to complete configuration. The token never enters terminal logs. Windows files use a protected ACL granting access only to the process user and require an ACL-capable filesystem such as NTFS. To debug the Setup Wizard flow, use `py scripts/dev_bootstrap.py` (isolated dev config, skips background tasks); its default token path is `.sakura/dev/.setup-token`. With `SAKURA_CONNECTION_CONFIG_PATH`, the token lives beside that connection config.
-
-> Run logs are written to `logs/app_*.log` (one JSON Lines file per startup, 50 MB rotation, 10-day retention and a 500 MiB history budget; both console and file obey the live WebUI log level, with redaction before output). For Docker log-viewing commands see the [Deployment Guide · View Runtime Logs](docs/DEPLOYMENT.md#八查看运行日志).
-
-> The Updater is an independent Python 3.14+ package (`updater/`) with its own `pyproject.toml`, tests, and PyInstaller native build chain — see the [updater directory](updater/) for development. Its release binaries are built on Bookworm (glibc 2.36) and require the host to run glibc ≥ 2.36 (Debian 12+ / Ubuntu 24.04+).
-
----
-
-## Documentation
-
-Full documentation index at [docs/README.md](docs/README.md). Common entries:
-
-| Document | Description |
-|---|---|
-| [Deployment Guide](docs/DEPLOYMENT.md) | Docker / source deployment, GitHub App, Setup Wizard, Host Updater (Chinese) |
-| [Configuration Reference](docs/CONFIGURATION.md) | All config options: location, key, description (Chinese) |
-| [Architecture Guide](docs/ARCHITECTURE.md) | Architecture diagram, tech stack, code structure (Chinese) |
-| [Telegram Bot Integration](docs/TELEGRAM_SETUP.md) | Optional notification Provider, binding handshake and command reference (Chinese) |
-| [Review Protocol Spec](docs/PR_REVIEW_PROTOCOL.md) | `<SAKURA_REVIEW>` protocol, validation, repair (Chinese) |
-| [Security & MFA Guide](docs/SECURITY_MFA_GUIDE.md) | TOTP, recovery codes, Passkeys, Security Center (Chinese) |
-| [Security Policy](SECURITY.md) | Vulnerability disclosure policy, supported versions |
-| [API v1 Reference](docs/api-v1-reference.md) | RESTful API v1 (mobile OAuth, MFA, SSE, Billing) (Chinese) |
-| [Contributor Conventions](AGENTS.md) | Project conventions for automation agents and contributors |
-| [Contributing Guide](CONTRIBUTING_EN.md) | Gitflow branching model, development setup, code standards |
-
----
-
-## Contributing
-
-This project uses the standard Gitflow workflow: `main` (production) ← `release/*` / `hotfix/*`; `develop` (integration) ← `feature/*`. For full guidelines, see the [Contributing Guide (CONTRIBUTING_EN.md)](CONTRIBUTING_EN.md).
-
-1. Fork this repository
-2. Create a feature branch from `develop`: `git checkout develop && git checkout -b feature/amazing-feature`
-3. Commit changes (English [Conventional Commits](https://www.conventionalcommits.org/)): `git commit -m 'feat: add some amazing feature'`
-4. Push and open a Pull Request targeting `develop`
-
-Releases and hotfixes are handled by maintainers: create `release/x.y.z` from `develop` (or `hotfix/x.y.z` from `main`), merge into `main` to auto-publish a Release, then `main` is synced back to `develop`. Automation enforces PR branch flow, runs CI, and cleans up merged temporary branches.
-
----
-
-## Security
-
-If you discover a security vulnerability, please review our [Security Policy (SECURITY.md)](SECURITY.md) and report it privately via [GitHub Private Vulnerability Reporting](https://github.com/Sakura520222/Sakura-AI/security/advisories/new) or by emailing <sakura520222@outlook.com>. Please do not disclose vulnerabilities via public issues.
-
----
-
-## License
-
-[GNU Affero General Public License v3.0 (AGPLv3)](LICENSE) — Free to use, modify, and distribute; network services must provide source code.
-
----
+Sakura AI is licensed under [GNU AGPLv3](LICENSE). You may use, modify and distribute it; if you run a modified version as a network service, you must provide the corresponding source under the license.
 
 ## Star History
 
@@ -471,24 +101,3 @@ If you discover a security vulnerability, please review our [Security Policy (SE
    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI&type=Date" />
  </picture>
 </a>
-
----
-
-<div align="center">
-
-**Sakura AI** — Smarter, more efficient code reviews
-
-Made by [Sakura520222](https://github.com/Sakura520222)
-
-Feedback: [Issues](https://github.com/Sakura520222/Sakura-AI/issues) · Email: <Sakura520222@outlook.com>
-
-</div>
-
-### Unified configuration centre
-
-The single Settings entry groups Personal, AI, PR, Issue, Agent, Labels/Scans,
-System and Backup. Ordinary fields save automatically with per-field status and
-reset by removing overrides; version conflicts preserve drafts. Credentials,
-account security, imports and dangerous operations retain dedicated confirmation.
-Existing configuration URLs and data remain compatible. Database/Redis connections
-stay deployment-owned. See the [configuration contract, migration and rollback guide](docs/configuration-center.md).
