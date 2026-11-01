@@ -1958,7 +1958,7 @@ sandbox_health_ready() {
         "$container_id" "$instance" "$SANDBOX_IMAGE_DIGEST" "$SANDBOX_RUNNER_DIGEST" || return 1
     expected_digest="$SANDBOX_RUNNER_DIGEST"
     workspace_root="$SANDBOX_WORKSPACE_ROOT"
-    expected_profiles="agent,dependency"
+    expected_profiles="agent,dependency,read_only"
     expected_network_capability="egress"
     [[ "$SANDBOX_EGRESS_NETWORK" == "none" ]] && expected_network_capability="none"
     python3 - "$payload" "$instance" "$expected_digest" "$workspace_root" "$expected_profiles" "$expected_network_capability" <<'PY'
@@ -3558,6 +3558,11 @@ resolve_updater_app_version() {
                     image_version=""
                     if [[ "$image" =~ ^ghcr\.io/sakura520222/sakura-ai:v([0-9]+\.[0-9]+\.[0-9]+)(@sha256:[0-9a-f]{64})?$ ]]; then
                         image_version="${BASH_REMATCH[1]}"
+                    elif production_dev_web_reference_is_safe "$image"; then
+                        # Select the bootstrap binary, not the running identity.
+                        # 开发镜像初装没有 /health 或源码，也可选择 updater 版本。
+                        image_version="${image#*-v}"
+                        image_version="${image_version%%-*}"
                     fi
                     ;;
             esac
@@ -4650,7 +4655,7 @@ build_runner() {
         info "启动服务..."
         $COMPOSE down >> "$BUILD_LOG" 2>&1 || true
         if sandbox_lifecycle_enabled "$prod" && ! sandbox_start_container "$prod"; then
-            fail "sandboxd 启动失败；恢复旧 deployment.env，Web 不启动" >&2
+            fail "sandboxd 启动失败；部署事务将回退到执行前状态（全新安装不保留 deployment.env），Web 不启动" >&2
             set_phase "start" "fail"
             return 1
         fi

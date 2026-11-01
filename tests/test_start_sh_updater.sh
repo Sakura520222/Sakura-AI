@@ -468,6 +468,64 @@ updater_uname_m() { printf '%s\n' riscv64; }
 resolve_updater_asset >/dev/null 2>&1
 [ "$?" -ne 0 ] && report 0 "V10: unsupported architecture rejected" || report 1 "V10"
 
+# Development image tags identify the deployment target even when the minimal
+# image has no importable backend package and the running service is unavailable.
+DEV_REVISION=$(printf '%040d' 0 | tr '0' 'a')
+DEV_DIGEST=$(printf '%064d' 0 | tr '0' 'b')
+DEV_IMAGE_REPOSITORY=ghcr.io/sakura520222/sakura-ai
+DEV_IMAGE_PREFIX=dev-20250308123456
+updater_health_payload() { return 1; }
+rm -f "$UPDATER_BACKEND_VERSION_FILE"
+cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<EOF
+SAKURA_DEPLOY_MODE=image
+SAKURA_AI_IMAGE=$DEV_IMAGE_REPOSITORY:$DEV_IMAGE_PREFIX-v4.2.1-$DEV_REVISION@sha256:$DEV_DIGEST
+EOF
+[ "$(resolve_updater_app_version)" = "4.2.1" ] \
+    && report 0 "V11: digest-pinned dev image resolves without source or health" || report 1 "V11"
+cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<EOF
+SAKURA_DEPLOY_MODE=image
+SAKURA_AI_IMAGE=$DEV_IMAGE_REPOSITORY:$DEV_IMAGE_PREFIX-v0.0.0-$DEV_REVISION@sha256:$DEV_DIGEST
+EOF
+[ "$(resolve_updater_app_version)" = "0.0.0" ] \
+    && report 0 "V11b: development tag accepts zero semver components" || report 1 "V11b"
+
+cat > "$UPDATER_BACKEND_VERSION_FILE" <<'EOF'
+__version__ = "3.0.0"
+EOF
+cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<EOF
+SAKURA_DEPLOY_MODE=image
+SAKURA_AI_IMAGE=$DEV_IMAGE_REPOSITORY:$DEV_IMAGE_PREFIX-v4.3.0-$DEV_REVISION@sha256:$DEV_DIGEST
+EOF
+[ "$(resolve_updater_app_version)" = "4.3.0" ] \
+    && report 0 "V12: source package version does not override dev target tag" || report 1 "V12"
+updater_health_payload() { printf '%s\\n' '{"status":"healthy","version":"4.4.0"}'; }
+[ "$(resolve_updater_app_version)" = "4.3.0" ] \
+    && report 0 "V13: bootstrap version follows explicit dev tag, not health" || report 1 "V13"
+updater_health_payload() { return 1; }
+
+assert_invalid_dev_image_falls_back() {
+    local case_name="$1" image="$2" resolved rc
+    cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<EOF
+SAKURA_DEPLOY_MODE=image
+SAKURA_AI_IMAGE=$image
+EOF
+    resolved=$(resolve_updater_app_version 2>/dev/null)
+    rc=$?
+    [ "$rc" -eq 0 ] && [ "$resolved" = "3.0.0" ] \
+        && report 0 "V14-$case_name: invalid dev identity does not supply version" \
+        || report 1 "V14-$case_name: invalid dev identity was accepted (rc=$rc, version=$resolved)"
+}
+assert_invalid_dev_image_falls_back leading-zero-version \
+    "$DEV_IMAGE_REPOSITORY:$DEV_IMAGE_PREFIX-v09.8.7-$DEV_REVISION@sha256:$DEV_DIGEST"
+assert_invalid_dev_image_falls_back missing-digest \
+    "$DEV_IMAGE_REPOSITORY:$DEV_IMAGE_PREFIX-v9.8.7-$DEV_REVISION"
+assert_invalid_dev_image_falls_back short-revision \
+    "$DEV_IMAGE_REPOSITORY:$DEV_IMAGE_PREFIX-v9.8.7-${DEV_REVISION%a}@sha256:$DEV_DIGEST"
+assert_invalid_dev_image_falls_back short-digest \
+    "$DEV_IMAGE_REPOSITORY:$DEV_IMAGE_PREFIX-v9.8.7-$DEV_REVISION@sha256:${DEV_DIGEST%b}"
+assert_invalid_dev_image_falls_back fake-repository \
+    "ghcr.io/example/sakura-ai:$DEV_IMAGE_PREFIX-v9.8.7-$DEV_REVISION@sha256:$DEV_DIGEST"
+
 # Restore test fixture paths for resolver/ensure tests.
 unset UPDATER_DEPLOYMENT_ENV_FILE UPDATER_BACKEND_VERSION_FILE
 
