@@ -6,7 +6,7 @@ titleTemplate: false
 hero:
   name: Sakura AI
   text: 官方文档中心
-  tagline: 从快速部署到 Agent Harness、代码审查与 API 开发，一站式了解 Sakura AI。
+  tagline: 部署实例、配置审查与 Agent，或参与项目开发。
   image:
     src: /logo.svg
     alt: Sakura AI
@@ -26,10 +26,10 @@ features:
     details: 了解 Docker、源码部署、Setup Wizard 和 Host Updater 的安装与维护方式。
     link: /DEPLOYMENT
     linkText: 查看部署指南
-  - title: PR 与 Issue
-    details: 了解 Pull Request 智能审查、手动审查、审查协议和 Issue 分析能力。
-    link: /PR_FEATURES_GUIDE
-    linkText: 探索核心功能
+  - title: 功能与使用
+    details: PR 审查、Issue 分析、仓库扫描、Agent 修复与仓库互助。
+    link: /features
+    linkText: 查看功能指南
   - title: Agent Harness 2.0
     details: 理解 Agent 自主任务、并发、安全边界以及仓库规则和 Skills 的协作方式。
     link: /AGENT_HARNESS_RUNTIME

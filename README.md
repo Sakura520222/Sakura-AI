@@ -4,463 +4,93 @@
 
 <a href="res/cover-google.png"><img src="res/cover-google.png" alt="Sakura AI 封面" width="936" height="468"></a>
 
-> 基于 AI 的智能 GitHub Pull Request 代码审查与 Issue 分析机器人，具备主动探索代码库的能力
+GitHub PR 代码审查、Issue 分析与 Agent 修复
+
+[在线体验](https://ai.firefly520.top/) · [文档站](https://sakura520222.github.io/Sakura-AI/) · [快速开始](https://sakura520222.github.io/Sakura-AI/quick-start.html)
 
 [English](README_EN.md) | **中文**
 
 [![Version](https://img.shields.io/badge/Version-3.2.5-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Sakura520222/Sakura-AI)](https://github.com/Sakura520222/Sakura-AI/stargazers)
-[![Last Commit](https://img.shields.io/github/last-commit/Sakura520222/Sakura-AI)](https://github.com/Sakura520222/Sakura-AI/commits)
-[![Live Demo](https://img.shields.io/badge/🌐_免费体验-Online-success.svg)](https://ai.firefly520.top/)
-[![Android App](https://img.shields.io/badge/Android_App-🚧_开发中-orange.svg)](https://github.com/Sakura520222/Sakura-AI-APP)
 
 </div>
 
----
+Sakura AI 接入 GitHub 仓库，在 PR 和 Issue 中参与日常维护。审查时会按需查阅相关文件、搜索代码和追踪依赖；遇到需要修改的问题，可以委派给 Agent，生成 Draft PR 后继续审阅。
 
-## 官方服务
+可以直接使用[在线服务](https://ai.firefly520.top/)，注册后领取免费体验额度，也可以部署自己的实例。
 
-**官方服务平台**：[https://ai.firefly520.top/](https://ai.firefly520.top/)
+## 能做什么
 
-- **免费额度**：注册即赠免费体验额度，可立即使用 PR 审查、Issue 分析等核心功能
-- **完整功能**：体验全部功能，包括 PR 审查、Issue 分析、Agent 任务委派、仓库互助等
-- **无需部署**：开箱即用，无需自行搭建服务器和配置环境
+- 审查 PR，给出变更摘要、分类问题和行内评论；新提交到来后继续增量审查，并通过 Check Runs 展示进度。
+- 分析 Issue 的可行性与优先级，推荐标签，结合代码和截图调查问题，识别重复报告及关联 PR。
+- 从 Issue 或 PR 委派 Agent 修复任务，在独立工作区中修改代码、安装依赖、运行测试并创建 Draft PR，不自动合并。
+- 定期扫描仓库，将发现的代码质量与安全问题整理为报告 Issue。
+- 在 WebUI 中管理仓库、模型与任务，查看 AI 对话、工具调用和用量，并按需订阅邮件、Telegram 或 Webhook 通知。
 
-> 如果你想自建实例或进行二次开发，请参考下方的 [快速开始](#快速开始) 部分。
+支持多家 AI 提供商与自定义兼容端点，可为审查、摘要和 Agent 分别选择模型，配置回退链。Agent 支持仓库规则、Skills、MCP 与 Hooks；生产部署使用独立的 Linux 容器沙箱执行命令。
 
----
+功能细节与使用限制见[功能指南](https://sakura520222.github.io/Sakura-AI/features.html)。
 
-## 核心特性
+## 界面预览
 
-### 审查能力
-
-- **AI 推理模式** — 深度代码分析，主动调用工具查看项目结构与任意文件
-- **跨文件依赖理解** — 多轮对话理解模块间依赖，具备全域视野
-- **自适应审查策略** — 按 PR 规模自动选择快速 / 标准 / 深度模式
-- **大型 PR 精简审查** — diff 接近阈值时切 compact 模式，AI 按需查看变更
-- **结构化审查报告** — 整体评分 + 分类问题（严重 / 重要 / 优化）+ 折叠详情
-- **增量审查续跑** — 恢复上一轮 reviewer 完整消息历史，而非摘要注入
-- **运行中增量入队** — 审查中新提交入队合并，不并行启动新审查
-- **按需 diff 控制** — 不引入硬编码截断，靠工具按需读取与上下文压缩
-- **智能审查批准** — 按评分自动决策 APPROVE / REQUEST_CHANGES / COMMENT
-- **严格审查输出契约** — `<SAKURA_REVIEW>` 协议 + 字段校验 + 多轮自动修复 + 安全降级，全链路可观测
-- **PR 变更自动总结** — AI 生成并在 PR 更新时增量更新
-- **PR 依赖图生成** — AI / 静态双模式 Mermaid 图，增量叠加保留历史
-- **Token 消耗追踪** — 实时追踪所有 AI API 调用的 token 与成本
-- **新版实时监控** — 对话优先控制台，Session + Thread，Provider Attempt / 工具 / 压缩全链路投影，加密存储与审计解密
-- **一键撤回** — `/revoke` 一键撤回所有 AI 评论与 Review
-- **辅助模型支持** — 独立配置轻量模型处理摘要、标签等任务
-- **行内评论开关** — `enable_inline_comments` 控制 PR diff 行内评论
-- **可控自动审查** — `enable_auto_review` 控制 webhook 自动入队
-- **Check Runs 进度可视化** — 主 Check 5 步流程 + 副 Analysis / Findings，展示语义不阻塞合并
-- **外部 CI 失败注入** — 采集其他 CI（GitHub Actions / Codecov / lint App）失败作为不可信证据
-- **审查评论标签交互** — 报告含标签复选框，勾选自动应用 / 移除
-- **AI 生成 PR 描述** — Agent 创建 PR 时自动生成带元数据标记的描述
-
-### AI 工具与知识库
-
-- **AI 工具系统** — read_file / list_directory / search_in_files / get_git_info / list_commits / search_web / read_sakura_docs 等，按需调用
-- **跨文件代码搜索** — 定位函数 / 变量 / 类的所有使用位置
-- **Git 信息查询** — 仓库信息、分支列表、提交历史
-- **Web 搜索增强** — DuckDuckGo / Tavily
-- **URL 抓取** — 扩展审查所需外部上下文
-- **仓库级知识库（RAG）** — 向量语义检索项目文档
-- **PR 代码自动索引** — 语法感知分块 + 语义搜索精准定位
-- **项目记忆系统** — 基于 `.sakura/` 的自我反思与知识积累。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
-
-### 仓库扫描
-
-- **AI 全仓库扫描** — 定期全面扫描，发现代码质量与安全问题
-- **严格扫描输出契约** — `<SAKURA_SCAN>` 协议信封 + 多轮格式修复 + 安全降级
-- **实时扫描对话监控** — 扫描期间的 AI 对话与工具调用实时记录到活动观测，WebUI 活动页可查看
-- **自动创建 Issue** — AI 总结 + 趋势对比 + 严重性/类别矩阵 + 热点文件 + 折叠明细；自动关闭被取代的旧报告 Issue
-- **灵活扫描配置** — 间隔、冷却、Token 预算、并发等；扫描提示词 focus 在统一配置页 `strategy.scan` 节编辑
-- **扫描管理界面** — WebUI 查看列表、详情、统计
-- **扫描结果** — 通过 GitHub 报告 Issue 和 WebUI 查看
-
-### Issue 分析
-
-- **Issue 智能分析** — 自动分类、优先级、标签推荐、重复检测、关联 PR 发现
-- **自适应分析与简洁评论** — 按有效性、信息完整度、影响和复杂度决定代码调查深度；广告/垃圾、信息不足和简单问答轻量处理，复杂或高风险问题保留实证调查。默认中英文评论先给结论与处理建议，折叠元信息并隐藏空建议；历史自定义模板继续有效，模板只强制保留 `{summary}` 与 `{feasibility}`，其余已支持的变量可省略。
-- **图片多模态分析** — Issue 正文与评论中的截图经 GitHub 凭据安全下载，超过 5 MiB 时优先压缩至 500 KiB，再作为多模态输入交给 AI（需模型高级配置勾选"支持图片多模态"，并在统一配置页开启）
-- **严格 Issue 输出契约** — `<SAKURA_ISSUE_ANALYSIS>` 协议 + 多轮修复 + 安全降级
-- **Issue 自动打标** — 高置信度标签自动应用
-- **Issue 自动指派** — 指派给合适的仓库协作者
-- **Issue 标题改写** — 自动优化模糊标题
-- **分析评论发布** — 自动发布结果并报告状态
-- **PR-Issue 关联** — 解析 Issue 引用注入上下文
-- **PR 语义 Issue 关联** — 共享 Issue 语料召回开放候选，再用独立协议核验人工描述、实际补丁与 Issue 要求。完整修复输出 `Closes`，部分关联输出 `Related to`；成功验证会替换或清空旧机器关联区块，保留人工引用。检索、重排或验证失败不推断新关联。
-- **Issue 关系预分析** — 主分析前先判断开放 Issue 的 `duplicate` / `related` / `none`；只有未验证出开放重复项时才分析关闭 Issue 的 `previously_resolved`、`regression`、`duplicate_closed`、`previously_rejected`、`related` 历史关系。不同工作流执行等独立事件不会仅凭相似标题成为重复；关系需要置信度、原因、相同点、差异及可追溯原文引用。主模型不能覆盖验证结果，历史关系保存在 `issue_relations` 并展示于 API、评论和详情页，兼容保留 `duplicate_of`。
-
-关系配置可在统一 `/config` 页面动态修改，默认值来自 Settings：
-
-| 配置 | 默认值 | 用途 |
-| --- | --- | --- |
-| `issue_detect_duplicates` | `true` | 启用 Issue 开放及历史关系预分析 |
-| `issue_include_comments` | `true` | 启用主分析评论与关系模型的新鲜有界评论样本 |
-| `issue_relation_max_candidates` | `5` | 每个开放或历史阶段的候选上限，允许 1–200；运行时在读取来源和检索前校验 |
-| `issue_relation_max_input_tokens` | `64000` | 开放与历史阶段完整请求的估算输入上限，包含正文、评论、JSON、语言和系统提示；同时受全部摘要候选上下文、输出及协议预留限制。超限或未知时无重复结论，保留已用 token 并继续主分析 |
-| `issue_relation_candidate_max_comments` | `20` | 启用 `issue_include_comments` 时当前 Issue 与每个候选惰性读取的最新评论上限（保留原配置名），提示中标注来源及省略范围 |
-| `issue_relation_candidate_comment_max_chars` | `4000` | 当前 Issue 与候选每条评论保留的原文字符上限，显式标注截断；缺失讨论不作为修复或拒绝的证据 |
-| `issue_relation_similarity_threshold` | `0.75` | Issue 关系候选余弦阈值 |
-| `issue_relation_confidence_threshold` | `0.85` | 普通与历史关系的验证阈值 |
-| `issue_duplicate_confidence_threshold` | `0.95` | 开放重复关系的验证阈值 |
-| `enable_semantic_issue_linking` | `true` | 启用 PR 语义关联 |
-| `semantic_issue_similarity_threshold` | `0.65` | PR 候选余弦阈值，须为 0–1 的有限数值；检索前校验 |
-| `semantic_issue_max_links` | `5` | PR 候选上限，允许 1–200；Settings 与检索前运行时校验保持一致 |
-| `pr_issue_related_confidence_threshold` | `0.85` | PR 普通关联验证阈值，须为 0–1 的有限数值 |
-| `pr_issue_closing_confidence_threshold` | `0.95` | PR 完整修复验证阈值，须为 0–1 的有限数值 |
-| `pr_issue_max_files` | `128` | PR 关系验证的惰性文件读取上限；超限或补丁不完整时保留原关联 |
-| `pr_issue_max_input_tokens` | `64000` | 完整验证请求的估算输入 token 上限（含说明、Issue、JSON 与系统提示）；还受摘要角色全部候选模型的上下文、输出预算与协议预留限制 |
-| `issue_corpus_freshness_seconds` | `60` | 共享语料最短同步间隔；`0` 表示每次检索都同步 |
-| `issue_corpus_batch_size` | `100` | 语料嵌入与写入批次上限 |
-| `issue_candidate_pool_multiplier` | `3` | 允许 1–10，语料同步前校验；固定召回池为候选上限 × 此倍数（不超过语料数量），排除项不会扩大查询或补翻页 |
-| `rerank_score_threshold` | `0.6` | PR/Issue 关系重排阈值，须为 0–1 的有限数值；启用重排时，无效阈值在提供商请求前失败 |
-
-语料首次同步覆盖开放与关闭 Issue，后续同步标题、正文、状态、标签及关闭原因；无须先完成 AI 分析，机器生成正文区块不会成为召回依据。检索候选会重新读取当前 GitHub 事实，检索与验证错误留下可观察失败状态，取消会向上传播。关系验证使用 `summary` 角色并遵守共享软期限；辅助失败不阻止 Issue 主分析。仓库语料写入和 PR 关联同步的串行化范围是随附部署的单进程、单事件循环；独立多进程或多实例写入同一语料需要额外协调。
-
-PR 召回默认采用 `0.65` 的余弦下限，便于短 PR 描述召回正文较长的 Issue；候选仍须通过重排和独立关系验证。每次成功检索（含空结果）会输出一条 INFO 摘要：`recalled` 为向量池返回数量，`eligible` 为通过身份和排除检查的数量，`cosine_matches` 为达到余弦阈值的数量，`hydrated` 为当前 GitHub 事实有效的数量，`candidates` 为重排后的候选数，`max_cosine` 为余弦过滤前的最大 eligible 分数（无可比较候选时为 `none`）。日志不包含查询、Issue 标题或正文。这样可以区分语料为空、余弦过滤为空和重排后为空。
-
-已有 `app_config` 值及显式环境配置会覆盖新默认值，升级不会自动把保存的 `0.8` 改成 `0.65`。已有部署可在统一 `/config` 页将 `semantic_issue_similarity_threshold` 调整为 `0.65`，再结合 INFO 摘要校准；降低召回阈值不会直接建立或关闭关系。
-
-非法 PR 置信度或语义召回阈值配置会使同步明确失败，包括没有候选的情况；不会因此清空已有数据库关联或 PR 机器区块。Issue 候选上限也会在运行时校验，避免旧配置或绕过表单的写入触发无界检索。
-
-PR 与 Issue 关系流程的目标候选数均不超过 200，召回倍数不超过 10，因此初步候选池最多 2,000 条。数量和倍数在 Settings、动态配置及运行时采用相同上限，不会把非法值静默截断。严格重排在发送请求前校验有效阈值；失败会保留已有 PR 关系，Issue 关系阶段记录失败并继续主分析。显式关闭重排和普通 RAG 的非严格降级行为保持不变。
-
-调用 `IssueService.detect_duplicates` 时必须提供正整数 `current_issue_number`，以便读取和复核真实 Issue 来源。省略参数或传入 `None` 等无效编号会直接报错，不再返回看似成功的空列表；传入有效编号的调用方式和重复项结果格式保持不变。
-
-关系预分析会重新读取当前 Issue 的 GitHub 正文、状态、标签、关闭原因和更新时间，关系模型使用这一确切源；不会改写调用者 payload 或主分析的历史正文。启用评论时，当前 Issue 与候选均按上述 `candidate_*` 配置读取最新评论样本，并保留评论 ID、正文、创建/更新时间、总数及截断范围。模型返回后再次读取当前 Issue 和已接受候选；后续历史阶段也会复查先前开放关系，空/none 判断仍需当前源一致。源变化返回可观察的 `stale_source`，缺失、不可用或畸形事实返回 `source_unavailable`；不输出重复结论，保留已用 token 并继续主分析。这是返回边界上的源比较，GitHub 不提供覆盖之后远程发布的原子条件写入。
-
-旧记录的 Issue 状态为 NULL 时，重新分析入口先在数据库校验仓库归属，再读取 GitHub 当前状态；仅明确开放时入队，关闭返回 409，不可用或畸形源返回显式安全错误。短仓库名与完整仓库名的历史记录按同一所有者作用域计算分析版本。入队 payload 保留历史标题、正文和作者，关系阶段独立使用上述新鲜源。
-
-PR 补丁验证按 unified diff 的 hunk 解析真实增加/删除行，并核对 hunk 两侧跨度及 GitHub 行数；hunk 内以 `++` / `--` 开头的源码仍按变更方向计数和引用。GitHub 明确报告新增、删除均为零的文件允许空补丁或纯元数据补丁，例如纯重命名或权限变化；这些文件仍计入快照预算，但不能提供代码修复证据。报告有代码行变更时，缺失、截断、畸形或行数不符的补丁仍使同步失败并保留已有链接。
-
-已有 MySQL 部署在自动数据库结构迁移时，会幂等地将 `issue_analyses.issue_relations` 与 `issue_analyses.analysis_detail` 扩展为 `LONGTEXT`，保留完整关系证据与分析 JSON。此变更本身未执行线上迁移或部署。
-
-安装 PR-Issue 唯一索引前，历史重复关联由数据库按仓库、PR、Issue 和关联类型分组去重，保留每组 ID 最大的记录及证据；无需将整表加载进 Python 或逐条删除。不同关联类型及仓库范围保持独立。
-
-### Agent 专家团队
-
-- **多入口任务创建** — 超级管理员手动启动、Issue 评论 `/agent` 委派、PR 评论 `/agent` 一键修复
-- **多分支并行工作区** — 每任务独立 Git worktree 隔离，同仓库多任务并行
-- **动态只读子 Agent** — 主 Agent 负责实现，可按需委派独立上下文的只读调查，并等待、取消和汇总结果
-- **上下文压缩与恢复** — 长任务自动压缩历史，持久化检查点支持失败续跑
-- **OS 级工具隔离** — Agent shell、搜索和依赖安装进入一次性非 root 容器；默认策略下普通 Shell 断网、只读根文件系统、丢弃 capabilities，并只挂载当前任务 worktree
-- **单次依赖出口** — 默认 `web_tools` 允许受控 Web 工具及 Dependency 自动依赖出口；`run_command` 可显式指定 `network_capability=dependency_egress`，为任意当前命令及包安装钩子开放公网出口，不设命令或域名白名单。容器执行结束出口即结束，下一次普通 Shell 仍离线。`offline` 禁止出口，`full_access` 允许全部 runner 出网；local 仅源码开发且要求 `full_access`，使用宿主网络而无 OS 隔离。[Python、Node、Rust、Go 与 JVM 示例](docs/CONFIGURATION.md#agent-专家团队)
-- **自动依赖与验证** — 在相同沙箱边界内检测安装 `pyproject.toml` / `requirements.txt` 依赖并运行项目测试，不再依赖高误报命令黑名单
-- **依赖安装容错** — 瞬时网络故障默认最多尝试 3 次，按 2、4 秒退避；永久错误不重试。最终失败会保留脱敏诊断并交给 Agent 修复或继续静态分析，明确报告无法运行的测试；可在统一配置页调整重试次数和等待时间
-- **Sakura 知识集成** — 浏览 `.sakura/` 知识与反思辅助修复
-- **Agent Skills 与内置 Ruff** — 从文件 / ZIP / GitHub 安装技能，内置 Ruff lint / format
-- **统一插件管理** — 超级管理员通过 `/agent-plugins/` 管理 MCP 服务、生命周期 Hooks、运行时权限配置和 Skills；配置保存在数据库，凭据遮罩，常规执行无需逐工具审批。见[插件配置说明](docs/AGENT_PLUGINS.md)
-- **仓库规则与 Skills** — 读取分层 `AGENTS.md` 与 Sakura rules，发现 `.agents/skills` / `.sakura/skills`，正文按需加载；历史工作流限制在恢复后仍有效，开关、作用域与恢复行为见[使用说明](docs/AGENT_REPOSITORY_CONTEXT.md)
-- **实时管理员干预** — WebUI Live View 注入指导意见
-- **完成与恢复约束** — 仅成功的 `finish_task` 能完成会话；模型轮次和工具累计次数不限。连续 10 次完全相同的调用或文本只触发策略自检，任务继续执行，不强制总结或切换模型。安全只读工具并行，写入、Shell、Skill 加载和完成独占工作区。中断读取可重试，不确定的写入须核对副作用，已持久化完成不会重放；保留取消和故障恢复，无逐工具人工授权。
-- **Agent Harness 2.0** — 动态只读子 Agent、MCP、系统 Hooks、能力边界和持久审计接入自主执行链；部署要求、恢复语义和后端兼容范围见 [运行指南](docs/AGENT_HARNESS_RUNTIME.md)。
-- **任务取消支持** — 随时取消并安全释放工作区
-- **PR 创建闭环** — Draft PR + Sakura PR 审查 + 人工反馈迭代，不自动合并
-- **普通用户权限控制** — 仓库白名单 + 独立 Agent 配额
-- **GitHub App 授权中心** — 普通用户查看自己的安装与仓库访问范围，一键跳转 GitHub 管理/扩展授权
-
-### 仓库互助
-
-- **互助点星计划** — 授权后代表你为其他成员的展示仓库点星，互相引流
-- **GitHub App user-to-server 授权** — 加密密文存储 token，日志不打印原文
-- **展示仓库选择** — 成员选择公开仓库参与展示，AI 生成仓库摘要
-- **自动点星调度** — 随机间隔执行，受每用户 / 每仓库每日上限控制
-- **幂等与审计** — star / unstar / skip / fail 全部审计，同 (actor, target, action) 保留最终态
-- **手动点星** — 列表中手动点星，与自动共用幂等逻辑
-- **成员与权限治理** — 加入 / 退出 / 暂停 / 封禁，违规仓库可禁用
-- **安全校验** — 拒绝跨用户 state 复用，GitHub 账号必须与登录用户一致
-- **WebUI 管理页** — 成员 / 展示仓库 / 今日用量 / 功能开关；成员和仓库筛选、分页互不覆盖，搜索中的 `%`、`_` 按字面匹配
-
-### 管理与运维
-
-- **Setup Wizard** — 首次启动分步引导，支持断点续配、迁移前数据库预检和临时管理员会话自动修复 Billing Guard
-- **系统核心配置管理** — 运行时修改基础设施配置（数据库、GitHub App、Telegram、域名等），审计记录；超级管理员可设置应用 IANA 时区（保存后重启）
-- **动态配置管理** — 普通 WebUI 配置修改即时生效；应用时区等重启键保存后按提示重启
-- **AI API 超时治理** — `ai_api_timeout_seconds` + `ai_api_total_timeout_seconds`
-- **用户级配置覆盖** — UserConfig → AppConfig → Settings 逐级回退
-- **AI Provider 注册表** — 内置 20+ 厂商，协议族感知模型发现与上下文窗口
-- **AI 账号持久化配置页** — 多账号 + 角色绑定 + 回退链，每模型独立覆盖能力
-- **多协议适配层** — OpenAI / Anthropic / Gemini 原生 / 兼容端点统一运行时
-- **跨协议故障转移** — 退避重试 + 跨厂商切换 + 上下文超限压缩
-- **GitHub App 仓库管理** — 管理员查看全局安装、索引与扫描状态
-- **安全中心与多因素认证** — TOTP / 恢复码 / Passkeys / 全局或单用户强制 MFA / 失败锁定
-- **SSE 实时推送** — 基于 Redis Pub/Sub 的多进程实时通信
-- **配额制访问控制** — 用户自注册 + UTC 日 / 周 / 月自动重置
-- **付费配额系统** — 套餐计划与兑换码 CRUD + 管理员手动充值
-- **外部支付与退款** — Stripe / Paddle / 支付宝（CNY）/ NOWPayments / TRON USDT 直收；关闭购买后仍可查看订单和处理退款
-- **法律页面** — 内置服务条款、隐私政策、退款政策、定价页
-- **管理员操作审计** — 完整操作日志
-- **WebUI 管理界面** — React + TypeScript 单页应用与 `/api/v1` JSON 接口；旧页面地址重定向到 `/app/*`，不再依赖 Jinja 模板。按审查与分析、仓库、Agent、仓库互助、可观测性、计费、管理和设置组织入口，PR 审查页统一提供仓库与日期筛选。前端单元测试、浏览器回归与双语翻译校验统一在 `web/` 维护。
-- **Billing 2.0** — Credits 钱包、真实 AI Usage 定价、来源可追踪的购买/退款与账单；模型按已配置 AI 账号定价并自动获取列表，流式与非流式共用报价，金额币种使用下拉选择。服务执行容量在多 Worker 间共享，套餐单独限制每用户已登记执行；次数与并发只负责限流。低余额提醒进入通知中心，邮件/私有 Telegram 按订阅发送；未知退款继续待核对，退款后剩余订阅周期连续衔接。正式收费默认关闭，不妨碍非收费执行的恢复和自动续轮；启用前请阅读[配置、迁移与对账](docs/billing-2.md)。
-  畸形重排保留真实用量并按冻结的失败调用政策结算；历史兑换不重复发放，Stripe 早到退款自动重放，外部全额退款同步剩余订阅权益。
-  嵌入结果也在计量结束前校验；扫描提交时冻结计费归属，流式用量请求支持模型级兼容开关，审核后的用量汇总保留唯一选中记录，外部部分退款遵守配置政策。
-- **批量 Issue 索引** — 向量缓存刷新 + AI 元数据增强
-- **健康检查端点** — `/health` + Docker Compose 自动健康检测
-- **统一身份认证** — GitHub OAuth（`user:email`，优先 verified primary email）与 Passkey 共用内部 user ID；Telegram 不参与登录或权限判断
-- **统一通知中心** — PR 审查、Issue 分析、扫描、Agent、公告、安全、配额、支付及退款通过持久化业务事件统一投递至 WebUI、Email、Telegram 和通用 Webhook。个人设置支持端点验证、命名、启停、测试及按事件、资源和严重程度配置偏好；公告中心整合站内历史、未读状态及管理员诊断。外部业务通知需要显式订阅，敏感账户事件仅允许已验证的私人目标；扫描通知限管理员，Agent 通知限任务发起者及授权管理员，详情可直接定位控制台任务。详见[通知中心架构与迁移](docs/NOTIFICATION_CENTER.md)。
-- **公告中心** — 超级管理员可一键保存并立即发布（已发布公告也可直接编辑并开启新发送轮次），用户支持未读、已读和全部已读；每轮广播带版本保护并保留历史正文与投递结果
-- **GitHub OAuth 登录** — 可直接注册/登录，不要求 Telegram 配置
-
-### 升级与兼容
-
-- **从 3.1.3 升级到 3.2.0**：升级后首次启动会自动迁移旧数据，全程幂等、无需手工操作——公告、通知投递、通知端点与外部身份等新表自动创建；旧 `telegram_users` 的 Telegram ID、GitHub 用户名与邮箱按下一条规则回填；原有用户 ID、角色、配额、业务数据和外键保持不变。Email/SMTP 通知为 3.2.0 新增（3.1.3 没有邮件配置项），如需启用请在「系统核心配置」页填写 SMTP 参数：465 端口选择「SSL/TLS（隐式 TLS）」，587 端口选择「STARTTLS」，发件昵称默认 Sakura-AI；导入旧配置备份时，旧字段名会自动映射到新键（如布尔 `smtp_tls` 映射为安全模式）。
-- 首次启动会自动、幂等迁移旧 `telegram_users` 身份数据：保留原始用户 ID、角色、配额、业务数据和外键，将旧 Telegram ID/ GitHub 用户名回填为通知端点/外部身份。Telegram-only 账号如需绑定 GitHub，请先由管理员在用户页面指定 GitHub 用户名，再使用 OAuth 登录认领原账号。
-- 用户备份兼容 v1/v2，旧字段会自动映射；新备份包含 identities、notification endpoints 和 email。配置恢复不会覆盖部署连接设置，SMTP 密码等敏感字段继续脱敏。
-
----
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <p>控制台概览</p>
+      <a href="docs/images/showcase/overview.jpg"><img src="docs/images/showcase/overview.jpg" alt="控制台概览：审查状态与运行趋势" width="468" height="296"></a>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <p>Agent 工作台</p>
+      <a href="docs/images/showcase/agent.jpg"><img src="docs/images/showcase/agent.jpg" alt="Agent 工作台：任务管理与执行入口" width="468" height="296"></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <p>AI 与模型</p>
+      <a href="docs/images/showcase/ai-settings.jpg"><img src="docs/images/showcase/ai-settings.jpg" alt="AI 与模型：账号、模型与调用配置" width="468" height="296"></a>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <p>审查配置</p>
+      <a href="docs/images/showcase/review-settings.jpg"><img src="docs/images/showcase/review-settings.jpg" alt="审查配置：分类设置与字段编辑" width="468" height="296"></a>
+    </td>
+  </tr>
+</table>
 
 ## 快速开始
 
-### 在线体验（最快）
+使用[在线服务](https://ai.firefly520.top/)无需准备服务器。自建完整实例需要 Linux x86_64/arm64、glibc ≥ 2.36、Docker 与作为 PID 1 运行的 systemd，推荐 Debian 12+ 或 Ubuntu 24.04+。
 
-访问 [https://ai.firefly520.top/](https://ai.firefly520.top/)，注册即赠免费额度，无需部署。
-
-### Docker 一键部署（推荐自建）
-
-**Linux 全量部署**（Web + MySQL + Redis + Host Updater + Agent sandboxd）：
+先阅读[部署要求](https://sakura520222.github.io/Sakura-AI/quick-start.html)，检查安装脚本内容并确认管理员权限，再执行：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --prod
 ```
 
-默认部署**正式（stable）频道**镜像；如需从首次部署起就使用**开发（development）频道**（develop 分支最新构建）：
+默认部署 stable 频道，包含 Web、MySQL、Redis、Host Updater 与 Agent 沙箱。完成后按脚本提示打开 `/setup`，使用本机私有文件中的验证 Token 初始化；Token 不会写入应用日志。
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --channel=development --prod
-```
+其他安装方式、开发频道、升级与卸载见[部署指南](https://sakura520222.github.io/Sakura-AI/DEPLOYMENT.html)。Windows/macOS 源码开发见[开发指南](https://sakura520222.github.io/Sakura-AI/development.html)；仅运行 Web 容器不包含 Linux Agent 沙箱或 Host Updater。
 
-首次部署也可以在交互菜单「生产镜像部署」中选择频道；已部署后切换频道用菜单「切换镜像频道」。
+## 文档与开发
 
-`start.sh` 可以从任意位置或管道运行：首次执行会自动安置到 `/opt/sakura-ai`（可用 `SAKURA_INSTALL_ROOT` 覆盖），并按镜像频道下载生产 compose 文件（stable 来自 `main`，development 来自 `develop`；可用 `SAKURA_DIST_BASE_URL` 指定镜像源）；后续管理始终在 `/opt/sakura-ai` 下通过 `sudo ./start.sh` 完成。
+| 想了解什么 | 入口 |
+| --- | --- |
+| 功能与使用方式 | [功能指南](https://sakura520222.github.io/Sakura-AI/features.html) · [PR 审查](https://sakura520222.github.io/Sakura-AI/PR_FEATURES_GUIDE.html) · [Issue 分析](https://sakura520222.github.io/Sakura-AI/issue-analysis.html) |
+| 配置自己的实例 | [配置参考](https://sakura520222.github.io/Sakura-AI/CONFIGURATION.html) · [配置中心](https://sakura520222.github.io/Sakura-AI/configuration-center.html) |
+| 运行与扩展 Agent | [运行机制](https://sakura520222.github.io/Sakura-AI/AGENT_HARNESS_RUNTIME.html) · [仓库规则与 Skills](https://sakura520222.github.io/Sakura-AI/AGENT_REPOSITORY_CONTEXT.html) · [插件](https://sakura520222.github.io/Sakura-AI/AGENT_PLUGINS.html) |
+| 参与开发或接入客户端 | [开发指南](https://sakura520222.github.io/Sakura-AI/development.html) · [技术架构](https://sakura520222.github.io/Sakura-AI/ARCHITECTURE.html) · [API](https://sakura520222.github.io/Sakura-AI/api-v1-reference.html) |
 
-`sudo ./start.sh --prod` 会自动生成部署状态，解析当前 Release 的 Web、sandboxd 与 Agent runner 三个不可变镜像引用，先启动并验证独立 sandboxd，再启动 Web/MySQL/Redis，最后安装并启用 Host Updater 的 systemd unit。生产 binary 要求宿主机 PID 1 为可用的 systemd；不满足时脚本会明确失败，不会声称已配置重启自启。只有 sandboxd 持有 Docker socket；Web 与一次性 runner 均不持有。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但安装需超级管理员确认；稳定版更新以三镜像事务完成预检、拉取、sidecar 重建、Web 激活与失败回滚，Updater 不可用时不会退回 Web-only 更新。macOS、Windows 和仅容器部署不提供该 Linux OS 沙箱或 Host Updater；细节见[部署指南](docs/DEPLOYMENT.md)。
+后端使用 Python 3.14 与 FastAPI，前端使用 React 与 TypeScript，数据存储使用 MySQL、Redis 和 ChromaDB。完整目录可在[文档站](https://sakura520222.github.io/Sakura-AI/README.html)浏览，Markdown 原文保存在 [docs/](docs/)。
 
-更新激活前，Updater 会检查本地回滚镜像；部署配置只记录一个沙箱镜像 digest 时，会从已验证的运行时恢复完整沙箱镜像对，并在激活前确认两者均可用（缺失时尝试拉取）。
+欢迎提交代码、文档和问题反馈。贡献请从 `develop` 创建特性分支，PR 目标选择 `develop`，具体流程见[贡献指南](CONTRIBUTING.md)。另有 [Android 客户端](https://github.com/Sakura520222/Sakura-AI-APP)正在开发。
 
-三镜像更新成功、运行状态验证通过并结束回滚事务后，Host Updater 会尝试清理本地不再被任何容器引用的旧版 Sakura-AI 官方镜像。当前部署镜像、其他容器仍在使用的镜像和非 Sakura-AI 镜像不会被删除；清理结果记入更新任务日志，清理失败只产生警告，不影响已成功的更新。
+## 安全与许可
 
-安装完成后可验证宿主机重启自启状态：
+安全漏洞请通过 [GitHub 私密漏洞上报](https://github.com/Sakura520222/Sakura-AI/security/advisories/new)或 <sakura520222@outlook.com> 联系维护者，不要在公开 Issue 中披露细节。参阅[安全策略](SECURITY.md)。
 
-```bash
-sudo systemctl is-enabled sakura-ai-updater.service
-sudo systemctl is-active sakura-ai-updater.service
-sudo systemctl status sakura-ai-updater.service --no-pager
-```
-
-Host Updater 0.3.0 起通过机器可读 capabilities 声明三镜像事务能力；版本管理页同时显示构建 revision、Release 身份和协议版本。缺少所需能力的旧 Updater 会被阻止更新，即使 protocol version 相同。请先用当前 `start.sh` 执行 `sudo ./start.sh updater reinstall`，安装提供这些能力的 Release binary；development 回退到 stable asset 也必须通过同一检查。
-
-development 仅提供已经全部发布的 Web、Sandboxd、Runner 集合：CI 将完整镜像 digest 写入 Web OCI index 的 deployment manifest，最后推进 `edge`。Web 已是目标但 sandbox 漂移时，在版本管理中选择「检查并修复此部署」即可正常收敛，无需重装或改数据库。
-
-显式 `SAKURA_UPDATER_DEV=1` 的源码/dev 模式仍由手动 daemon 管理，不提供 systemd 重启自启保证。
-
-> **WebUI 更新后的 Updater 同步：** WebUI 的稳定版更新事务会一起更新 Web、sandboxd 和 Agent runner，但不会替换正在运行的 Host Updater 二进制。应用更新完成并确认 `/health` 已返回新版本后，可在 `/opt/sakura-ai` 执行以下命令，使 Updater 二进制也与当前 Release 保持一致：
->
-> ```bash
-> sudo ./start.sh updater reinstall
-> ```
->
-> `reinstall` 会先通过 updater 内部锁原子关闭新任务提交并确认没有活动任务，再在维护门禁后停止 systemd service、安装对应 Release 的 binary、重新启用并启动 unit，最后输出状态；安装失败时会尝试恢复原有 daemon。旧版 updater 若不支持原子维护门禁或 `service-install`，命令会 fail-closed，不会删除当前磁盘上的 binary，并明确报错，要求管理员先升级匹配的 updater release。单独执行 `install` 时仍保留 restart-required 语义：已运行 daemon 不会被 raw stop，需用 `reinstall` 完成安全迁移。安装器按部署状态选择具体 Sakura AI Release，但它本身不会强制检查应用健康状态。请把“`/health` 成功返回预期新版本”作为必须人工确认的前置条件；如果健康检查失败、不可用或版本不符，请勿执行。完整验证方法见[部署指南的 Host Updater 章节](docs/DEPLOYMENT.md#webui-更新后同步-host-updater)。
-
-卸载分两级：标准卸载保留数据库等 Docker 数据卷，可随时重新部署；显式 `--purge` 完全卸载会删除数据卷、全部镜像（Web/MySQL/Redis/sandboxd/Agent runner）和部署文件。对于 `/opt/sakura-ai` 等独立安装目录，完全卸载后只保留 `start.sh`，方便干净地重新部署；源码仓库不会删除源码。两种模式共用同一确认词 `UNINSTALL`：
-
-```bash
-sudo ./start.sh uninstall          # 标准卸载：保留数据，可重新部署
-sudo ./start.sh uninstall --purge  # 完全卸载：永久删除数据与镜像，独立目录仅保留 start.sh
-```
-
-**仅 Web 镜像**（MySQL/Redis 自备）：
-
-```bash
-docker run -d -p 8000:8000 \
-  -e DATABASE_URL=mysql+asyncmy://user:pass@host:3306/sakura_ai \
-  -e REDIS_URL=redis://host:6379/0 \
-  -v $(pwd)/config:/app/config \
-  ghcr.io/sakura520222/sakura-ai:latest
-```
-
-此方式不包含 Host Updater，只提供版本检查，不支持在 WebUI 中执行更新。
-
-`latest` 始终代表正式稳定版。开发版仅通过 WebUI 版本管理器的“开发版”通道按明确风险确认选择；开发构建由 GHCR 的不可变 `dev-...` tag 与 manifest digest 标识，`edge` 只是移动别名，不是部署目标。
-
-首次启动后访问 `http://localhost:8000/setup`。验证 Token 每次启动重新生成，保存在本机私有文件 `config/.setup-token`，完成 Setup 后立即失效并尝试删除，不写入日志。文件被占用无法删除时会记录清理警告，不影响配置完成或重启。`start.sh` 在部署成功后读取并显示 Token；也可由本机管理员执行：
-
-```bash
-docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
-  -f docker/docker-compose.prod.yml exec web cat /app/config/.setup-token
-# 源码运行：cat config/.setup-token（PowerShell：Get-Content config/.setup-token）
-```
-
-主菜单的“查看往期运行日志”可读取持久化日志；日志级别热更新、关联 ID 与容量控制见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
-
-### 源码开发
-
-发布源码包已包含对应版本的前端 dist。通过 Git 安装或更新后，启动程序会自动下载并校验匹配的预构建前端；不需要安装 Node.js 或手动运行 npm。更新源码和 Python 依赖后重启应用即可。只有修改前端源码时才需要本地前端工具链，见 [WebUI 开发说明](docs/webui-2.md)。
-
-> 源码开发平台：Windows 11 x86_64、Linux x86_64/arm64（glibc ≥ 2.28，非 musl；Alpine 不支持）或 Apple Silicon macOS 14+。Intel Mac、macOS ≤13、musl/Alpine 与 glibc <2.28 因上游 onnxruntime 未发布对应 Python 3.14 wheel（且无 sdist）无法安装依赖，pip 方式同样受限。
-
-**uv 方式（推荐）**：
-
-```bash
-git clone https://github.com/Sakura520222/Sakura-AI.git
-cd Sakura-AI
-uv sync                # 自动创建 .venv 并安装全部依赖(含 updater)
-uv run python -m backend.main
-```
-
-**Windows 原生开发（PowerShell）**：安装 Git for Windows 和 uv 后，在仓库根目录运行：
-
-```powershell
-uv sync --locked
-uv run pytest -q
-uv run ruff check .
-uv run python -m backend.main
-```
-
-依赖安装、后端开发与通用测试无需 WSL 或 Git Bash；启动应用时仍需 MySQL/Redis，测试使用模拟服务。Windows CI 执行完整 pytest 和 Ruff。POSIX Bash 部署、systemd、Linux Landlock/seccomp 等平台专用测试会明确跳过，继续由 Linux CI 验证；符号链接测试仅在当前账户具备创建权限时运行（可选开启 Windows 开发者模式）。Host Updater、sandboxd 与本地只读进程隔离的 Linux 平台要求见[部署指南](docs/DEPLOYMENT.md)。
-
-`backend.main` 启动器会在没有显式部署模式、且不存在镜像构建标记时，自动将应用子进程识别为 `source`；无需为本地 `local` Agent 后端额外设置 `SAKURA_DEPLOY_MODE`。显式环境变量始终优先，镜像环境不会自动推断为源码。
-
-**传统 pip 方式（无 uv）**：
-
-```bash
-python -m pip install -r requirements-dev.txt
-python -m backend.main
-```
-
-> 本地开发模式下，`backend/` 内的代码改动会在应用子进程内做模块级热重载（不重启进程）；`backend/main.py`、数据库模型等进程级模块的改动会提示手动重启。应用内重启请求（Setup 完成、管理员重启按钮）仍由监督循环整进程重新拉起。
-
-> 部署细节（镜像 Tag、固定版本、GitHub App 创建、数据库准备、Setup Wizard 全流程、Host Updater 守护进程、升级与密码轮换）详见 [部署指南](docs/DEPLOYMENT.md)。
-
----
-
-## 效果展示
-
-点击图片可查看原图。
-
-<table>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <p><strong>控制台概览</strong><br><sub>审查状态与运行趋势</sub></p>
-      <a href="docs/images/showcase/overview.jpg"><img src="docs/images/showcase/overview.jpg" alt="控制台概览" width="468" height="296"></a>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <p><strong>登录</strong><br><sub>GitHub 与通行密钥</sub></p>
-      <a href="docs/images/showcase/login.jpg"><img src="docs/images/showcase/login.jpg" alt="登录" width="468" height="296"></a>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <p><strong>AI 与模型</strong><br><sub>账号、模型与调用配置</sub></p>
-      <a href="docs/images/showcase/ai-settings.jpg"><img src="docs/images/showcase/ai-settings.jpg" alt="AI 与模型" width="468" height="296"></a>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <p><strong>审查配置</strong><br><sub>分类设置与字段编辑</sub></p>
-      <a href="docs/images/showcase/review-settings.jpg"><img src="docs/images/showcase/review-settings.jpg" alt="审查配置" width="468" height="296"></a>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <p><strong>Agent 工作台</strong><br><sub>任务管理与执行入口</sub></p>
-      <a href="docs/images/showcase/agent.jpg"><img src="docs/images/showcase/agent.jpg" alt="Agent 工作台" width="468" height="296"></a>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <p><strong>个人偏好</strong><br><sub>语言、外观与账号设置</sub></p>
-      <a href="docs/images/showcase/preferences.jpg"><img src="docs/images/showcase/preferences.jpg" alt="个人偏好" width="468" height="296"></a>
-    </td>
-  </tr>
-</table>
-
----
-
-## 技术架构
-
-```
-GitHub (PR / Issue / OAuth)
-        │ Webhook / OAuth / API
-        ▼
-FastAPI Web Server ── Webhook Handler · PR 分析器 · 评论服务
-        │              WebUI (React + TypeScript + Vite) · SSE 实时推送
-        ▼
-AI 审查引擎 ── read_file · list_dir · search_files · git_info · commits
-              search_web · RAG · 代码索引 · read_sakura_docs/memory
-        ▼
-数据存储 ── MySQL (业务) · Redis (队列/PubSub) · ChromaDB (向量)
-```
-
-**技术栈**：FastAPI (Python 3.14+) · React + TypeScript + Vite + Tailwind CSS · 多协议 AI（OpenAI / Anthropic / Gemini / 兼容） · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
-
-完整架构图、数据流、代码结构与交互式知识图谱详见 [技术架构](docs/ARCHITECTURE.md)。
-
----
-
-## 开发指南
-
-```bash
-uv sync                              # 安装依赖(uv;传统 pip 方式:python -m pip install -r requirements-dev.txt，含 updater[dev] 与测试驱动)
-uv run python -m backend.main        # 启动应用(pip 环境用 python -m backend.main)
-python run_ruff.py                   # 代码检查 + 修复 + 格式化
-python run_ruff.py --check           # 只读检查
-uv run python -m pytest -q           # 运行测试(pip 环境用 python -m pytest -q)
-tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新结构化运行日志
-```
-
-首次启动进入 Bootstrap 模式，用 `cat config/.setup-token`（PowerShell：`Get-Content config/.setup-token`）读取一次性验证 Token，在 `/setup/verify` 输入后访问 `http://localhost:8000/setup` 完成配置。Token 不写入终端日志；Windows 文件使用仅允许进程用户访问的受保护 ACL，需使用支持 ACL 的文件系统（如 NTFS）。调试 Setup Wizard 流程可用 `py scripts/dev_bootstrap.py`（隔离 dev 配置，跳过后台任务），默认 Token 位于 `.sakura/dev/.setup-token`；指定 `SAKURA_CONNECTION_CONFIG_PATH` 时位于对应连接配置旁。
-
-> 运行日志落盘在 `logs/app_*.log`（每次启动一个文件、JSON Lines 格式、50 MB 轮转、保留 10 天并限制历史总量 500 MiB；控制台和文件共同遵循 WebUI 的日志级别，写入前统一脱敏）；Docker 部署的完整查看命令见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
-
-> Updater 是独立的 Python 3.14+ 包（`updater/`），有自己的 `pyproject.toml`、测试与 PyInstaller native 构建链，开发方式见 [updater 文档](updater/)。其发布二进制在 Bookworm（glibc 2.36）环境构建，宿主机需 glibc ≥ 2.36（Debian 12+/Ubuntu 24.04+）。
-
----
-
-## 文档
-
-完整文档索引见 [docs/README.md](docs/README.md)，常用入口：
-
-| 文档 | 说明 |
-|---|---|
-| [部署指南](docs/DEPLOYMENT.md) | Docker / 源码部署、GitHub App、Setup Wizard、Host Updater |
-| [配置参考](docs/CONFIGURATION.md) | 全部配置项的位置、键名与说明 |
-| [技术架构](docs/ARCHITECTURE.md) | 架构图、技术栈、代码结构 |
-| [Telegram Bot 集成](docs/TELEGRAM_SETUP.md) | 可选通知 Provider、绑定握手与命令参考 |
-| [审查协议规范](docs/PR_REVIEW_PROTOCOL.md) | `<SAKURA_REVIEW>` 协议、字段校验、修复降级 |
-| [安全与 MFA 指南](docs/SECURITY_MFA_GUIDE.md) | TOTP、恢复码、Passkeys、安全中心 |
-| [安全策略](SECURITY.md) | 漏洞报告流程、受支持版本与披露机制 |
-| [API v1 参考文档](docs/api-v1-reference.md) | RESTful API v1（移动端 OAuth、MFA、SSE、Billing） |
-| [贡献者约定](AGENTS.md) | 自动化代理与贡献者项目约定 |
-| [贡献指南](CONTRIBUTING.md) | 完整贡献流程、Gitflow 分支规范与开发设置 |
-
----
-
-## 贡献
-
-本项目使用标准 Gitflow 工作流：`main`（生产）← `release/*` / `hotfix/*`；`develop`（集成）← `feature/*`。详细规范请阅读 [贡献指南 (CONTRIBUTING.md)](CONTRIBUTING.md)。
-
-1. Fork 本项目
-2. 基于 `develop` 创建特性分支：`git checkout develop && git checkout -b feature/amazing-feature`
-3. 提交更改（英文 [Conventional Commits](https://www.conventionalcommits.org/)）：`git commit -m 'feat: add some amazing feature'`
-4. 推送并开启 PR，目标分支选择 `develop`
-
-发布与热修复由维护者执行：从 `develop` 创建 `release/x.y.z`（或从 `main` 创建 `hotfix/x.y.z`），合入 `main` 后自动发布 Release 并回合到 `develop`。自动化工作流会校验 PR 分支流向、运行 CI、清理已合并的临时分支。
-
----
-
-## 安全
-
-如果您发现了安全漏洞，请参阅我们的 [安全策略 (SECURITY.md)](SECURITY.md)，优先通过 [GitHub 私密漏洞上报](https://github.com/Sakura520222/Sakura-AI/security/advisories/new) 或发送邮件至 <sakura520222@outlook.com> 进行披露。请勿在公开 Issue 中讨论漏洞细节。
-
----
-
-## 许可证
-
-[GNU Affero General Public License v3.0 (AGPLv3)](LICENSE) — 自由使用、修改和分发，网络服务需提供源代码。
-
----
+本项目采用 [GNU AGPLv3](LICENSE)，允许使用、修改和分发；通过网络提供修改版服务时须按许可证提供对应源代码。
 
 ## Star History
 
@@ -471,23 +101,3 @@ tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新结构化运行日�
    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI&type=Date" />
  </picture>
 </a>
-
----
-
-<div align="center">
-
-**Sakura AI** — 让代码审查更智能、更高效
-
-Made by [Sakura520222](https://github.com/Sakura520222)
-
-问题反馈：[Issues](https://github.com/Sakura520222/Sakura-AI/issues) · 邮箱：<Sakura520222@outlook.com>
-
-</div>
-
-### 统一配置中心
-
-侧边栏的「配置中心」按个人、AI、PR、Issue、Agent、标签与扫描、系统、备份分类。
-普通字段自动保存，逐项显示状态并可删除覆盖以恢复继承值；版本冲突保留草稿。
-凭据、账号安全、导入和危险操作保留专用确认。旧配置 URL 与已有数据保持兼容。
-数据库/Redis 连接由部署配置管理，不通过运行时覆盖切换。详见
-[配置契约、迁移与回滚说明](docs/configuration-center.md)。

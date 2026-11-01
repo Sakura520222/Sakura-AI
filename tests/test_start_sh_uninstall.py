@@ -132,13 +132,17 @@ def test_uninstall_help_documents_purge_semantics():
     assert "完全卸载：独立目录仅保留 start.sh" in script
 
 
-def test_readme_documents_two_uninstall_levels():
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    readme_en = (ROOT / "README_EN.md").read_text(encoding="utf-8")
-    assert "标准卸载：保留数据，可重新部署" in readme
-    assert "完全卸载：永久删除数据与镜像，独立目录仅保留 start.sh" in readme
-    assert "Standard uninstall: preserve data for a later redeployment" in readme_en
-    assert "delete data/images; keep only start.sh in a standalone install" in readme_en
+def test_deployment_guide_documents_two_uninstall_levels():
+    guide = (ROOT / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8")
+    assert "sudo ./start.sh uninstall" in guide
+    assert "sudo ./start.sh uninstall --purge" in guide
+    assert "保留 MySQL、Redis" in guide
+    assert "`--purge` 会永久删除 Compose 数据卷" in guide
+    assert "只保留 `start.sh`" in guide
+
+    for name in ("README.md", "README_EN.md"):
+        readme = (ROOT / name).read_text(encoding="utf-8")
+        assert "https://sakura520222.github.io/Sakura-AI/DEPLOYMENT.html" in readme
 
 
 def test_start_script_is_bash_valid_when_bash_is_available():
