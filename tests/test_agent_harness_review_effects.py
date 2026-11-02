@@ -62,6 +62,38 @@ async def git(workspace, *args):
     return result.stdout
 
 
+async def wait_for_stage(entered, running):
+    """Wait for a test handshake, not SQL/logging latency / 等待阶段握手。"""
+    waiting = asyncio.create_task(entered.wait())
+    try:
+        done, _ = await asyncio.wait(
+            (waiting, running),
+            timeout=fixtures.ASYNC_COMPLETION_TIMEOUT,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if not done:
+            pytest.fail("Agent did not reach the expected test stage")
+        if not entered.is_set():
+            await running
+            pytest.fail("Agent finished before reaching the expected test stage")
+    finally:
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed", [False, True])
+async def test_stage_wait_reports_early_completion(failed):
+    async def finish():
+        if failed:
+            raise RuntimeError("stage was not reached")
+
+    running = asyncio.create_task(finish())
+    expected = RuntimeError if failed else pytest.fail.Exception
+    with pytest.raises(expected):
+        await wait_for_stage(asyncio.Event(), running)
+
+
 class _ScopeInspectionRunner(LocalExecutionRunner):
     """Scope tests mock candidate enumeration, not the Linux OS boundary."""
 
@@ -211,8 +243,7 @@ async def test_completion_accounting_failure_and_cancellation_are_durable(
     )
     running = asyncio.create_task(loop.run("complete", "complete", cancel_event=event))
     try:
-        # This guards progress through real SQL/logging I/O, not response latency.
-        await asyncio.wait_for(entered.wait(), 10)
+        await wait_for_stage(entered, running)
         if interruption == "task":
             running.cancel("shutdown during accounting")
         elif interruption == "event":
@@ -261,16 +292,18 @@ async def test_completion_cancellation_drains_real_git_metadata_before_next_writ
         "-m",
         "baseline",
     )
-    entered, release, drained = Event(), Event(), Event()
+    entered, drained, writer_started = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    release = Event()
+    event_loop = asyncio.get_running_loop()
     original = TrustedGitRunner._validate_git_metadata_snapshot
 
     def slow_metadata(runner):
-        entered.set()
+        event_loop.call_soon_threadsafe(entered.set)
         try:
-            assert release.wait(5)
+            release.wait()
             original(runner)
         finally:
-            drained.set()
+            event_loop.call_soon_threadsafe(drained.set)
 
     monkeypatch.setattr(
         TrustedGitRunner, "_validate_git_metadata_snapshot", slow_metadata
@@ -286,23 +319,22 @@ async def test_completion_cancellation_drains_real_git_metadata_before_next_writ
     writing = None
 
     async def writer():
+        writer_started.set()
         async with workspace_barrier(str(workspace)).hold(False):
             writes.append(drained.is_set())
             (workspace / "file.txt").write_text("new writer\n")
 
     try:
-        async with asyncio.timeout(2):
-            while not entered.is_set():
-                await asyncio.sleep(0.001)
+        await wait_for_stage(entered, running)
         running.cancel("shutdown during metadata read")
         writing = asyncio.create_task(writer())
-        await asyncio.sleep(0.02)
+        await wait_for_stage(writer_started, writing)
         before_release = (running.done(), list(writes))
         running.cancel("repeated shutdown")
         release.set()
         with pytest.raises(asyncio.CancelledError) as caught:
-            await asyncio.wait_for(running, 2)
-        await asyncio.wait_for(writing, 2)
+            await asyncio.wait_for(running, fixtures.ASYNC_COMPLETION_TIMEOUT)
+        await asyncio.wait_for(writing, fixtures.ASYNC_COMPLETION_TIMEOUT)
         assert caught.value.args == ("shutdown during metadata read",)
         assert before_release == (False, []) and writes == [True]
         with Session(engine) as db:
@@ -313,9 +345,8 @@ async def test_completion_cancellation_drains_real_git_metadata_before_next_writ
         await asyncio.gather(
             running, *([writing] if writing else []), return_exceptions=True
         )
-        async with asyncio.timeout(2):
-            while not drained.is_set():
-                await asyncio.sleep(0.001)
+        if entered.is_set():
+            await asyncio.wait_for(drained.wait(), fixtures.ASYNC_COMPLETION_TIMEOUT)
 
 
 @pytest.mark.asyncio
