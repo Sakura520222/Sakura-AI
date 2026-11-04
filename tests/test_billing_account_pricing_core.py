@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine, inspect, select, text
-from sqlalchemy.exc import DatabaseError
 
 from backend.models.ai_usage_models import AIUsageRecord
 from backend.models.billing_models import BillingPriceProfile, BillingUsageCharge
@@ -250,13 +249,6 @@ def test_additive_scope_migration_preserves_immutable_legacy_prices():
             VALUES(7,'p','m','chat',4,'{"input_price":"17"}',1,'2026-10-07')
         """)
         )
-        connection.execute(
-            text("""
-            CREATE TRIGGER billing_price_profiles_no_update BEFORE UPDATE
-            ON billing_price_profiles
-            BEGIN SELECT RAISE(ABORT, 'Billing ledger is append-only'); END
-        """)
-        )
         before = connection.execute(
             text("SELECT config,version FROM billing_price_profiles")
         ).one()
@@ -284,6 +276,9 @@ def test_additive_scope_migration_preserves_immutable_legacy_prices():
             if item["name"] == "uq_billing_price_scope_version"
         )
         assert index["unique"] and "scope_key" in index["column_names"]
-        with pytest.raises(DatabaseError, match="append-only"):
-            connection.execute(text("UPDATE billing_price_profiles SET version=0"))
+        triggers = connection.execute(
+            text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+        ).scalars().all()
+        # Billing Guard 触发器已移除（issue #715）：迁移不创建任何触发器。
+        assert triggers == []
     engine.dispose()

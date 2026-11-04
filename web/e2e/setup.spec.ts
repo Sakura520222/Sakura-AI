@@ -2,29 +2,24 @@ import { expect, test } from "@playwright/test";
 
 const setupToken = "isolated-setup-browser-token";
 const databaseUrl = "mysql+asyncmy://runtime:fixture@db.invalid/sakura";
-const firstRepairPassword = "wrong-one-time-password";
-const retryRepairPassword = "second-one-time-password";
 
+// Mirrors check_database's real connection-failure report: the outer except
+// builds a fresh report with dialect "unknown" and connected=false, which
+// setup_database_status maps to HTTP 400.
 const databaseFailure = {
   success: false,
-  connected: true,
+  connected: false,
   schema_ready: false,
   initialized: false,
   stage: "preflight",
   retryable: true,
-  dialect: "mysql",
-  version: "8.4.13",
-  identity: "runtime@%",
-  log_bin: 1,
-  log_bin_trust_function_creators: 0,
-  privileges: ["CREATE", "ALTER", "TRIGGER"],
-  code: "billing_schema_privilege_required",
-  message: "billing_schema_privilege_required",
-  database_error_code: 1419,
-  failed_object: "billing_transactions_no_update",
+  dialect: "unknown",
+  code: "database_preflight_failed",
+  message: "database_preflight_failed",
+  database_error_code: 1045,
+  failed_object: null,
+  checks: [],
   warnings: [],
-  repair_sql: "-- isolated fixture only\nSELECT 1;\n",
-  guards: [{ name: "billing_transactions_no_update", status: "missing" }],
 };
 
 const localizedCopy = {
@@ -35,10 +30,6 @@ const localizedCopy = {
     continue: "Continue",
     databaseUrl: "Database URL",
     preflight: "Check database connection",
-    repairDisclosure: "Repair initialization with a temporary administrator",
-    repairUsername: "Database administrator username",
-    repairPassword: "Database administrator password",
-    repair: "Repair initialization",
     confirm: "Confirm",
     finish: "Finish setup",
     complete: "Setup complete",
@@ -50,10 +41,6 @@ const localizedCopy = {
     continue: "继续",
     databaseUrl: "数据库连接地址",
     preflight: "检查数据库连接",
-    repairDisclosure: "使用临时管理员修复初始化",
-    repairUsername: "数据库管理员用户名",
-    repairPassword: "数据库管理员密码",
-    repair: "修复初始化",
     confirm: "确认",
     finish: "完成配置",
     complete: "配置已完成",
@@ -61,14 +48,13 @@ const localizedCopy = {
 } as const;
 
 for (const language of ["en", "zh-CN"] as const) {
-  test(`setup browser protects temporary repair credentials (${language})`, async ({
+  test(`setup browser reports preflight results and protects the token (${language})`, async ({
     page,
   }) => {
     const copy = localizedCopy[language];
-    const repairBodies: Array<Record<string, unknown>> = [];
     const completionBodies: Array<Record<string, unknown>> = [];
     const authorizedRequests: string[] = [];
-    let repairCount = 0;
+    let preflightCount = 0;
 
     await page.addInitScript((value) => {
       window.localStorage.setItem("sakura.language", value);
@@ -105,7 +91,7 @@ for (const language of ["en", "zh-CN"] as const) {
       }
 
       // These versioned API fixtures keep Setup isolated from any real database,
-      // administrator account, restart, or external provider.
+      // restart, or external provider.
       expect(headers["x-setup-token"]).toBe(setupToken);
       authorizedRequests.push(path);
 
@@ -118,55 +104,20 @@ for (const language of ["en", "zh-CN"] as const) {
       if (path === "/api/v1/setup/database-preflight") {
         expect(request.method()).toBe("POST");
         expect(request.postDataJSON()).toEqual({ database_url: databaseUrl });
-        return route.fulfill({
-          status: 409,
-          json: {
-            success: false,
-            error: databaseFailure.message,
-            code: databaseFailure.code,
-            data: databaseFailure,
-          },
-        });
-      }
-
-      if (path === "/api/v1/setup/database-repair") {
-        expect(request.method()).toBe("POST");
-        const body = request.postDataJSON() as Record<string, unknown>;
-        repairBodies.push(body);
-        expect(body.database_url).toBe(databaseUrl);
-        expect(body.confirmed).toBe(true);
-        repairCount += 1;
-
-        if (repairCount === 1) {
-          expect(body).toEqual({
-            database_url: databaseUrl,
-            username: "persistent_dba",
-            password: firstRepairPassword,
-            confirmed: true,
-          });
+        preflightCount += 1;
+        if (preflightCount === 1) {
+          // A plain connection failure reports its real code; the removed
+          // Billing Guard repair flow must never reappear.
           return route.fulfill({
-            status: 500,
+            status: 400,
             json: {
               success: false,
-              error: "database_admin_authentication_failed",
-              code: "database_admin_authentication_failed",
-              data: {
-                ...databaseFailure,
-                stage: "repair",
-                code: "database_admin_authentication_failed",
-                message: "database_admin_authentication_failed",
-                database_error_code: 1045,
-              },
+              error: databaseFailure.message,
+              code: databaseFailure.code,
+              data: databaseFailure,
             },
           });
         }
-
-        expect(body).toEqual({
-          database_url: databaseUrl,
-          username: "persistent_dba",
-          password: retryRepairPassword,
-          confirmed: true,
-        });
         return route.fulfill({
           json: {
             success: true,
@@ -174,13 +125,15 @@ for (const language of ["en", "zh-CN"] as const) {
             data: {
               ...databaseFailure,
               success: true,
+              connected: true,
               schema_ready: true,
-              stage: "repair",
+              dialect: "mysql",
+              database: "sakura",
+              version: "8.4.13-fixture",
               code: "database_preflight_ready",
               message: "database_preflight_ready",
               database_error_code: null,
               failed_object: null,
-              repaired: true,
             },
           },
         });
@@ -191,8 +144,6 @@ for (const language of ["en", "zh-CN"] as const) {
         const body = request.postDataJSON() as Record<string, unknown>;
         completionBodies.push(body);
         expect(body).toEqual({ DATABASE_URL: databaseUrl });
-        expect(JSON.stringify(body)).not.toContain(firstRepairPassword);
-        expect(JSON.stringify(body)).not.toContain(retryRepairPassword);
         expect(body).not.toHaveProperty("username");
         expect(body).not.toHaveProperty("password");
         // The browser Setup endpoint returns the service result directly.
@@ -214,40 +165,22 @@ for (const language of ["en", "zh-CN"] as const) {
     await page.getByLabel(copy.databaseUrl).fill(databaseUrl);
     await page.getByRole("button", { name: copy.preflight, exact: true }).click();
     await expect(page.getByRole("status")).toHaveText(
-      "billing_schema_privilege_required",
+      "database_preflight_failed",
     );
-    await expect(
-      page.getByText(copy.repairDisclosure, { exact: true }),
-    ).toBeVisible();
-    await page.getByText(copy.repairDisclosure, { exact: true }).click();
 
-    await page.getByLabel(copy.repairUsername).fill("persistent_dba");
-    await page.getByLabel(copy.repairPassword).fill(firstRepairPassword);
-    await page.getByRole("button", { name: copy.repair, exact: true }).click();
-    await page.getByRole("dialog").getByRole("button", { name: copy.confirm, exact: true }).click();
-    await expect(page.getByRole("alert")).toHaveText(
-      "database_admin_authentication_failed",
-    );
-    await expect(page.getByLabel(copy.repairUsername)).toHaveValue("");
-    await expect(page.getByLabel(copy.repairPassword)).toHaveValue("");
-    await expect(page.getByText(copy.repairDisclosure, { exact: true })).toBeVisible();
-
-    // A failed attempt remains recoverable; retry with fresh temporary credentials.
-    await page.getByLabel(copy.repairUsername).fill("persistent_dba");
-    await page.getByLabel(copy.repairPassword).fill(retryRepairPassword);
-    await page.getByRole("button", { name: copy.repair, exact: true }).click();
-    await page.getByRole("dialog").getByRole("button", { name: copy.confirm, exact: true }).click();
+    // A failed preflight stays recoverable: retrying reports success without
+    // any administrator credential form.
+    await page.getByRole("button", { name: copy.preflight, exact: true }).click();
     await expect(page.getByRole("status")).toHaveText("database_preflight_ready");
-    await expect(page.getByLabel(copy.repairUsername)).toHaveCount(0);
-    await expect(page.getByLabel(copy.repairPassword)).toHaveCount(0);
 
     await page.getByRole("button", { name: copy.finish, exact: true }).click();
     await page.getByRole("dialog").getByRole("button", { name: copy.confirm, exact: true }).click();
     await expect(page.getByRole("heading", { name: copy.complete, exact: true })).toBeVisible();
 
-    expect(repairBodies).toHaveLength(2);
+    expect(preflightCount).toBe(2);
     expect(completionBodies).toHaveLength(1);
     expect(authorizedRequests).toContain("/api/v1/setup/browser/verify");
     expect(authorizedRequests).toContain("/api/v1/setup/browser/complete");
+    expect(authorizedRequests).not.toContain("/api/v1/setup/database-repair");
   });
 }

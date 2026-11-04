@@ -9,7 +9,6 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
-    event,
 )
 
 from backend.models.database import Base, utc_now
@@ -97,12 +96,6 @@ class RedeemCodeRedemption(Base):
     )
 
 
-@event.listens_for(LegacyEntitlementEvent, "before_update")
-@event.listens_for(LegacyEntitlementEvent, "before_delete")
-def _immutable_entitlement_events(*_args):
-    raise ValueError("Legacy entitlement events are append-only")
-
-
 class PaymentReceipt(Base):
     """A verified upstream payment may fund only one order."""
 
@@ -168,12 +161,6 @@ class PaymentRefundAttemptEvent(Base):
     created_at = Column(UTCDateTime, nullable=False, default=utc_now)
 
 
-@event.listens_for(PaymentRefundAttemptEvent, "before_update")
-@event.listens_for(PaymentRefundAttemptEvent, "before_delete")
-def _immutable_refund_events(*_args):
-    raise ValueError("Refund attempt events are append-only")
-
-
 class RateLimitAdmission(Base):
     """An admitted business execution consumes rate headroom only once."""
 
@@ -199,12 +186,6 @@ class RateLimitAdmission(Base):
     created_at = Column(UTCDateTime, nullable=False, default=utc_now)
 
 
-@event.listens_for(RateLimitAdmission, "before_update")
-@event.listens_for(RateLimitAdmission, "before_delete")
-def _immutable_rate_admissions(*_args):
-    raise ValueError("Rate-limit admissions are append-only")
-
-
 class RedeemCodeSnapshotAudit(Base):
     __tablename__ = "payment_code_snapshot_audits"
 
@@ -219,12 +200,6 @@ class RedeemCodeSnapshotAudit(Base):
     snapshot = Column(JSON, nullable=False)
     evidence = Column(String(1024), nullable=False)
     created_at = Column(UTCDateTime, nullable=False, default=utc_now)
-
-
-@event.listens_for(RedeemCodeSnapshotAudit, "before_update")
-@event.listens_for(RedeemCodeSnapshotAudit, "before_delete")
-def _immutable_code_snapshot_audit(*_args):
-    raise ValueError("Redeem code snapshot audits are append-only")
 
 
 class PaymentRefundInboxEvent(Base):
@@ -281,11 +256,3 @@ class PaymentRefundInboxAudit(Base):
     actor_id = Column(Integer, nullable=True)
     evidence = Column(JSON, nullable=False)
     created_at = Column(UTCDateTime, nullable=False, default=utc_now)
-
-
-@event.listens_for(PaymentRefundReference, "before_update")
-@event.listens_for(PaymentRefundReference, "before_delete")
-@event.listens_for(PaymentRefundInboxAudit, "before_update")
-@event.listens_for(PaymentRefundInboxAudit, "before_delete")
-def _immutable_refund_inbox_financial_records(*_args):
-    raise ValueError("Refund references and audit events are append-only")
