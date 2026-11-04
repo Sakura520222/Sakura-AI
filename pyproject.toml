@@ -20,7 +20,7 @@ dependencies = [
 
     # GitHub集成
     "PyGithub>=2.10.0",
-    "cryptography>=50.0.1",
+    "cryptography>=50.0.2",
 
     # AI集成
     "openai>=3.41.0",
