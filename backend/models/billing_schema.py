@@ -1,138 +1,13 @@
-"""Idempotent Billing 2.0 indexes and database-enforced immutable ledger rows."""
+"""Idempotent Billing 2.0 schema upgrades: indexes, constraints, widths, collations.
 
-import re
+Historical note: Billing 2.0 originally enforced append-only ledger rows with
+database triggers (and a Setup preflight requiring TRIGGER privileges). That
+Billing Guard mechanism was removed entirely (issue #715); this module now
+performs only ordinary, additive schema upgrades.
+"""
 
 from sqlalchemy import VARCHAR, Column, Index, text
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.schema import CreateColumn
-
-IMMUTABLE_TABLES = (
-    "billing_transactions",
-    "billing_price_profiles",
-    "billing_usage_charges",
-    "billing_reservation_events",
-    "billing_legacy_entitlement_events",
-    "payment_refund_attempt_events",
-    "billing_reconciliation_events",
-    "billing_rate_limit_admissions",
-    "payment_code_snapshot_audits",
-    "payment_receipts",
-    "payment_refund_inbox_audits",
-    "payment_refund_references",
-)
-
-MYSQL_GUARD_BODY = (
-    "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Billing ledger is append-only'"
-)
-
-
-class BillingSchemaPermissionError(RuntimeError):
-    """A DBA must install required guards before this deployment can start."""
-
-    code = "billing_schema_privilege_required"
-
-    def __init__(self, table_name, error_code):
-        self.table_name = table_name
-        self.database_error_code = error_code
-        super().__init__(
-            f"{self.code}: MySQL rejected the immutable guard for {table_name} "
-            f"(error {error_code}). Billing startup remains blocked. "
-            "Ask a database administrator to install docs/billing-mysql-guards.sql "
-            "in this application database, then restart. The application needs "
-            "table TRIGGER privileges to verify the installed guards. "
-            "See docs/billing-2.md for binlog permissions and the persistent DEFINER."
-        )
-
-
-def mysql_guard_ddl(table_name: str, action: str, *, if_not_exists=False) -> str:
-    """Fixed, auditable DDL; never accepts a caller-selected arbitrary table."""
-    if table_name not in IMMUTABLE_TABLES or action not in {"UPDATE", "DELETE"}:
-        raise ValueError("Unknown billing immutable guard")
-    name = f"{table_name}_no_{action.lower()}"
-    clause = "IF NOT EXISTS " if if_not_exists else ""
-    return (
-        f"CREATE TRIGGER {clause}{name} BEFORE {action} ON {table_name} "
-        f"FOR EACH ROW {MYSQL_GUARD_BODY}"
-    )
-
-
-def mysql_probe_guard_ddl(table_name: str, action: str) -> str:
-    """Use the authoritative body only on a generated, disposable probe table."""
-    if not re.fullmatch(r"sakura_setup_probe_[0-9a-f]{32}", table_name):
-        raise ValueError("Unknown setup probe table")
-    if action not in {"UPDATE", "DELETE"}:
-        raise ValueError("Unknown billing immutable guard action")
-    return (
-        f"CREATE TRIGGER {table_name}_no_{action.lower()} BEFORE {action} "
-        f"ON {table_name} FOR EACH ROW {MYSQL_GUARD_BODY}"
-    )
-
-
-def _validate_mysql_guard(metadata, table_name, action):
-    fields = {
-        "EVENT_OBJECT_TABLE": table_name,
-        "EVENT_MANIPULATION": action,
-        "ACTION_TIMING": "BEFORE",
-        "ACTION_ORIENTATION": "ROW",
-    }
-    statement = str(metadata.get("ACTION_STATEMENT") or "").strip()
-    rejection = re.fullmatch(
-        r"(?:BEGIN\s+)?SIGNAL\s+SQLSTATE\s+(?:VALUE\s+)?'45000'\s+"
-        r"SET\s+MESSAGE_TEXT\s*=\s*'Billing ledger is append-only'"
-        r"(?:\s*;\s*END)?\s*;?",
-        statement,
-        flags=re.IGNORECASE,
-    )
-    if (
-        any(metadata.get(key) != value for key, value in fields.items())
-        or not rejection
-    ):
-        raise RuntimeError(
-            f"Conflicting billing immutable trigger: {table_name}_no_{action.lower()}"
-        )
-
-
-def read_mysql_guard(connection, table_name, action):
-    name = f"{table_name}_no_{action.lower()}"
-    return (
-        connection.execute(
-            text(
-                "SELECT EVENT_OBJECT_TABLE, EVENT_MANIPULATION, ACTION_TIMING, "
-                "ACTION_ORIENTATION, ACTION_STATEMENT, DEFINER FROM information_schema.TRIGGERS "
-                "WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME = :name"
-            ),
-            {"name": name},
-        )
-        .mappings()
-        .one_or_none()
-    )
-
-
-def _ensure_mysql_guard(connection, table_name, action):
-    installed = read_mysql_guard(connection, table_name, action)
-    if installed is not None:
-        _validate_mysql_guard(installed, table_name, action)
-        return False
-    try:
-        connection.execute(text(mysql_guard_ddl(table_name, action)))
-    except DBAPIError as exc:
-        args = getattr(exc.orig, "args", ())
-        code = args[0] if args else None
-        if code == 1359:
-            installed = read_mysql_guard(connection, table_name, action)
-            if installed is not None:
-                _validate_mysql_guard(installed, table_name, action)
-                return False
-        if code in {1419, 1142, 1227}:
-            # Never retry with elevated credentials or relax server-wide policy.
-            # Keep startup closed and omit potentially sensitive driver details.
-            raise BillingSchemaPermissionError(table_name, code) from None
-        raise
-    installed = read_mysql_guard(connection, table_name, action)
-    if installed is None:
-        raise BillingSchemaPermissionError(table_name, 1142)
-    _validate_mysql_guard(installed, table_name, action)
-    return True
 
 
 def _create_index(connection, table, name, columns, unique):
@@ -151,7 +26,7 @@ def _ensure_usage_charge_currency_width(connection, inspector):
     """Widen old native VARCHAR columns without changing any financial rows.
 
     SQLite already accepts supported currency codes regardless of VARCHAR's
-    declared width. Never rebuild its immutable table or drop any ledger guard.
+    declared width. Never rebuild the table or rewrite existing rows.
     """
     dialect = connection.dialect
     table_name = "billing_usage_charges"
@@ -183,7 +58,7 @@ def _ensure_usage_charge_currency_width(connection, inspector):
         expanded_type = current_type.copy()
         expanded_type.length = 10
         if dialect.name == "postgresql":
-            # TYPE alone preserves the default, nullability, comment and guards.
+            # TYPE alone preserves the default, nullability and comment.
             statements.append(
                 f"ALTER TABLE {quoted_table} ALTER COLUMN {identifiers.quote(name)} "
                 f"TYPE {expanded_type.compile(dialect=dialect)}"
@@ -211,7 +86,7 @@ def _ensure_usage_charge_currency_width(connection, inspector):
 
 
 def _ensure_price_identity_collation(connection, inspector):
-    """Change comparison semantics without rewriting immutable financial facts."""
+    """Change comparison semantics without rewriting historical financial facts."""
     from backend.models.billing_types import price_identity_collation
 
     desired = price_identity_collation(connection.dialect)
@@ -258,7 +133,7 @@ def _ensure_price_identity_collation(connection, inspector):
         statements.append(
             f"ALTER TABLE {identifiers.quote(table_name)} MODIFY COLUMN {definition}"
         )
-    # Validate every definition before applying DDL; keep guards and index identities.
+    # Validate every definition before applying DDL; keep index identities.
     for statement in statements:
         connection.execute(text(statement))
     return bool(statements)
@@ -276,7 +151,7 @@ def ensure_billing_schema(connection):
         table = BillingPriceProfile.__table__
         columns = {column["name"] for column in inspector.get_columns(table.name)}
         # Normal startup first adds the new identity columns with the provider
-        # default. Do not infer or backfill accounts into immutable old prices.
+        # default. Do not infer or backfill accounts into historical prices.
         if {"scope_key", "account_id"} <= columns:
             name = "uq_billing_price_scope_version"
             identity = ("scope_key", "provider_id", "model_id", "call_kind", "version")
@@ -366,45 +241,4 @@ def ensure_billing_schema(connection):
                 continue
             _create_index(connection, table, name, columns, unique)
             changed = True
-    dialect = connection.dialect.name
-    for table_name in IMMUTABLE_TABLES:
-        if not inspector.has_table(table_name):
-            continue
-        for action in ("UPDATE", "DELETE"):
-            name = f"{table_name}_no_{action.lower()}"
-            if dialect == "sqlite":
-                connection.execute(
-                    text(
-                        f"CREATE TRIGGER IF NOT EXISTS {name} BEFORE {action} ON {table_name} "
-                        "BEGIN SELECT RAISE(ABORT, 'Billing ledger is append-only'); END"
-                    )
-                )
-            elif dialect in {"mysql", "mariadb"}:
-                changed = _ensure_mysql_guard(connection, table_name, action) or changed
-            elif dialect == "postgresql":
-                connection.execute(
-                    text(
-                        "CREATE OR REPLACE FUNCTION sakura_billing_immutable() RETURNS trigger "
-                        "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Billing ledger is append-only'; END $$"
-                    )
-                )
-                exists = connection.execute(
-                    text(
-                        "SELECT COUNT(*) FROM pg_trigger WHERE tgname = :name "
-                        "AND tgrelid = CAST(:table_name AS regclass) AND NOT tgisinternal"
-                    ),
-                    {"name": name, "table_name": table_name},
-                ).scalar_one()
-                if not exists:
-                    connection.execute(
-                        text(
-                            f"CREATE TRIGGER {name} BEFORE {action} ON {table_name} "
-                            "FOR EACH ROW EXECUTE FUNCTION sakura_billing_immutable()"
-                        )
-                    )
-                    changed = True
-            else:
-                raise RuntimeError(
-                    f"Billing immutable ledger does not support dialect: {dialect}"
-                )
     return changed

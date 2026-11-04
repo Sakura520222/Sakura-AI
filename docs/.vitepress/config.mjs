@@ -1,5 +1,3 @@
-import { copyFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
@@ -16,13 +14,6 @@ export default defineConfig({
     'billing-2-acceptance.md',
     'webui-information-architecture.md'
   ],
-  async buildEnd({ srcDir, outDir }) {
-    // Keep the repository SQL as the single source for the downloadable asset.
-    await copyFile(
-      resolve(srcDir, 'billing-mysql-guards.sql'),
-      resolve(outDir, 'billing-mysql-guards.sql')
-    )
-  },
   head: [
     ['meta', { name: 'theme-color', content: '#d9679c' }],
     ['meta', { property: 'og:type', content: 'website' }],

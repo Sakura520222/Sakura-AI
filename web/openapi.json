@@ -120,45 +120,6 @@
         }
       }
     },
-    "/api/v1/setup/database-repair": {
-      "post": {
-        "tags": [
-          "Setup"
-        ],
-        "summary": "Database Repair",
-        "operationId": "database_repair_api_v1_setup_database_repair_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DatabaseRepairRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/setup/state": {
       "get": {
         "tags": [
@@ -13902,36 +13863,6 @@
           "database_url"
         ],
         "title": "DatabasePreflightRequest"
-      },
-      "DatabaseRepairRequest": {
-        "properties": {
-          "database_url": {
-            "type": "string",
-            "title": "Database Url"
-          },
-          "username": {
-            "type": "string",
-            "title": "Username"
-          },
-          "password": {
-            "type": "string",
-            "format": "password",
-            "title": "Password",
-            "writeOnly": true
-          },
-          "confirmed": {
-            "type": "boolean",
-            "title": "Confirmed",
-            "default": false
-          }
-        },
-        "type": "object",
-        "required": [
-          "database_url",
-          "username",
-          "password"
-        ],
-        "title": "DatabaseRepairRequest"
       },
       "DocumentSelection": {
         "properties": {

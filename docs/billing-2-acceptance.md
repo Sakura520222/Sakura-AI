@@ -1,5 +1,11 @@
 # Issue #621：本地实现与验收证据
 
+> **历史记录（2026-11-04 注）**：本文所述的数据库级账本不可变保护
+> （MySQL/PostgreSQL/SQLite 触发器、Setup 预检、管理员修复流程、
+> `billing-mysql-guards.sql` 与离线导出脚本）已按 Issue #715 彻底移除，
+> 相关章节仅作历史证据保留；文中指向已删除文件的链接不再有效。
+> 当前行为见 `docs/billing-2.md`。
+
 验证日期：2026-10-08。当前工作区 `develop`，基线
 `5e4a1032fcc6eaca1d66a4a55f5925246083b5ca`。补丁未提交、推送或部署。
 没有修改生产余额、发起真实 AI 付费请求或真实付款/退款。
@@ -105,13 +111,13 @@ PYTHONPATH=/tmp/sakura-621-test-deps UV_CACHE_DIR=/tmp/sakura-billing-uv-cache u
 修复增加明确的 `BillingSchemaPermissionError`
 （`billing_schema_privilege_required`），保持缺少数据库保护时阻止启动；
 已有触发器须验证表、事件、BEFORE / ROW 属性及拒绝主体，不能只检查名称。
-新增离线 `scripts/export_billing_mysql_guards.py` 和
-[管理员预安装 SQL](billing-mysql-guards.sql)，提供 24 条
+新增离线 `scripts/export_billing_mysql_guards.py` 和管理员预安装 SQL
+`docs/billing-mysql-guards.sql`（两文件均已随 Issue #715 删除），提供 24 条
 `CREATE TRIGGER IF NOT EXISTS`，不连接数据库、不提权、不删除触发器或修改
 全局变量。此语法的版本要求由
 [MySQL 8.0.29 发布说明](https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-29.html)
-核实；部署步骤、元数据权限及持久 DEFINER 要求见
-[MySQL 预安装说明](billing-2.md#mysql-账本触发器预安装)。
+核实；当时的部署步骤、元数据权限及持久 DEFINER 要求见本文后续章节
+（原 `billing-2.md` 预安装章节已按 Issue #715 改写）。
 
 本轮未执行运行数据库触发器安装、授权或全局参数变更，未验证部署应用恢复
 启动。DBA 预安装后还须重新启动并检查结果；原生 MySQL / PostgreSQL 的迁移、

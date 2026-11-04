@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, SecretStr, StrictBool
+from pydantic import BaseModel, ConfigDict
 
 from backend.api.v1.deps import limiter
 from backend.api.v1.responses import error_response, success_response
@@ -16,7 +16,6 @@ from backend.core.setup_database import (
     DatabaseSetupError,
     check_database,
     has_setup_database_token,
-    repair_database,
     setup_database_status,
 )
 from backend.core.setup_service import setup_service
@@ -105,12 +104,6 @@ class DatabasePreflightRequest(BaseModel):
     database_url: str
 
 
-class DatabaseRepairRequest(DatabasePreflightRequest):
-    username: str
-    password: SecretStr
-    confirmed: StrictBool = False
-
-
 def _database_response(result):
     if result["success"]:
         return success_response(data=result)
@@ -131,24 +124,6 @@ async def database_preflight(request: Request, body: DatabasePreflightRequest):
     if not is_bootstrap_mode() or not has_setup_database_token(request):
         return error_response("Setup authorization required", status_code=403)
     return _database_response(await check_database(body.database_url))
-
-
-@router.post("/database-repair")
-@limiter.limit("3/minute")
-async def database_repair(request: Request, body: DatabaseRepairRequest):
-    if not is_bootstrap_mode() or not has_setup_database_token(request):
-        return error_response("Setup authorization required", status_code=403)
-    try:
-        return _database_response(
-            await repair_database(
-                body.database_url,
-                body.username,
-                body.password.get_secret_value(),
-                confirmed=body.confirmed,
-            )
-        )
-    except ValueError:
-        return error_response("Invalid database repair request", status_code=400)
 
 
 class CompleteSetupRequest(BaseModel):

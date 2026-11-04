@@ -4,8 +4,7 @@ from contextlib import AbstractAsyncContextManager
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine, func, select, text
-from sqlalchemy.exc import DatabaseError
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from backend.models.admin_action_log import AdminActionLog
@@ -167,7 +166,7 @@ async def test_low_balance_notice_rearms_after_topup(db):
 
 
 @pytest.mark.asyncio
-async def test_database_rejects_raw_ledger_mutation_and_schema_is_repeatable(db):
+async def test_billing_schema_upgrade_is_repeatable_and_keeps_ledger_consistent(db):
     from backend.models.billing_schema import ensure_billing_schema
 
     await BillingService(db).grant(1, 10, "immutable:1")
@@ -175,12 +174,8 @@ async def test_database_rejects_raw_ledger_mutation_and_schema_is_repeatable(db)
     ensure_billing_schema(db.session.connection())
     ensure_billing_schema(db.session.connection())
     db.session.commit()
-    with pytest.raises(DatabaseError, match="append-only"):
-        await db.execute(text("UPDATE billing_transactions SET delta_units = 0"))
-    db.session.rollback()
-    with pytest.raises(DatabaseError, match="append-only"):
-        await db.execute(text("DELETE FROM billing_transactions"))
-    db.session.rollback()
+    # Billing Guard 触发器已移除（issue #715）：账本 append-only 由服务层
+    # 写入路径维持；Schema 升级保持幂等且不破坏钱包一致性。
     assert (await BillingService(db).reconcile_wallet(1))["consistent"]
 
 

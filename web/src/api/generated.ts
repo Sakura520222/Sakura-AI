@@ -89,23 +89,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/setup/database-repair": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Database Repair */
-        post: operations["database_repair_api_v1_setup_database_repair_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/setup/state": {
         parameters: {
             query?: never;
@@ -5128,23 +5111,6 @@ export interface components {
             /** Database Url */
             database_url: string;
         };
-        /** DatabaseRepairRequest */
-        DatabaseRepairRequest: {
-            /** Database Url */
-            database_url: string;
-            /** Username */
-            username: string;
-            /**
-             * Password
-             * Format: password
-             */
-            password: string;
-            /**
-             * Confirmed
-             * @default false
-             */
-            confirmed: boolean;
-        };
         /** DocumentSelection */
         DocumentSelection: {
             /** Ids */
@@ -6186,39 +6152,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["DatabasePreflightRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    database_repair_api_v1_setup_database_repair_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DatabaseRepairRequest"];
             };
         };
         responses: {

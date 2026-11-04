@@ -15,7 +15,6 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects import mysql, postgresql
-from sqlalchemy.exc import DatabaseError
 
 from backend.models import billing_schema
 from backend.models.billing_models import BillingUsageCharge
@@ -34,7 +33,7 @@ def test_fresh_usage_charge_currency_columns_hold_supported_assets():
         }
         assert columns["provider_currency"]["type"].length == 10
         assert columns["settlement_currency"]["type"].length == 10
-        # SQLite does not need a table rebuild, which would remove its guards.
+        # SQLite does not need a table rebuild, which would rewrite existing rows.
         assert not billing_schema._ensure_usage_charge_currency_width(
             connection, inspect(connection)
         )
@@ -74,19 +73,6 @@ class NativeConnection:
     def execute(self, statement, params=None):
         sql = str(statement)
         self.statements.append(sql)
-        if "information_schema.TRIGGERS" in sql:
-            action = params["name"].rsplit("_", 1)[-1].upper()
-            return SimpleNamespace(
-                mappings=lambda: SimpleNamespace(
-                    one_or_none=lambda: {
-                        "EVENT_OBJECT_TABLE": "billing_usage_charges",
-                        "EVENT_MANIPULATION": action,
-                        "ACTION_TIMING": "BEFORE",
-                        "ACTION_ORIENTATION": "ROW",
-                        "ACTION_STATEMENT": "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Billing ledger is append-only'",
-                    }
-                )
-            )
         assert sql.startswith("ALTER TABLE")
         column_name = (
             "provider_currency" if "provider_currency" in sql else "settlement_currency"
@@ -158,9 +144,7 @@ def test_native_currency_width_rejects_unexpected_column_definition_before_ddl(
     assert connection.statements == []
 
 
-def test_startup_applies_currency_width_upgrade_without_replacing_native_guards(
-    monkeypatch,
-):
+def test_startup_applies_currency_width_upgrade_idempotently(monkeypatch):
     connection = NativeConnection(mysql.dialect())
     monkeypatch.setattr(sqlalchemy, "inspect", lambda value: connection.inspector)
     assert billing_schema.ensure_billing_schema(connection)
@@ -169,22 +153,12 @@ def test_startup_applies_currency_width_upgrade_without_replacing_native_guards(
         len([sql for sql in connection.statements if sql.startswith("ALTER TABLE")])
         == 2
     )
-    assert (
-        len(
-            [
-                sql
-                for sql in connection.statements
-                if "information_schema.TRIGGERS" in sql
-            ]
-        )
-        == 4
-    )
     assert not any(
         "CREATE TRIGGER" in sql or "DROP " in sql for sql in connection.statements
     )
 
 
-def test_legacy_sqlite_currency_columns_keep_existing_data_and_immutable_guards():
+def test_legacy_sqlite_currency_columns_keep_existing_data():
     engine = create_engine("sqlite:///:memory:")
     with engine.begin() as connection:
         connection.execute(
@@ -196,18 +170,12 @@ def test_legacy_sqlite_currency_columns_keep_existing_data_and_immutable_guards(
             text("INSERT INTO billing_usage_charges VALUES (1, 'USD', 'CNY')")
         )
         billing_schema.ensure_billing_schema(connection)
-        before = connection.execute(
-            text(
-                "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
-            )
-        ).all()
+        triggers = connection.execute(
+            text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+        ).scalars().all()
+        # Billing Guard 触发器已移除（issue #715）：升级不创建任何触发器。
+        assert triggers == []
         assert not billing_schema.ensure_billing_schema(connection)
-        after = connection.execute(
-            text(
-                "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
-            )
-        ).all()
-        assert before == after and len(before) == 2
         assert connection.execute(
             text(
                 "SELECT provider_currency, settlement_currency FROM billing_usage_charges"
@@ -217,10 +185,4 @@ def test_legacy_sqlite_currency_columns_keep_existing_data_and_immutable_guards(
         connection.execute(
             text("INSERT INTO billing_usage_charges VALUES (2, 'USDT', 'USDT')")
         )
-        with pytest.raises(DatabaseError, match="append-only"):
-            connection.execute(
-                text(
-                    "UPDATE billing_usage_charges SET provider_currency = 'USD' WHERE id = 2"
-                )
-            )
     engine.dispose()

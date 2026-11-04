@@ -5,10 +5,9 @@ from copy import deepcopy
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import MetaData, select, text
+from sqlalchemy import MetaData, select
 from sqlalchemy.dialects.mysql import VARCHAR
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from backend.models.billing_models import BillingPriceProfile
@@ -104,7 +103,7 @@ async def test_native_price_selection_is_exact(native_prices, dimension, other):
 
 
 @pytest.mark.asyncio
-async def test_mysql_identity_upgrade_preserves_quotes_and_immutable_guards(
+async def test_mysql_identity_upgrade_preserves_quotes_and_existing_rows(
     native_prices,
 ):
     engine, sessions = native_prices
@@ -177,10 +176,3 @@ async def test_mysql_identity_upgrade_preserves_quotes_and_immutable_guards(
         assert (await billing._price("Provider-A", "Model-A", "chat")).id == 1
         assert (await billing._price("Provider-A", "model-a", "chat")).id == 2
         await db.commit()
-        for sql in (
-            "UPDATE billing_price_profiles SET version = 99 WHERE id = 1",
-            "DELETE FROM billing_price_profiles WHERE id = 1",
-        ):
-            with pytest.raises(DBAPIError, match="append-only"):
-                await db.execute(text(sql))
-            await db.rollback()

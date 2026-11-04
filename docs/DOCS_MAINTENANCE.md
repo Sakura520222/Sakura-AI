@@ -10,7 +10,6 @@
 - `docs/superpowers/` 是设计与实施记录，不作为面向用户的站点内容；其他排除项请以 `srcExclude` 为准。
 - Agent 与 Billing 的验收记录也不生成公开页面或搜索条目；引用排除文件时使用 GitHub 完整 URL。
 - `.gitignore` 只忽略 `.vitepress/dist/` 与 `.vitepress/cache/`，配置和主题源码应正常提交。
-- `billing-mysql-guards.sql` 保留仓库原路径，由 `buildEnd` 复制到站点输出根目录；下载链接使用带 `download` 的 HTML 链接，避免被识别为文档页面。
 - 页面面向用户时优先提供操作步骤；实施日志和长篇验收证据不要混入入门指南。
 
 ## 本地预览

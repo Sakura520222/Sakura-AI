@@ -151,8 +151,6 @@ function SetupWizard() {
     string,
     unknown
   > | null>(null);
-  const [repairUser, setRepairUser] = useState("");
-  const [repairPassword, setRepairPassword] = useState("");
   const headers = () => ({ "X-Setup-Token": credential.current });
   const state = useQuery({
     queryKey: ["setup-browser-state", authorized],
@@ -202,39 +200,15 @@ function SetupWizard() {
       setAuthorized(true);
     });
   }
-  async function databaseAction(repair: boolean) {
-    if (
-      repair &&
-      !(await confirm({
-        title: t(
-          "修复数据库初始化权限？",
-          "Repair database initialization privileges?",
-        ),
-        description: t(
-          "使用临时管理员凭据完成初始化所需操作；凭据不会保存。",
-          "Use temporary administrator credentials for initialization. These credentials are not saved.",
-        ),
-        destructive: true,
-      }))
-    )
-      return;
+  async function databaseAction() {
     await run(async () => {
       try {
         const result = await api<{ data?: Record<string, unknown> }>(
-          `/api/v1/setup/database-${repair ? "repair" : "preflight"}`,
+          "/api/v1/setup/database-preflight",
           {
             method: "POST",
             headers: headers(),
-            body: JSON.stringify({
-              database_url: values.DATABASE_URL || "",
-              ...(repair
-                ? {
-                    username: repairUser,
-                    password: repairPassword,
-                    confirmed: true,
-                  }
-                : {}),
-            }),
+            body: JSON.stringify({ database_url: values.DATABASE_URL || "" }),
           },
         );
         setDatabaseReport(result.data ?? {});
@@ -247,11 +221,6 @@ function SetupWizard() {
         )
           setDatabaseReport(error.body.data as Record<string, unknown>);
         throw error;
-      } finally {
-        if (repair) {
-          setRepairUser("");
-          setRepairPassword("");
-        }
       }
     });
   }
@@ -428,7 +397,7 @@ function SetupWizard() {
               <button
                 className="button"
                 disabled={mutation.isPending || !values.DATABASE_URL}
-                onClick={() => void databaseAction(false)}
+                onClick={() => void databaseAction()}
               >
                 {t("检查数据库连接", "Check database connection")}
               </button>
@@ -436,48 +405,6 @@ function SetupWizard() {
                 <p role="status">
                   {String(databaseReport.message || databaseReport.code || "")}
                 </p>
-              )}
-              {databaseReport && databaseReport.success !== true && (
-                <Disclosure
-                  title={t(
-                    "使用临时管理员修复初始化",
-                    "Repair initialization with a temporary administrator",
-                  )}
-                >
-                  <div className="billing-form">
-                    <label>
-                      {t(
-                        "数据库管理员用户名",
-                        "Database administrator username",
-                      )}
-                      <input
-                        autoComplete="off"
-                        value={repairUser}
-                        onChange={(event) => setRepairUser(event.target.value)}
-                      />
-                    </label>
-                    <label>
-                      {t("数据库管理员密码", "Database administrator password")}
-                      <input
-                        type="password"
-                        autoComplete="off"
-                        value={repairPassword}
-                        onChange={(event) =>
-                          setRepairPassword(event.target.value)
-                        }
-                      />
-                    </label>
-                    <button
-                      className="button"
-                      disabled={
-                        mutation.isPending || !repairUser || !repairPassword
-                      }
-                      onClick={() => void databaseAction(true)}
-                    >
-                      {t("修复初始化", "Repair initialization")}
-                    </button>
-                  </div>
-                </Disclosure>
               )}
             </div>
           )}

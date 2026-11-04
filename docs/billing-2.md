@@ -63,7 +63,7 @@ Paddle 付款币种使用独立的协议能力目录，从 SDK 明确声明的 C
 USDT 有四个字符；费用表 `billing_usage_charges` 的 provider_currency 和
 settlement_currency 从 VARCHAR(3) 扩为 VARCHAR(10)。正常启动迁移检查并幂等
 扩宽 MySQL/MariaDB/PostgreSQL 的旧列，保留空值、默认值、注释及已有字符集/
-排序规则，不修改财务行、不移除保护触发器。SQLite 无需重建表。迁移账号仍需
+排序规则，不修改财务行。SQLite 无需重建表。迁移账号仍需
 ALTER 权限；本轮已验证 SQLite 及原生 DDL 编译/反射分支，未在运行数据库执行。
 
 账号来自现有「AI 配置」，不展示通用厂商目录。选择账号后立即展示该账号
@@ -381,7 +381,8 @@ CREATE/ALTER 权限；本轮未在运行库执行。回滚同样先停止新入�
 钱包变更与不可变流水在同一数据库事务内。行锁、条件更新和唯一约束保护多
 Worker，不靠进程锁。服务只 flush，调用方 commit。预留/释放不属于正式余额
 变更，有独立追加事件。有效预留从可用余额中扣除；退款引用原交易，不删除流水。
-数据库触发器与 ORM 禁止改写/删除财务、价格、计价和相关审计事件。
+财务、价格、计价和相关审计事件由服务层只追加写入；冲正与调整通过追加引用
+原交易的流水表达，不改写或删除历史记录。
 
 每次真实请求前持久化 started，结果与 Usage 同事务保存。写账失败阻断发送或
 使业务失败，辅助模块不能吞掉财务异常后返回伪成功。外部请求未知窗口进入
@@ -401,10 +402,9 @@ failed/cancelled；冲正通过引用原交易的追加流水表现。
 ## 迁移、切换与回滚
 
 1. 停止旧 API/Worker 后部署同一版本，保持收费关闭；不混跑旧 bonus 写入或
-   次数收费。沿用 init_db/migrate_schema_async 自动建表、补列及必要约束、索引、
-   append-only 触发器。迁移角色需要 CREATE/ALTER/TRIGGER 权限，PostgreSQL
-   还需函数权限；MySQL 开启 binlog 时还受服务器的触发器创建权限策略约束，
-   见下方预安装步骤。缺权限不能跳过财务约束。
+   次数收费。沿用 init_db/migrate_schema_async 自动建表、补列及必要约束、索引。
+   迁移角色需要普通的 CREATE/ALTER/INDEX 数据库权限；迁移失败会在真实阶段
+   返回实际错误，不做任何触发器或实例级权限预检。
 2. 按 [旧权益迁移](billing-legacy-migration.md) dry-run 审计并审核源快照；未知
    历史仅标记待核对，不从当前 Plan 猜购买内容、不归零、不追讨历史消费。
    可按审核清单显式 conversion_credits 转换可靠来源；不存在默认“1 次 = 1
@@ -426,108 +426,27 @@ failed/cancelled；冲正通过引用原交易的追加流水表现。
 猜测历史归属；旧 Provider 报价不能作为新账号调用的自动兜底。升级前保持收费
 关闭，重启 API/Worker 完成增量迁移并为实际账号发布正式报价后再启用。已经
 开始的旧执行仍按自身冻结报价核对/结算，恢复后新请求同样需要账号报价。
-升级不修改既有流水或价格金额，不移除
-不可变触发器；新增迁移尚未在部署数据库执行，不能把隔离 SQLite 验证当成
-生产升级成功。
+升级不修改既有流水或价格金额；新增迁移尚未在部署数据库执行，不能把隔离
+SQLite 验证当成生产升级成功。
 
-### MySQL 账本触发器预安装
+### 数据库初始化与权限要求
 
-Setup 的“检查数据库”同时检测连接与安装能力；需要授权时直接显示管理员输入。
-保存数据库步骤时会再次预检，且在建表、旧表清理、字段迁移和默认配置之前执行。
-结果区分 `connected`、`schema_ready`、`initialized`。数据库版本、实际
-`CURRENT_USER()`、DDL 权限、binlog 参数和 Guard 定义均收在“技术详情”中。
-参数或 `mysql.user` 读取受限会明确提示，不能把不可见元数据当作已验证；
-应用账号不需要为了检查其他账号的存续而获得实例级管理权限。
-
-缺少 Guard 时，会创建随机命名的独立探测表，验证 CREATE / ALTER / INDEX、
-Trigger 安装及 UPDATE / DELETE 的实际拒绝效果，随后删除探测表与其触发器。
-MySQL 不允许在 TEMPORARY 表上创建触发器，因此探测表是短暂存在的普通表；
-不写入业务表。断线时会用新连接重试清理，清理失败会明确阻止初始化并显示
-待清理对象和 SQL，不承诺网络故障时必然零残留。预装的正确 Guard 无需
-再次探测创建权限，但仍要求应用账号能读取其元数据。
-
-#### 向导自动修复
-
-遇到 1419 或缺少 TRIGGER 时，无需重新填写其他配置：
-
-1. 点击“检查数据库”；权限不足时会直接显示授权输入，无需展开说明。
-2. 输入**持续有效的 DBA 账号**和一次性使用的密码，点击“自动修复并继续”。
-   这里的“临时”指连接会话；安装账号成为 DEFINER，不能随后删除该账号。
-3. 修复连接固定使用原连接的主机、端口、数据库和 TLS 配置，只替换认证信息。
-   应用账号的授权对象从服务器实际连接身份取得，不接受客户端指定任意 GRANT 对象。
-   自动创建缺失表、安装并读回验证 Guard，按需授予应用账号 12 张不可变表的
-   表级 TRIGGER 权限，再用原应用账号复检。数据库命名锁防止多个修复会话并行安装。
-4. 复检通过后自动重试当前步骤，按应用账号继续迁移和配置保存。
+Setup 的“检查数据库”只验证连接可用且选定了目标数据库；建表、旧表清理、
+字段迁移和默认配置由应用自身的引擎完成，应用账号需要普通的 CREATE /
+ALTER / INDEX 数据库权限。缺少权限会在真实的 DDL/迁移阶段以实际错误反馈，
+不做任何触发器、binlog 或实例级权限探测，也不要求 TRIGGER / SUPER 权限。
 
 完整初始化成功后，在既有 schema_migrations 表中记录与迁移代码、表结构及索引
 绑定的检查点。后续保存或管理员创建会复用已完成的初始化，不再重复建表和全量
-迁移；中断、缺表、缺列、结构变化或迁移代码更新会重新检查。Guard 的存在与
-权限校验仍每次执行。LONGTEXT 仅扩展尚未升级的列，并保留其 NULL、默认值、
-字符集、排序规则与注释。
+迁移；中断、缺表、缺列、结构变化或迁移代码更新会重新检查。LONGTEXT 仅扩展
+尚未升级的列，并保留其 NULL、默认值、字符集、排序规则与注释。
 
-凭据仅在请求和无连接池的临时引擎中使用，界面提交后立即清空，不进入
-connection.json、app_config、环境文件或日志。临时引擎不替换应用引擎。
-不会自动授予 SUPER、修改 `log_bin_trust_function_creators`、关闭 binlog
-或覆盖冲突触发器。DBA 会话也须具备该实例策略要求的创建权限；共享/托管
-数据库若禁止这类权限，应把向导的数据库专用 SQL 交给服务商/DBA执行。
-不要为了修复而给应用账号永久授予全局管理权限。
-
-向导另提供可复制/下载的数据库专用修复 SQL，含来自应用 ORM 的幂等建表、
-来自 `mysql_guard_ddl` 的 Guard 定义和表级授权，因此可修复尚未建表的首次安装。
-新表索引包含在 CREATE TABLE 中，重跑不会遗漏索引。已有表、余额和财务流水
-均保留；错误的同名 Guard 必须由 DBA 审阅，不自动删除或替换。
-下面的离线导出则只包含 Guard，需要数据表已经存在。
-
-预检阻断通过 WebUI/API 返回 HTTP 409，连接失败为 400，DDL/迁移/修复失败为
-500，并携带稳定错误码、阶段、MySQL 错误码及可重试信息；不再以 HTTP 200
-表达保存失败。迁移期间失败会保留已完成 DDL、旧连接配置与数据，不写 Setup
-完成标记。MySQL DDL 隐式提交，恢复依靠幂等步骤，不能当作整体事务回滚。
-API 客户端访问 /api/v1/setup/* 时须携带 X-Setup-Token（或有效的 Setup
-验证 Cookie）；只在 bootstrap 期间开放，其他 API 的启动保护不变。
-
-MySQL 开启 binlog、`log_bin_trust_function_creators=0` 时，普通应用账号即使有
-表级 `TRIGGER` 权限，创建触发器仍可能收到 1419。缺少创建权限时，迁移抛出
-`BillingSchemaPermissionError`，错误代码 `billing_schema_privilege_required`，
-阻止启动；不能以收费尚未启用或已有 ORM 防修改监听为由跳过数据库保护。
-ORM 监听不能拦截原始 SQL 或批量更新。
-[MySQL 官方说明](https://dev.mysql.com/doc/refman/8.4/en/stored-programs-logging.html)
-解释了 binlog 下的额外创建权限要求。
-
-仓库提供 <a href="./billing-mysql-guards.sql" download>预安装 SQL</a>，覆盖 12 张不可变表的 UPDATE /
-DELETE，共 24 个触发器。导出脚本仅生成 SQL，不读取部署连接或连接数据库：
-
-```bash
-uv run python scripts/export_billing_mysql_guards.py > /tmp/sakura-billing-mysql-guards.sql
-```
-
-SQL 使用 `CREATE TRIGGER IF NOT EXISTS`，适用于 MySQL 8.0.29 及后续版本，
-包括 8.4；这个语法从 [MySQL 8.0.29](https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-29.html)
-引入。它不创建业务表，也不包含 DROP、授权或全局参数修改。安装前停止应用，
-由 DBA 确认目标数据库及 12 张表已存在，审阅 SQL 后使用具有当前服务器所需
-创建权限的管理员账号执行；密码交互输入，不写在命令中：
-
-```bash
-mysql --user=YOUR_MIGRATION_ADMIN --password --database=YOUR_SAKURA_DATABASE < docs/billing-mysql-guards.sql
-```
-
-DDL 可能逐条提交；中途失败须核对已安装部分，解决权限或对象冲突后重跑。
-`IF NOT EXISTS` 不会修复错误的同名触发器。重启时应用验证已有触发器的表、
-事件、BEFORE / ROW 属性及拒绝改写的主体；定义冲突仍阻止启动，不能仅按
-名称存在判定保护已生效。正确预安装后，应用不再创建这些已有触发器。
-
-应用账号仍须有对应表的 `TRIGGER` 权限，才能读取
-`information_schema.TRIGGERS`；缺少权限会使保护不可见，不能把空查询结果当成
-安装成功。[元数据权限说明](https://dev.mysql.com/doc/refman/8.4/en/information-schema-triggers-table.html)
-适用于启动验证。SQL 未指定 `DEFINER`，默认使用安装账号；该账号必须持续存在
-并保有所需触发器执行权限，不能在安装后删除临时迁移账号。
-[DEFINER 说明](https://dev.mysql.com/doc/refman/8.4/en/create-trigger.html)
-列出了创建及执行时的权限检查。
-
-生产数据库安装、账号权限及全局参数变更需要单独授权。本任务未执行这些操作，
-也不建议给应用账号 `SUPER` 或永久放宽 `log_bin_trust_function_creators`。
-预安装之后仍需核对启动结果并在隔离 MySQL 上验证原始 UPDATE / DELETE 被拒绝；
-预安装指导及离线导出通过不能当成部署数据库验收通过。
-
+预检失败通过 WebUI/API 返回 HTTP 409，连接失败为 400，DDL/迁移失败为 500，
+并携带稳定错误码、阶段、MySQL 错误码及可重试信息；不以 HTTP 200 表达保存
+失败。迁移期间失败会保留已完成 DDL、旧连接配置与数据，不写 Setup 完成标记。
+MySQL DDL 隐式提交，恢复依靠幂等步骤，不能当作整体事务回滚。API 客户端访问
+/api/v1/setup/* 时须携带 X-Setup-Token（或有效的 Setup 验证 Cookie）；只在
+bootstrap 期间开放，其他 API 的启动保护不变。
 ## 恢复与对账入口
 
 ```bash
@@ -697,7 +616,7 @@ Prompt、响应、凭据、内部价格快照或无权访问仓库；低余额�
 MySQL 定价身份（provider/account/model/scope/call kind）使用
 `utf8mb4_0900_bin`，同时区分大小写、Unicode 字符和末尾空格；MariaDB 兼容
 分支使用 `utf8mb4_nopad_bin`。启动时对旧表逐列进行幂等 COLLATION 迁移，保留
-原宽度、NULL/default/comment、唯一索引、不可变触发器及全部历史价格/版本，
+原宽度、NULL/default/comment、唯一索引及全部历史价格/版本，
 不改数据库级排序规则，不重算已冻结账单。MySQL 要求支持该规则（8.0.17+，
 当前部署 8.4）；升级需要该表的 ALTER 权限，失败会阻止启动。NO PAD 的原因见
 [MySQL 官方说明](https://dev.mysql.com/doc/refman/8.4/en/charset-binary-collations.html)。
@@ -713,7 +632,8 @@ tests/test_billing_* 使用真实 SQL 持久化及独立连接并发，覆盖钱
 债务、定价精度、辅助调用/Fallback/流式未知、支付/兑换/迁移/退款、权限和
 实际 WebUI/API。外部 AI/支付仅在边界模拟。浏览器使用隔离 SQLite 测试站点
 验证余额、筛选、来源链接、阈值提交、提示和价格发布。
-部署前还需在隔离 MySQL/PostgreSQL 运行迁移、触发器安装与锁等待验收，
+部署前还需在隔离 MySQL/PostgreSQL 运行迁移与锁等待验收（含应用账号无
+TRIGGER/SUPER 权限的初始化场景），
 SQLite 并发证据不能当生产数据库实测证据。
 
 完整本地场景映射、命令和验证边界见 [验收证据](https://github.com/Sakura520222/Sakura-AI/blob/develop/docs/billing-2-acceptance.md)。
