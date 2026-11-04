@@ -325,7 +325,7 @@ class SetupService:
                     "initialized": False,
                     "stage": "connection",
                     "code": "database_connection_ready",
-                    "message": "数据库连接成功；尚未执行 Schema 能力预检",
+                    "message": "数据库连接成功",
                 }
             except Exception as exc:
                 return {
@@ -721,16 +721,12 @@ class SetupService:
                     ).error("Setup database initialization failed")
                     report["partial_schema"] = True
                     report["schema_changes_started"] = True
-                    from backend.models.billing_schema import (
-                        BillingSchemaPermissionError,
+                    _fail(
+                        report,
+                        "database_initialization_failed",
+                        stage=stage,
+                        error=exc,
                     )
-
-                    code = (
-                        "billing_schema_privilege_required"
-                        if isinstance(exc, BillingSchemaPermissionError)
-                        else "database_initialization_failed"
-                    )
-                    _fail(report, code, stage=stage, error=exc)
                     raise DatabaseSetupError(report) from None
                 if replacing and previous_engine is not None:
                     await previous_engine.dispose()

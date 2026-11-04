@@ -731,10 +731,6 @@
     "候选",
     "Candidate"
   ],
-  "[\"使用临时管理员凭据完成初始化所需操作；凭据不会保存。\",\"Use temporary administrator credentials for initialization. These credentials are not saved.\"]": [
-    "使用临时管理员凭据完成初始化所需操作；凭据不会保存。",
-    "Use temporary administrator credentials for initialization. These credentials are not saved."
-  ],
   "[\"登录验证失败，请重试或重新使用 GitHub 登录。\",\"Verification failed. Try again or sign in with GitHub again.\"]": [
     "登录验证失败，请重试或重新使用 GitHub 登录。",
     "Verification failed. Try again or sign in with GitHub again."
@@ -2563,10 +2559,6 @@
     "审查队列",
     "Review queue"
   ],
-  "[\"使用临时管理员修复初始化\",\"Repair initialization with a temporary administrator\"]": [
-    "使用临时管理员修复初始化",
-    "Repair initialization with a temporary administrator"
-  ],
   "[\"仓库状态\",\"Repository status\"]": [
     "仓库状态",
     "Repository status"
@@ -2586,10 +2578,6 @@
   "[\"选择套餐 {0}\",\"Select plan {0}\"]": [
     "选择套餐 {0}",
     "Select plan {0}"
-  ],
-  "[\"修复初始化\",\"Repair initialization\"]": [
-    "修复初始化",
-    "Repair initialization"
   ],
   "[\"套餐与价格\",\"Plans & pricing\"]": [
     "套餐与价格",
@@ -3175,10 +3163,6 @@
     "最近更新",
     "Updated"
   ],
-  "[\"数据库管理员密码\",\"Database administrator password\"]": [
-    "数据库管理员密码",
-    "Database administrator password"
-  ],
   "[\"快速查找\",\"Quick find\"]": [
     "快速查找",
     "Quick find"
@@ -3707,10 +3691,6 @@
     "沿用用量语义",
     "Use reported usage semantics"
   ],
-  "[\"数据库管理员用户名\",\"Database administrator username\"]": [
-    "数据库管理员用户名",
-    "Database administrator username"
-  ],
   "[\"发布模型报价\",\"Publish model pricing\"]": [
     "发布模型报价",
     "Publish model pricing"
@@ -4050,10 +4030,6 @@
   "[\"源码部署可检查版本；更新请使用现有源码部署流程。\",\"Source deployments can check versions. Apply updates using the source deployment workflow.\"]": [
     "源码部署可检查版本；更新请使用现有源码部署流程。",
     "Source deployments can check versions. Apply updates using the source deployment workflow."
-  ],
-  "[\"修复数据库初始化权限？\",\"Repair database initialization privileges?\"]": [
-    "修复数据库初始化权限？",
-    "Repair database initialization privileges?"
   ],
   "[\"在所有设置中搜索\",\"Search all settings\"]": [
     "在所有设置中搜索",

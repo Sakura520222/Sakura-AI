@@ -49,12 +49,12 @@ jobs:
         run: uv run pytest tests/test_notification_live_db_646.py -q
         env:
           NOTIFICATION_TEST_DATABASE_URL: mysql+asyncmy://root@127.0.0.1:3306/sakura_notification_test
-      - name: MySQL exact pricing identities and immutable upgrade
+      - name: MySQL exact pricing identities and schema upgrade
         run: uv run pytest tests/test_billing_price_identity_live_db.py -q
         env:
           BILLING_IDENTITY_TEST_DATABASE_URL: mysql+asyncmy://root@127.0.0.1:3306/sakura_notification_test
-      - name: MySQL Setup preflight, automatic guard repair and recovery
-        run: uv run pytest tests/test_setup_mysql_live_db_682.py -q
+      - name: MySQL Setup with an account lacking TRIGGER privileges
+        run: uv run pytest tests/test_setup_mysql_limited_account.py -q
         env:
           SETUP_MYSQL_TEST_ADMIN_URL: mysql+asyncmy://root@127.0.0.1:3306/mysql
       - name: PostgreSQL exact pricing identities

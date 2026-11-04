@@ -22,7 +22,6 @@ from backend.core.setup_database import (
     DatabaseSetupError,
     check_database,
     has_setup_database_token,
-    repair_database,
     setup_database_status,
 )
 from backend.core.setup_service import setup_service
@@ -113,30 +112,6 @@ async def database_preflight(request: Request):
     body = await request.json()
     result = await check_database(body.get("url", ""))
     return JSONResponse(result, status_code=setup_database_status(result))
-
-
-@router.post("/api/database-repair")
-@limiter.limit("3/minute")
-async def database_repair(request: Request):
-    if not is_bootstrap_mode() or not has_setup_database_token(request):
-        return JSONResponse(
-            {"success": False, "message": "Setup authorization required"},
-            status_code=403,
-        )
-    body = await request.json()
-    try:
-        result = await repair_database(
-            body.get("url", ""),
-            body.get("username", ""),
-            body.get("password", ""),
-            confirmed=body.get("confirmed") is True,
-        )
-        return JSONResponse(result, status_code=setup_database_status(result))
-    except ValueError, TypeError, AttributeError:
-        return JSONResponse(
-            {"success": False, "message": "Invalid database repair request"},
-            status_code=400,
-        )
 
 
 @router.post("/api/ai-models")

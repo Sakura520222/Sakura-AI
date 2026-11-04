@@ -12,7 +12,6 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-    event,
 )
 
 from backend.models.billing_types import PricingIdentityString
@@ -241,18 +240,3 @@ class BillingReconciliationEvent(Base):
     reason = Column(Text, nullable=False)
     evidence = Column(JSON, nullable=False)
     created_at = Column(UTCDateTime, nullable=False, default=utc_now)
-
-
-def _reject_mutation(mapper, connection, target):
-    raise ValueError(f"{type(target).__name__} is append-only")
-
-
-for _model in (
-    BillingTransaction,
-    BillingPriceProfile,
-    BillingUsageCharge,
-    BillingReservationEvent,
-    BillingReconciliationEvent,
-):
-    event.listen(_model, "before_update", _reject_mutation)
-    event.listen(_model, "before_delete", _reject_mutation)

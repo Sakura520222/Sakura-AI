@@ -13,11 +13,9 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import inspect, select, text
-from sqlalchemy.exc import DatabaseError
 
 from backend.models import database
 from backend.models.billing_models import BillingTransaction
-from backend.models.billing_schema import IMMUTABLE_TABLES
 from backend.models.database import PRReviewIncrementalQueue
 from backend.models.telegram_models import TelegramUser
 from backend.services.billing_service import BillingService
@@ -81,16 +79,6 @@ async def main(path):
         )
         assert (await BillingService(session).reconcile_wallet(1))["consistent"]
         await session.rollback()
-        for action in (
-            "UPDATE billing_transactions SET delta_units = 1",
-            "DELETE FROM billing_transactions",
-        ):
-            try:
-                await session.execute(text(action))
-            except DatabaseError:
-                await session.rollback()
-            else:
-                raise AssertionError("Immutable trigger failed")
     async with database.async_engine.connect() as connection:
         triggers = (
             (
@@ -101,9 +89,7 @@ async def main(path):
             .scalars()
             .all()
         )
-        for table in IMMUTABLE_TABLES:
-            assert f"{table}_no_update" in triggers
-            assert f"{table}_no_delete" in triggers
+        assert triggers == [], f"unexpected database triggers: {triggers}"
         indexes = await connection.run_sync(
             lambda conn: inspect(conn).get_indexes("ai_usage_records")
         )
@@ -190,7 +176,7 @@ async def main(path):
         SimpleNamespace(apply=False, limit=100, offset=0)
     )
     print(
-        "PASS: fresh/repeat async schema + all immutable triggers + atomic rollback + wallet audit + CLI dry runs"
+        "PASS: fresh/repeat async schema + no ledger triggers + atomic rollback + wallet audit + CLI dry runs"
     )
 
 

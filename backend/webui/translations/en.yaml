@@ -2532,7 +2532,6 @@ webui_v2:
   m_2056f7c8a65d: Transfer the exact amount using the specified network.
   m_205cbe72daa4: Past alerts
   m_209fb815f51b: Candidate
-  m_20b847ee11ab: Use temporary administrator credentials for initialization. These credentials are not saved.
   m_213511b228a8: Verification failed. Try again or sign in with GitHub again.
   m_214b4fc1e896: Operations
   m_2170ac16f339: Verified evidence
@@ -2990,13 +2989,11 @@ webui_v2:
   m_6f9798549837: Search members
   m_6fe3baac2fe2: Batch name
   m_70530a78f5fb: Review queue
-  m_70896907332a: Repair initialization with a temporary administrator
   m_70a9668db793: Repository status
   m_70f297fbb035: The complete deployment outcome is not verified. Check Host Updater and the running version.
   m_7116eb963cce: Restart Sakura AI?
   m_712da14e1299: Showing the latest 100 sessions you can access.
   m_7161bc9b15d6: Select plan {0}
-  m_716ba88b24e9: Repair initialization
   m_716fc9ccde94: Plans & pricing
   m_71cf81dc997a: JSON file, up to
   m_72030606ccba: Describe what you would like the Agent to adjust…
@@ -3143,7 +3140,6 @@ webui_v2:
   m_8b80eaea95db: Use a passkey
   m_8b9e64bcf412: Iterations appear here once execution begins.
   m_8bb07eeba880: Updated
-  m_8be6299c9ac8: Database administrator password
   m_8c22f5114895: Quick find
   m_8c5a7ff78f63: All tags
   m_8c790c2611b6: Delete queue record {0}
@@ -3276,7 +3272,6 @@ webui_v2:
   m_a04f5000f7d6: Application restarting
   m_a0603e6d31ab: Copied
   m_a09e5ff43932: Use reported usage semantics
-  m_a0c2ebc74dc1: Database administrator username
   m_a0eb56e54ce8: Publish model pricing
   m_a12072d8117e: Refunds
   m_a129259c0ea5: Reasoning tokens
@@ -3362,7 +3357,6 @@ webui_v2:
   m_b006836bd854: Activity appears here when tasks start running.
   m_b02e574438ca: Ascending
   m_b03a2481cbc8: Source deployments can check versions. Apply updates using the source deployment workflow.
-  m_b070b446d794: Repair database initialization privileges?
   m_b0945602bd1d: Search all settings
   m_b09513d63a09: Triggered by
   m_b0b6963ec1b0: Two-step verification
