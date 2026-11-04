@@ -5826,7 +5826,7 @@ purge_sakura_compose_resources() {
         image_ref=$(docker inspect --type container --format '{{.Config.Image}}' "$id" 2>/dev/null) || return 1
         case "$image_ref" in
             ghcr.io/sakura520222/sakura-ai:* | ghcr.io/sakura520222/sakura-ai@sha256:* | \
-            mysql:8.4 | redis:7-alpine)
+            mysql:8.4 | redis:7-alpine | redis:8-alpine)
                 image_refs+=("$image_ref")
                 ;;
             *)
