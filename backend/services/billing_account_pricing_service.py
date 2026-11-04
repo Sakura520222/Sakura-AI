@@ -1,6 +1,5 @@
 """Configured account identities and model discovery for the pricing editor."""
 
-import hashlib
 from collections import OrderedDict
 
 from backend.core.ai_protocol import account_store
@@ -64,18 +63,20 @@ async def get_pricing_account(account_id):
 
 async def pricing_account_models(account, *, refresh=False):
     saved = safe_account(account)["models"]
-    fingerprint = hashlib.sha256(
-        (
-            account.protocol
-            + "\0"
-            + account.api_base
-            + "\0"
-            + account.api_key
-            + "\0"
-            + str(account.updated_at)
-        ).encode()
-    ).hexdigest()
-    key = (account.id, fingerprint)
+    # The cache key deliberately contains no credential material: every edit
+    # goes through ``account_store.save_account``, which always advances
+    # ``updated_at`` (and ``revision`` via optimistic concurrency), so this key
+    # changes on any account change without embedding ``api_key`` anywhere.
+    # 缓存键刻意不含凭据材料：任何编辑都经 ``account_store.save_account``，
+    # 它必然推进 ``updated_at``（并经乐观并发推进 ``revision``），任何账户
+    # 变更都会改变此键，无需把 api_key 编入键中。
+    key = (
+        account.id,
+        account.protocol,
+        account.api_base,
+        account.updated_at,
+        account.revision,
+    )
     cached = _MODEL_CACHE.get(key)
     now = monotonic()
     if not refresh and cached and now - cached[0] < _MODEL_CACHE_SECONDS:

@@ -287,6 +287,17 @@ def _parse_task_overrides(
 
     return overrides
 
+def _validation_message(exc: Exception, fallback: str) -> str:
+    """Read the crafted validation message without stringifying the exception.
+
+    Validation errors are raised with fixed literal messages at the raise
+    sites; read ``args[0]`` directly so exception stringification never
+    reaches the HTTP response. / 校验异常在抛出点使用固定文案，直接读
+    ``args[0]``，避免异常对象字符串化进入响应。
+    """
+    value = exc.args[0] if exc.args else None
+    return value if isinstance(value, str) and value else fallback
+
 def _should_schedule_agent_task(status: str) -> bool:
     return status == AgentTeamTaskStatus.QUEUED.value
 
@@ -495,7 +506,8 @@ async def preview_candidates(
             db, ai_filter_requirement=ai_filter_requirement
         )
     except ValueError as exc:
-        return JSONResponse({"success": False, "message": str(exc)}, status_code=200)
+        message = _validation_message(exc, "候选任务收集失败")
+        return JSONResponse({"success": False, "message": message}, status_code=200)
     except Exception:
         logger.exception("AI 筛选候选失败")
         return JSONResponse(
@@ -575,7 +587,8 @@ async def create_task_from_candidate(
             base_branch=base_branch,
         )
     except ValueError as e:
-        return JSONResponse({"success": False, "message": str(e)}, status_code=200)
+        message = _validation_message(e, "输入参数无效")
+        return JSONResponse({"success": False, "message": message}, status_code=200)
 
     task = await service.create_task_from_candidate(
         db,
@@ -726,8 +739,9 @@ async def preview_task_from_issue(
             status_code=200,
         )
     except ValueError as e:
+        message = _validation_message(e, "任务预览构建失败")
         return JSONResponse(
-            {"success": False, "message": str(e)},
+            {"success": False, "message": message},
             status_code=200,
         )
     return JSONResponse(
@@ -765,8 +779,9 @@ async def create_task_from_issue(
     try:
         repo_full_name, issue_number = _parse_issue_ref(issue_ref)
     except ValueError as e:
+        message = _validation_message(e, "无法解析 Issue 引用")
         return JSONResponse(
-            {"success": False, "message": str(e)},
+            {"success": False, "message": message},
             status_code=200,
         )
     if not _is_admin(user):
@@ -794,7 +809,8 @@ async def create_task_from_issue(
             base_branch=base_branch,
         )
     except ValueError as e:
-        return JSONResponse({"success": False, "message": str(e)}, status_code=200)
+        message = _validation_message(e, "输入参数无效")
+        return JSONResponse({"success": False, "message": message}, status_code=200)
 
     draft_for_context = {
         "source_type": overrides.get("source_type")
@@ -842,8 +858,9 @@ async def create_task_from_issue(
         )
     except ValueError as e:
         await db.rollback()
+        message = _validation_message(e, "任务创建失败")
         return JSONResponse(
-            {"success": False, "message": str(e)},
+            {"success": False, "message": message},
             status_code=200,
         )
 
