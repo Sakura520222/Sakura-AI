@@ -215,6 +215,10 @@
     "取消任务",
     "Cancel task"
   ],
+  "[\"凭据在应用每次重启后更换，请以最新的 .setup-token 文件为准。\",\"The credential rotates on every restart. Use the latest .setup-token file.\"]": [
+    "凭据在应用每次重启后更换，请以最新的 .setup-token 文件为准。",
+    "The credential rotates on every restart. Use the latest .setup-token file."
+  ],
   "[\"完整配置\",\"All configuration\"]": [
     "完整配置",
     "All configuration"
@@ -374,6 +378,10 @@
   "[\"正在加载…\",\"Loading…\"]": [
     "正在加载…",
     "Loading…"
+  ],
+  "[\"初始化无法继续\",\"Setup cannot continue\"]": [
+    "初始化无法继续",
+    "Setup cannot continue"
   ],
   "[\"关闭仓库互助？\",\"Disable repository community?\"]": [
     "关闭仓库互助？",
@@ -1114,6 +1122,10 @@
   "[\"永久清空数据库\",\"Permanently erase the database\"]": [
     "永久清空数据库",
     "Permanently erase the database"
+  ],
+  "[\"工作空间已初始化，前往登录即可开始使用。\",\"Your workspace is ready. Sign in to get started.\"]": [
+    "工作空间已初始化，前往登录即可开始使用。",
+    "Your workspace is ready. Sign in to get started."
   ],
   "[\"请输入非负数，最多六位小数。\",\"Enter a nonnegative amount with at most six decimal places.\"]": [
     "请输入非负数，最多六位小数。",
@@ -2435,6 +2447,10 @@
     "可以更换通道、清除搜索或刷新列表。",
     "Change the channel, clear the search or refresh the list."
   ],
+  "[\"配置步骤\",\"Setup steps\"]": [
+    "配置步骤",
+    "Setup steps"
+  ],
   "[\"重试\",\"Retry\"]": [
     "重试",
     "Retry"
@@ -2931,6 +2947,10 @@
     "重置身份验证器",
     "Reset authenticator"
   ],
+  "[\"输入初始化凭据以继续。\",\"Enter your setup credential to continue.\"]": [
+    "输入初始化凭据以继续。",
+    "Enter your setup credential to continue."
+  ],
   "[\"新生成的兑换码\",\"Generated codes\"]": [
     "新生成的兑换码",
     "Generated codes"
@@ -3118,6 +3138,10 @@
   "[\"技能已更新\",\"Skill updated\"]": [
     "技能已更新",
     "Skill updated"
+  ],
+  "[\"读取初始化状态失败，请重试。\",\"Reading the setup state failed. Try again.\"]": [
+    "读取初始化状态失败，请重试。",
+    "Reading the setup state failed. Try again."
   ],
   "[\"删除全部通行密钥\",\"Delete all passkeys\"]": [
     "删除全部通行密钥",
@@ -3903,6 +3927,10 @@
     "取消全局强制验证",
     "Remove global requirement"
   ],
+  "[\"一切就绪\",\"You're all set\"]": [
+    "一切就绪",
+    "You're all set"
+  ],
   "[\"到期时间\",\"Expires\"]": [
     "到期时间",
     "Expires"
@@ -4234,6 +4262,10 @@
   "[\"开始\",\"Start\"]": [
     "开始",
     "Start"
+  ],
+  "[\"首次部署\",\"First deployment\"]": [
+    "首次部署",
+    "First deployment"
   ],
   "[\"你的反馈\",\"Your feedback\"]": [
     "你的反馈",
@@ -5015,6 +5047,10 @@
     "请检查网络后重试。若仍无法访问，请确认账户权限。",
     "Check your connection and try again. If this continues, check your account permissions."
   ],
+  "[\"凭据存放在配置目录的 .setup-token 文件中。\",\"Find the credential in the .setup-token file inside the configuration directory.\"]": [
+    "凭据存放在配置目录的 .setup-token 文件中。",
+    "Find the credential in the .setup-token file inside the configuration directory."
+  ],
   "[\"重新分析\",\"Analyze again\"]": [
     "重新分析",
     "Analyze again"
@@ -5666,10 +5702,6 @@
   "[\"所有价格和换算参数需明确填写。发布会新增版本，不覆盖历史报价。\",\"Enter prices and conversion parameters explicitly. Publishing creates a new version and preserves historical pricing.\"]": [
     "所有价格和换算参数需明确填写。发布会新增版本，不覆盖历史报价。",
     "Enter prices and conversion parameters explicitly. Publishing creates a new version and preserves historical pricing."
-  ],
-  "[\"输入配置目录中 .setup-token 文件里的初始化凭据。\",\"Enter the setup credential from the .setup-token file in the configuration directory.\"]": [
-    "输入配置目录中 .setup-token 文件里的初始化凭据。",
-    "Enter the setup credential from the .setup-token file in the configuration directory."
   ],
   "[\"保存为候选任务\",\"Save as a candidate\"]": [
     "保存为候选任务",

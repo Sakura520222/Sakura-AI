@@ -2403,6 +2403,7 @@ webui_v2:
   m_0a10311e7f6a: This account changed elsewhere. Close the editor and reload before trying again.
   m_0a3c806f94ff: This content is restricted or was not captured.
   m_0a62899e96f6: Cancel task
+  m_0a7afbe10d98: The credential rotates on every restart. Use the latest .setup-token file.
   m_0b3caf95797e: All configuration
   m_0b7f46095d8a: Currency
   m_0b87822f8d09: Close record
@@ -2443,6 +2444,7 @@ webui_v2:
   m_11fc3275dc97: Authorize GitHub
   m_11fda2710549: No delivery history
   m_11fdc80ef076: Loading…
+  m_12320975b402: Setup cannot continue
   m_1253ef362da9: Disable repository community?
   m_1275e2934b50: High
   m_1298b6d74cf0: Per-model capabilities
@@ -2628,6 +2630,7 @@ webui_v2:
   m_2ff4fa9c93ad: Channel type
   m_3020bdef65bf: Reauthorize
   m_3073867631ac: Permanently erase the database
+  m_3096b3a9dcec: Your workspace is ready. Sign in to get started.
   m_30ac847128e0: Enter a nonnegative amount with at most six decimal places.
   m_30cdf415a947: Disable user
   m_318a310f3e14: Order ID
@@ -2958,6 +2961,7 @@ webui_v2:
   m_69508886259c: File content
   m_695e6de8da1d: Repository scan
   m_6963be794989: Change the channel, clear the search or refresh the list.
+  m_696f801f328d: Setup steps
   m_6977b6061875: Retry
   m_69aea807aa0d: Ban member?
   m_69df7cb46492: Delete passkey {0}?
@@ -3082,6 +3086,7 @@ webui_v2:
   m_825acb0868c9: Repository scans
   m_829566cc8913: Delete collection?
   m_8301a91dca1c: Reset authenticator
+  m_83230ac72984: Enter your setup credential to continue.
   m_833257af5b7d: Generated codes
   m_8332636bc98e: This permanently deletes the task and its records.
   m_83416b2bb6c1: Model
@@ -3129,6 +3134,7 @@ webui_v2:
   m_8987b3644c19: PR reviews per day
   m_899a6dea9518: Expired
   m_89c004bb6ef7: Skill updated
+  m_8a10f8cee6d5: Reading the setup state failed. Try again.
   m_8a18227155fd: Delete all passkeys
   m_8a1a655b2e86: '{0} recovery codes and {1} passkeys.'
   m_8a1fcd8561e6: Redemption code
@@ -3325,6 +3331,7 @@ webui_v2:
   m_a97fdf59b7a5: Restore default?
   m_a9a443789654: I have saved these codes
   m_a9d2cd2fb649: Remove global requirement
+  m_aa00b8bc8d6a: You're all set
   m_aa474e41ac50: Expires
   m_aa73053ed7f0: View orders
   m_aaa5f1b70da3: Redemption codes
@@ -3408,6 +3415,7 @@ webui_v2:
   m_b9f7e39d9894: Save to repository?
   m_ba0916a9ac4b: Updates
   m_ba340104a257: Start
+  m_ba489ffa895e: First deployment
   m_ba74d3bd5baa: Your feedback
   m_ba85595a3266: This instance will briefly stop serving requests. Save your changes first.
   m_baadb96f42f1: Working…
@@ -3603,6 +3611,7 @@ webui_v2:
   m_dd7c4a1b6c74: Order updated
   m_dda2ccb423f1: Candidate tasks
   m_ddf41461379d: Check your connection and try again. If this continues, check your account permissions.
+  m_de1510069bb9: Find the credential in the .setup-token file inside the configuration directory.
   m_de4eef18ce09: Analyze again
   m_de5e2ffdbb74: Review
   m_de7483414e04: Grant
@@ -3766,7 +3775,6 @@ webui_v2:
   m_fd583de610b9: Cancel
   m_fd78d0dc9a94: Usage & billing
   m_fdb532c774f5: Enter prices and conversion parameters explicitly. Publishing creates a new version and preserves historical pricing.
-  m_fdcffb81a5a1: Enter the setup credential from the .setup-token file in the configuration directory.
   m_fde32be91e77: Save as a candidate
   m_fe6f9d7d35d1: Create Agent task
   m_fe8b12cb211d: Reasoning / million tokens (optional)

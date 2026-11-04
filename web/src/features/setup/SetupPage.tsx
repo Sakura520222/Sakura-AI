@@ -1,16 +1,21 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { ArrowUpRight } from "lucide-react";
 import { api, ApiError } from "../../api/client";
-import { useLocale } from "../../app/locale";
-import { PublicShell } from "../../components/layout/PublicShell";
-import { useConfirm } from "../../components/ui/ConfirmProvider";
+import { LocaleProvider, useLocale } from "../../app/locale";
+import { ThemeProvider } from "../../app/theme";
+import { BrandMark } from "../../components/common/BrandMark";
+import {
+  ConfirmProvider,
+  useConfirm,
+} from "../../components/ui/ConfirmProvider";
+import { LoginFooter } from "../auth/AuthPages";
 import {
   Disclosure,
   ErrorState,
   LoadingState,
 } from "../../components/workflow/Workflow";
 import "./setup.css";
-import "../billing/billing.css";
 
 type Meta = {
   state: string;
@@ -130,11 +135,56 @@ const groups: { id: string; label: [string, string]; fields: Field[] }[] = [
 
 export default function SetupPage() {
   return (
-    <PublicShell>
-      <SetupWizard />
-    </PublicShell>
+    <LocaleProvider initial="zh-CN">
+      <ThemeProvider>
+        <ConfirmProvider>
+          <SetupWizard />
+        </ConfirmProvider>
+      </ThemeProvider>
+    </LocaleProvider>
   );
 }
+
+// Setup 入口与登录页共用 login-page 设计系统，保持同一观感。
+function GateFrame({
+  intro,
+  children,
+}: {
+  intro: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="login-page">
+      <div className="login-frame">
+        <main className="login-panel">
+          <section className="login-intro">{intro}</section>
+          <section className="login-options">{children}</section>
+        </main>
+        <LoginFooter />
+      </div>
+    </div>
+  );
+}
+
+function GateIntro({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <>
+      <a className="login-brand" href="/app/setup">
+        <BrandMark size={28} />
+        <span>Sakura AI</span>
+      </a>
+      <h1>{title}</h1>
+      <p className="login-description">{children}</p>
+    </>
+  );
+}
+
 function SetupWizard() {
   const { t } = useLocale();
   const confirm = useConfirm();
@@ -282,86 +332,151 @@ function SetupWizard() {
   }
   if (complete || state.data?.state === "completed")
     return (
-      <main className="public-auth-card">
-        <h1>{t("配置已完成", "Setup complete")}</h1>
-        <p>
-          {t(
-            "应用正在准备登录入口。",
-            "The application is preparing the sign-in page.",
-          )}
-        </p>
-        <a className="button primary" href="/app/login">
-          {t("前往登录", "Continue to sign in")}
+      <GateFrame
+        intro={
+          <GateIntro title={t("配置已完成", "Setup complete")}>
+            {t(
+              "应用正在准备登录入口。",
+              "The application is preparing the sign-in page.",
+            )}
+          </GateIntro>
+        }
+      >
+        <div className="login-options-heading">
+          <h2>{t("一切就绪", "You're all set")}</h2>
+          <p>
+            {t(
+              "工作空间已初始化，前往登录即可开始使用。",
+              "Your workspace is ready. Sign in to get started.",
+            )}
+          </p>
+        </div>
+        <a className="login-button login-button-main" href="/app/login">
+          <span>{t("前往登录", "Continue to sign in")}</span>
+          <ArrowUpRight size={17} className="login-action-arrow" />
         </a>
-      </main>
+      </GateFrame>
     );
   if (!authorized)
     return (
-      <main className="public-auth-card">
-        <h1>{t("初始化 Sakura AI", "Set up Sakura AI")}</h1>
-        <p className="muted">
-          {t(
-            "输入配置目录中 .setup-token 文件里的初始化凭据。",
-            "Enter the setup credential from the .setup-token file in the configuration directory.",
-          )}
-        </p>
-        <form className="billing-form" onSubmit={verify}>
-          <label>
+      <GateFrame
+        intro={
+          <GateIntro title={t("初始化 Sakura AI", "Set up Sakura AI")}>
+            {t(
+              "凭据存放在配置目录的 .setup-token 文件中。",
+              "Find the credential in the .setup-token file inside the configuration directory.",
+            )}
+          </GateIntro>
+        }
+      >
+        <div className="login-options-heading">
+          <h2>{t("首次部署", "First deployment")}</h2>
+          <p>
+            {t(
+              "输入初始化凭据以继续。",
+              "Enter your setup credential to continue.",
+            )}
+          </p>
+        </div>
+        {message && (
+          <p className="public-auth-error" role="alert">
+            {message}
+          </p>
+        )}
+        <form className="login-code-form" onSubmit={verify}>
+          <label htmlFor="setup-credential">
             {t("初始化凭据", "Setup credential")}
-            <input
-              type="password"
-              autoComplete="off"
-              required
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-            />
           </label>
-          {message && (
-            <p className="danger-text" role="alert">
-              {message}
-            </p>
-          )}
-          <button className="button primary" disabled={mutation.isPending}>
-            {t("继续", "Continue")}
+          <input
+            id="setup-credential"
+            type="password"
+            autoFocus
+            autoComplete="off"
+            required
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+          />
+          <button
+            className="login-button login-button-main"
+            disabled={mutation.isPending}
+          >
+            {mutation.isPending
+              ? t("正在验证…", "Verifying…")
+              : t("继续", "Continue")}
           </button>
         </form>
-      </main>
+        <p className="login-passkey-note">
+          {t(
+            "凭据在应用每次重启后更换，请以最新的 .setup-token 文件为准。",
+            "The credential rotates on every restart. Use the latest .setup-token file.",
+          )}
+        </p>
+      </GateFrame>
     );
-  if (state.isPending) return <LoadingState />;
+  if (state.isPending)
+    return (
+      <div className="login-page">
+        <div className="login-frame">
+          <main className="login-panel login-state">
+            <BrandMark size={32} />
+            <LoadingState />
+          </main>
+        </div>
+        <LoginFooter />
+      </div>
+    );
   if (state.isError)
     return (
-      <main className="public-auth-card">
+      <GateFrame
+        intro={
+          <GateIntro title={t("初始化无法继续", "Setup cannot continue")}>
+            {t(
+              "读取初始化状态失败，请重试。",
+              "Reading the setup state failed. Try again.",
+            )}
+          </GateIntro>
+        }
+      >
         <ErrorState retry={() => void state.refetch()} />
-      </main>
+      </GateFrame>
     );
   const selected = groups[group];
   return (
-    <main className="setup-workspace">
-      <h1>{t("配置工作空间", "Configure your workspace")}</h1>
-      <p className="muted">
-        {t(
-          "完成基础连接与管理员配置后即可开始使用。AI 账号可在设置中管理。",
-          "Configure connections and your administrator to get started. Manage AI accounts in Settings.",
-        )}
-      </p>
-      <div className="setup-layout">
-        <nav>
-          {groups.map((item, index) => (
-            <button
-              key={item.id}
-              className={group === index ? "active" : ""}
-              onClick={() => setGroup(index)}
-            >
-              <span>{index + 1}</span>
-              {t(...item.label)}
-            </button>
-          ))}
-        </nav>
-        <section>
+    <div className="login-page">
+      <div className="login-frame setup-frame">
+        <main className="setup-panel">
+          <header className="setup-head">
+            <a className="login-brand" href="/app/setup">
+              <BrandMark size={28} />
+              <span>Sakura AI</span>
+            </a>
+            <h1>{t("配置工作空间", "Configure your workspace")}</h1>
+            <p className="login-description">
+              {t(
+                "完成基础连接与管理员配置后即可开始使用。AI 账号可在设置中管理。",
+                "Configure connections and your administrator to get started. Manage AI accounts in Settings.",
+              )}
+            </p>
+          </header>
+          <nav className="setup-steps" aria-label={t("配置步骤", "Setup steps")}>
+            {groups.map((item, index) => (
+              <button
+                key={item.id}
+                className={group === index ? "active" : ""}
+                onClick={() => setGroup(index)}
+              >
+                <span>{index + 1}</span>
+                {t(...item.label)}
+              </button>
+            ))}
+          </nav>
           <h2>{t(...selected.label)}</h2>
-          <div className="billing-form">
+          <div className="setup-fields">
             {selected.fields.map(([key, zh, en, kind]) => (
-              <label key={key}>
+              <label
+                key={key}
+                className={kind === "multiline" ? "setup-field-full" : undefined}
+              >
                 {t(zh, en)}
                 {kind === "multiline" ? (
                   <textarea
@@ -395,7 +510,7 @@ function SetupWizard() {
           {selected.id === "database" && (
             <div className="setup-diagnostics">
               <button
-                className="button"
+                className="login-button login-button-secondary"
                 disabled={mutation.isPending || !values.DATABASE_URL}
                 onClick={() => void databaseAction()}
               >
@@ -409,51 +524,60 @@ function SetupWizard() {
             </div>
           )}
           {message && (
-            <p className="danger-text" role="alert">
+            <p className="public-auth-error" role="alert">
               {message}
             </p>
           )}
-          <div className="confirm-actions">
+          <div className="setup-actions">
             {group > 0 && (
-              <button className="button" onClick={() => setGroup(group - 1)}>
+              <button
+                className="login-button login-button-secondary"
+                onClick={() => setGroup(group - 1)}
+              >
                 {t("上一步", "Back")}
               </button>
             )}
             {group < groups.length - 1 && (
-              <button className="button" onClick={() => setGroup(group + 1)}>
+              <button
+                className="login-button login-button-secondary"
+                onClick={() => setGroup(group + 1)}
+              >
                 {t("下一步", "Next")}
               </button>
             )}
             <button
-              className="button primary"
+              className="login-button login-button-main"
               disabled={mutation.isPending}
               onClick={() => void finish()}
             >
               {t("完成配置", "Finish setup")}
             </button>
           </div>
-        </section>
+          <div className="setup-backup">
+            <Disclosure title={t("从备份恢复", "Restore from backup")}>
+              <p>
+                {t(
+                  "选择配置备份。当前部署的连接设置会保留。",
+                  "Choose a configuration backup. Existing deployment connection settings are preserved.",
+                )}
+              </p>
+              <input
+                type="file"
+                accept=".json"
+                onChange={(event) => void importBackup(event.target.files?.[0])}
+              />
+              {backup && (
+                <p>
+                  {t("已载入 {0} 项配置。", "Loaded {0} configuration entries.", [
+                    importCount,
+                  ])}
+                </p>
+              )}
+            </Disclosure>
+          </div>
+        </main>
+        <LoginFooter />
       </div>
-      <Disclosure title={t("从备份恢复", "Restore from backup")}>
-        <p>
-          {t(
-            "选择配置备份。当前部署的连接设置会保留。",
-            "Choose a configuration backup. Existing deployment connection settings are preserved.",
-          )}
-        </p>
-        <input
-          type="file"
-          accept=".json"
-          onChange={(event) => void importBackup(event.target.files?.[0])}
-        />
-        {backup && (
-          <p>
-            {t("已载入 {0} 项配置。", "Loaded {0} configuration entries.", [
-              importCount,
-            ])}
-          </p>
-        )}
-      </Disclosure>
-    </main>
+    </div>
   );
 }

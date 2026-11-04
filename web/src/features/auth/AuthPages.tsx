@@ -97,7 +97,7 @@ function PublicFrame({
     </LocaleProvider>
   );
 }
-function LoginFooter() {
+export function LoginFooter() {
   const { t, language, setLanguage } = useLocale();
   return (
     <footer className="login-footer">
