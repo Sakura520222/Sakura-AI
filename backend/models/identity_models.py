@@ -37,6 +37,7 @@ class NotificationProvider(str, enum.Enum):
     WEB = "web"
     EMAIL = "email"
     TELEGRAM = "telegram"
+    WEBHOOK = "webhook"
 
 
 class UserIdentity(Base):
@@ -83,6 +84,12 @@ class NotificationEndpoint(Base):
     verified = Column(Boolean, default=False, nullable=False)
     enabled = Column(Boolean, default=True, nullable=False)
     metadata_json = Column("metadata", Text, nullable=True)
+    name = Column(String(100), nullable=True)
+    config_version = Column(Integer, nullable=False, default=1)
+    secret_encrypted = Column(Text, nullable=True)
+    verification_token_hash = Column(String(64), nullable=True)
+    verification_expires_at = Column(UTCDateTime, nullable=True)
+    verification_attempts = Column(Integer, default=0, nullable=False)
     created_at = Column(UTCDateTime, default=utc_now, nullable=False)
     updated_at = Column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 

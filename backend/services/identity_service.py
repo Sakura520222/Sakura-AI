@@ -528,12 +528,14 @@ async def _upsert_email_endpoint(
         # must not silently reactivate it.  Only a new endpoint, or an
         # unverified endpoint transitioning to verified, may be enabled.
         if incoming_verified and reactivate and not was_verified:
+            if not endpoint.enabled:
+                endpoint.config_version = (endpoint.config_version or 1) + 1
             endpoint.enabled = True
         elif not was_verified:
             # Correct rows created by older versions that enabled an unverified
             # OAuth address, while preserving an already-verified endpoint's
             # active state when a later GitHub response is inconclusive.
-            endpoint.enabled = False
+            await retire_notification_endpoint(db, endpoint)
 
     # A user has one active email destination.  Preserve old addresses for
     # audit/backup purposes, but disable them whenever OAuth rotates the
@@ -550,7 +552,12 @@ async def _upsert_email_endpoint(
     # older addresses are retired as before.
     if incoming_verified:
         for old_endpoint in other_results.scalars().all():
-            old_endpoint.enabled = False
+            try:
+                user_managed = json.loads(old_endpoint.metadata_json or "{}").get("source") == "user"
+            except (ValueError, AttributeError):
+                user_managed = False
+            if not user_managed:
+                await retire_notification_endpoint(db, old_endpoint)
 
     # Keep legacy mirror fields available for old UI and services.  The
     # endpoint table remains authoritative for notification delivery.
@@ -573,7 +580,7 @@ async def _disable_unverified_email_endpoints(
         )
     )
     for endpoint in result.scalars().all():
-        endpoint.enabled = False
+        await retire_notification_endpoint(db, endpoint)
 
 
 def _is_github_provider_identity_conflict(exc: IntegrityError) -> bool:
@@ -991,7 +998,10 @@ async def stage_notification_endpoint(
     normalized, telegram_chat_id = _normalise_notification_address(
         provider, address
     )
-    user = await db.get(TelegramUser, user_id)
+    if callable(getattr(db, "get_bind", None)):
+        user = await db.get(TelegramUser, user_id, with_for_update=True, populate_existing=True)
+    else:
+        user = await db.get(TelegramUser, user_id)
     if user is None or (not user.is_active and not allow_inactive_user):
         raise ValueError("internal user does not exist or is inactive")
     result = await db.execute(
@@ -1032,6 +1042,8 @@ async def stage_notification_endpoint(
         if endpoint.id is None and hasattr(db, "flush"):
             await _flush_session(db)
     else:
+        if not endpoint.enabled:
+            endpoint.config_version = (endpoint.config_version or 1) + 1
         endpoint.enabled = True
         endpoint.verified = bool(endpoint.verified or verified)
         if metadata is not None:
@@ -1051,7 +1063,7 @@ async def stage_notification_endpoint(
             )
         )
         for old_endpoint in old_results.scalars().all():
-            old_endpoint.enabled = False
+            await retire_notification_endpoint(db, old_endpoint)
         if user.telegram_id is None:
             user.telegram_id = telegram_chat_id
     if provider == NotificationProvider.EMAIL.value:
@@ -1105,9 +1117,20 @@ async def unbind_notification_endpoint(
         or (provider is not None and endpoint.provider != provider)
     ):
         return False
-    endpoint.enabled = False
+    await retire_notification_endpoint(db, endpoint)
     await db.commit()
     return True
+
+
+async def retire_notification_endpoint(db, endpoint):
+    """Retire an exact target and its queue in the caller's transaction."""
+    if endpoint.enabled:
+        endpoint.config_version = (endpoint.config_version or 1) + 1
+    endpoint.enabled = False
+    if endpoint.id is not None and callable(getattr(db, "get_bind", None)):
+        from backend.services.notification_preferences import cancel_endpoint_deliveries
+
+        await cancel_endpoint_deliveries(db, endpoint.id)
 
 
 async def legacy_telegram_id_required(db: AsyncSession) -> bool:

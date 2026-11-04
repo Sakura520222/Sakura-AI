@@ -196,7 +196,6 @@ class ScanReportService:
             if issue_info:
                 report_info.update(issue_info)
 
-
         return report_info
 
     def generate_issue_body(
@@ -525,7 +524,9 @@ class ScanReportService:
                 # 只有新 Issue 创建成功后，才关闭上一次扫描的报告 Issue。
                 # 关闭失败由 helper 记录并吞掉，不能阻断新报告交付。
                 if previous_scan is not None:
-                    await self._close_previous_issue(repo, scan, previous_scan, language)
+                    await self._close_previous_issue(
+                        repo, scan, previous_scan, language
+                    )
 
                 # 索引到 Issue 向量库（bot 创建的 Issue 不触发 webhook，需主动索引）
                 try:
@@ -553,7 +554,7 @@ class ScanReportService:
             return None
 
         except Exception as e:
-            logger.error(
-                f"创建 GitHub Issue 失败: {type(e).__name__}: {e}", exc_info=True
+            logger.opt(exception=True).error(
+                f"创建 GitHub Issue 失败: {type(e).__name__}: {e}"
             )
             return None

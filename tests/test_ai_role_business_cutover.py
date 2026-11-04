@@ -109,25 +109,49 @@ async def test_issue_verification_uses_summary_role_without_flat_model(monkeypat
     calls = []
 
     class FakeClient:
+        async def resolve_role_candidates(self, role):
+            from tests.test_pr_issue_budget import summary_candidate
+
+            assert role == "summary"
+            return [summary_candidate()]
+
         async def call_with_retry(self, **kwargs):
             calls.append(kwargs)
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(
-                        message=SimpleNamespace(content='{"verified": [1]}')
+                        message=SimpleNamespace(
+                            content='{"relations": [{"number": 1, "relation": "related", "confidence": 0.99, "reason": "partial fix", "evidence": [{"path": "legacy", "change": "added", "code_quote": "details", "issue_quote": "details"}]}]}'
+                        )
                     )
                 ]
             )
+
+    from backend.services.issues import pr_budget
+
+    monkeypatch.setattr(
+        pr_budget,
+        "get_dynamic_config",
+        AsyncMock(
+            side_effect=lambda key, **_: {
+                "pr_issue_max_files": 128,
+                "pr_issue_max_input_tokens": 64000,
+            }[key]
+        ),
+    )
 
     monkeypatch.setattr(issue_embedding_service, "AIApiClient", lambda: FakeClient())
     service = issue_embedding_service.IssueEmbeddingService.__new__(
         issue_embedding_service.IssueEmbeddingService
     )
-    candidates = [{"number": 1, "title": "issue", "content": "details"}]
+    candidates = [{"number": 1, "title": "issue", "body": "details", "state": "open"}]
 
-    result = await service.verify_related_issues("PR", "body", candidates)
+    result = await service.verify_related_issues(
+        "PR", "body", candidates, pr_files="@@ -0,0 +1 @@\n+details"
+    )
 
-    assert result == candidates
+    assert result[0]["number"] == 1
+    assert result[0]["relation"] == "related"
     assert calls[0]["role"] == "summary"
     assert calls[0]["model"] == ""
 
@@ -167,8 +191,27 @@ async def test_issue_verification_propagates_missing_summary_role(monkeypatch):
     """summary 角色配置错误不能伪装成所有候选均已验证。"""
 
     class FailingClient:
+        async def resolve_role_candidates(self, role):
+            from tests.test_pr_issue_budget import summary_candidate
+
+            assert role == "summary"
+            return [summary_candidate()]
+
         async def call_with_retry(self, **_kwargs):
             raise AllCandidatesFailedError("角色 summary 无可用 AI 候选模型")
+
+    from backend.services.issues import pr_budget
+
+    monkeypatch.setattr(
+        pr_budget,
+        "get_dynamic_config",
+        AsyncMock(
+            side_effect=lambda key, **_: {
+                "pr_issue_max_files": 128,
+                "pr_issue_max_input_tokens": 64000,
+            }[key]
+        ),
+    )
 
     monkeypatch.setattr(issue_embedding_service, "AIApiClient", lambda: FailingClient())
     service = issue_embedding_service.IssueEmbeddingService.__new__(
@@ -179,7 +222,7 @@ async def test_issue_verification_propagates_missing_summary_role(monkeypatch):
         await service.verify_related_issues(
             "PR",
             "body",
-            [{"number": 1, "title": "issue", "content": "details"}],
+            [{"number": 1, "title": "issue", "body": "details", "state": "open"}],
         )
 
 
@@ -199,3 +242,37 @@ def test_agent_team_candidate_filter_does_not_depend_on_openai_sdk_errors():
     )
 
     assert "BadRequestError" not in source
+
+
+@pytest.mark.asyncio
+async def test_issue_verification_propagates_missing_summary_role_at_budget_preflight(
+    monkeypatch,
+):
+    from backend.services.ai_reviewer.api_client import AIApiClient
+    from backend.services.issues import pr_budget
+
+    client = AIApiClient()
+    client.resolve_role_candidates = AsyncMock(return_value=[])
+    client.call_with_retry = AsyncMock()
+    monkeypatch.setattr(issue_embedding_service, "AIApiClient", lambda: client)
+    monkeypatch.setattr(
+        pr_budget,
+        "get_dynamic_config",
+        AsyncMock(
+            side_effect=lambda key, **_: {
+                "pr_issue_max_files": 128,
+                "pr_issue_max_input_tokens": 64000,
+            }[key]
+        ),
+    )
+    service = issue_embedding_service.IssueEmbeddingService.__new__(
+        issue_embedding_service.IssueEmbeddingService
+    )
+    with pytest.raises(AllCandidatesFailedError, match="summary"):
+        await service.verify_related_issues(
+            "PR",
+            "Human",
+            [{"number": 1, "title": "Issue", "body": "details", "state": "open"}],
+            pr_files="@@ -0,0 +1 @@\n+details",
+        )
+    client.call_with_retry.assert_not_awaited()

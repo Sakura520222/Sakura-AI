@@ -2,7 +2,7 @@
 
 > 基于 `.sakura/` 目录的自我反思、知识合并、结构化提取与上下文注入。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 

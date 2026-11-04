@@ -2,24 +2,23 @@
 
 from fastapi import APIRouter, Depends
 from loguru import logger
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.api.v1.deps import require_api_auth
+from backend.api.v1.deps import require_api_auth, require_cookie_csrf
 from backend.api.v1.responses import error_response, success_response
 from backend.api.v1.schemas import UserConfigUpdateRequest
 from backend.core.config import (
-    DYNAMIC_CONFIG_LABELS,
     DYNAMIC_CONFIG_SELECT_OPTIONS,
     USER_DYNAMIC_CONFIG_KEYS,
     get_user_dynamic_config_state,
-    invalidate_user_dynamic_config_cache,
-    validate_user_dynamic_config_value,
 )
-from backend.models.database import UserConfig
 from backend.webui.deps import get_db
 
-router = APIRouter(prefix="/user-config", tags=["UserConfig"])
+router = APIRouter(
+    prefix="/user-config",
+    tags=["UserConfig"],
+    dependencies=[Depends(require_cookie_csrf)],
+)
 
 
 @router.get("")
@@ -41,68 +40,24 @@ async def update_user_config(
     db: AsyncSession = Depends(get_db),
 ):
     """更新当前用户的配置覆盖。"""
-    configs = body.configs
-    if len(configs) == 0:
-        return error_response("配置内容不能为空")
+    from backend.services.config_center_service import (
+        ConfigError,
+        config_center_service,
+    )
 
-    user_id = int(user["user_id"])
-    updated_keys: list[str] = []
-
+    if not body.configs or set(body.configs) - USER_DYNAMIC_CONFIG_KEYS:
+        return error_response("unknown_field")
     try:
-        for key, raw_value in configs.items():
-            if key not in USER_DYNAMIC_CONFIG_KEYS:
-                return error_response(f"配置项不允许用户覆盖: {key}")
-
-            # null 表示删除用户覆盖，回退全局配置。
-            if raw_value is None:
-                result = await db.execute(
-                    select(UserConfig).where(
-                        UserConfig.user_id == user_id,
-                        UserConfig.config_key == key,
-                    )
-                )
-                existing = result.scalar_one_or_none()
-                if existing:
-                    await db.delete(existing)
-                updated_keys.append(key)
-                continue
-
-            value = validate_user_dynamic_config_value(key, raw_value)
-            result = await db.execute(
-                select(UserConfig).where(
-                    UserConfig.user_id == user_id,
-                    UserConfig.config_key == key,
-                )
-            )
-            config = result.scalar_one_or_none()
-            if config:
-                config.config_value = value
-                config.description = DYNAMIC_CONFIG_LABELS.get(key, key)
-            else:
-                db.add(
-                    UserConfig(
-                        user_id=user_id,
-                        config_key=key,
-                        config_value=value,
-                        description=DYNAMIC_CONFIG_LABELS.get(key, key),
-                    )
-                )
-            updated_keys.append(key)
-
-        await db.commit()
-    except ValueError:
+        await config_center_service.save_preferences(db, user, body.configs)
+    except ConfigError as exc:
         await db.rollback()
-        logger.opt(exception=True).warning(
-            "用户配置更新校验失败 / user config validation failed"
+        logger.opt(exception=True).warning("User preference validation failed")
+        return error_response(
+            f"配置项 {exc.field_id.removeprefix('personal/')} 的值不合法"
         )
-        return error_response(f"配置项 {key} 的值不合法，请从可选项中选择")
     except Exception:
-        await db.rollback()
-        logger.exception("更新用户配置失败 / user config update failed")
+        logger.exception("User preference update failed")
         return error_response("更新用户配置失败")
-
-    invalidate_user_dynamic_config_cache(user_id, updated_keys)
-    logger.info(f"用户配置已更新: user={user['sub']}, keys={updated_keys}")
     return success_response(message="配置已更新")
 
 

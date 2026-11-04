@@ -1,22 +1,21 @@
 """WebUI FastAPI 依赖注入"""
 
 import asyncio
+import re
 from collections import OrderedDict
 from collections.abc import AsyncGenerator
-from functools import lru_cache
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from fastapi import Depends, Form, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import RedirectResponse
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from loguru import logger
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
-from backend.core.time_service import get_time_service, monotonic
+from backend.core.time_service import monotonic
 from backend.models import database as db_module
 from backend.models.database import PRReview, WebUIConfig
 from backend.models.telegram_models import TelegramUser
@@ -27,80 +26,6 @@ from backend.webui.auth import (
     is_access_token_payload,
     queue_webui_token_renewal,
 )
-from backend.webui.i18n import SUPPORTED_LANGUAGES, make_translation_func
-from backend.webui.time_filters import register_time_filters
-
-
-# ========== 模板引擎 ==========
-@lru_cache
-def get_templates() -> Jinja2Templates:
-    """获取 Jinja2 模板引擎单例"""
-    templates = Jinja2Templates(directory="backend/webui/templates")
-    templates.env.globals["percentage"] = _percentage_filter
-    # get_settings() returns the cached singleton updated in place by dynamic config.
-    templates.env.globals["settings"] = get_settings()
-    templates.env.filters["format_duration"] = _format_duration_filter
-    register_time_filters(templates.env)
-    # i18n: 注入默认翻译函数（实际语言由模板上下文中的 _ 覆盖）
-    templates.env.globals["_"] = make_translation_func("zh-CN")
-    return templates
-
-
-def _percentage_filter(used, quota) -> int:
-    """计算配额使用百分比（0-100）"""
-    if quota and quota > 0:
-        return min(int((used / quota) * 100), 100)
-    return 0
-
-
-def _format_duration_filter(seconds) -> str:
-    """将秒数格式化为可读字符串（Jinja2 过滤器）"""
-    if not seconds:
-        return "-"
-    total_seconds = int(seconds)
-    if total_seconds < 60:
-        return f"{total_seconds}s"
-    minutes, remaining_seconds = divmod(total_seconds, 60)
-    if minutes < 60:
-        return f"{minutes}m {remaining_seconds}s"
-    hours, remaining_minutes = divmod(minutes, 60)
-    return f"{hours}h {remaining_minutes}m"
-
-
-def render_template(
-    template_name: str,
-    request: Request,
-    user_prefs: dict | None = None,
-    **context: Any,
-):
-    """渲染模板并自动注入 i18n 翻译函数
-
-    所有路由应使用此函数代替直接调用 templates.TemplateResponse，
-    以确保模板中的 _() 函数绑定到正确的语言。
-
-    Args:
-        template_name: 模板文件名
-        request: FastAPI Request 对象
-        user_prefs: 用户偏好（包含 language 字段）
-        **context: 传递给模板的额外上下文变量
-    """
-    from backend.webui.i18n import detect_language
-
-    lang = detect_language(user_prefs)
-    context["_"] = make_translation_func(lang)
-    context["lang"] = lang
-    context["supported_languages"] = SUPPORTED_LANGUAGES
-    context["request"] = request
-    time_service = get_time_service()
-    context["app_timezone"] = time_service.resolved_timezone
-    context["app_timezone_json"] = time_service.resolved_timezone
-    context["app_timezone_offset"] = time_service.to_app_timezone(
-        time_service.now_utc()
-    ).strftime("%z")
-    if user_prefs:
-        context["user_prefs"] = user_prefs
-
-    return get_templates().TemplateResponse(request, template_name, context)
 
 
 def build_review_search_filter(search: str):
@@ -136,7 +61,10 @@ def build_user_scope_filter(user: dict, model: type) -> Any | None:
     """
     if user.get("role") in ("admin", "super_admin"):
         return None
-    return or_(model.repo_owner == user["sub"], model.author == user["sub"])
+    username = user["sub"].casefold()
+    return or_(
+        func.lower(model.repo_owner) == username, func.lower(model.author) == username
+    )
 
 
 async def paginate(
@@ -155,7 +83,102 @@ async def paginate(
     return result.scalars().all(), total, total_pages, page
 
 
-async def require_payment_enabled():
+def _is_plan_configuration_request(path: str, method: str) -> bool:
+    """Allow only existing plan-definition routes; endpoint auth still applies."""
+    if path == "/billing/admin/plans":
+        return method in {"GET", "POST"}
+    if path in {
+        "/billing/admin/plans/batch-toggle",
+        "/billing/admin/plans/batch-delete",
+    }:
+        return method == "POST"
+    if re.fullmatch(r"/billing/admin/plans/[0-9]+/(edit|toggle|delete)", path):
+        return method == "POST"
+    if path == "/api/v1/billing/admin/plans":
+        return method == "POST"
+    if re.fullmatch(r"/api/v1/billing/admin/plans/[0-9]+", path):
+        return method in {"PUT", "DELETE"}
+    return False
+
+
+def _is_existing_order_request(path: str, method: str) -> bool:
+    """Keep existing invoices/accounting available without opening new sales."""
+    if method == "GET":
+        return path in {
+            "/billing",
+            "/api/v1/billing/orders",
+            "/billing/admin/refund-requests",
+            "/billing/crypto-status",
+        } or bool(
+            re.fullmatch(r"/api/v1/billing/orders/[0-9]+", path)
+            or re.fullmatch(r"/billing/crypto-payment/[^/]+", path)
+        )
+    if method == "POST":
+        return bool(
+            re.fullmatch(
+                r"(?:/billing(?:/admin)?|/api/v1/billing)/orders/[0-9]+/refund", path
+            )
+            or re.fullmatch(
+                r"/billing/admin/refund-requests/[0-9]+/(approve|reject)", path
+            )
+        )
+    return False
+
+
+async def require_payment_enabled(request: Request):
+    # Wallet/accounting remain accessible when payment gateways are disabled.
+    # Only these read/configuration surfaces bypass the purchase-entry switch.
+    path = request.url.path.rstrip("/")
+    method = getattr(request, "method", "GET")
+    if _is_existing_order_request(path, method):
+        # The overview retains subscriptions, balances and owned order history,
+        # while hiding checkout/redeem forms when new purchases are disabled.
+        request.state.payment_entries_enabled = await is_payment_enabled()
+        return
+    if _is_plan_configuration_request(path, method):
+        return
+    accounting_paths = {
+        "/billing/credits",
+        "/billing/credits/threshold",
+        "/billing/admin/pricing",
+        "/billing/admin/credits/adjust",
+        "/billing/admin/grant",
+        "/api/v1/billing/admin/grant",
+        "/api/v1/billing/wallet",
+        "/api/v1/billing/wallet/threshold",
+        "/api/v1/billing/transactions",
+        "/api/v1/billing/operations",
+        "/api/v1/billing/usage",
+        "/api/v1/billing/notices",
+        "/api/v1/billing/admin/pricing",
+        "/api/v1/billing/admin/payment-events",
+    }
+    if (
+        path in accounting_paths
+        or (
+            request.method == "GET"
+            and path.startswith("/billing/admin/pricing/accounts/")
+            and path.endswith("/models")
+        )
+        or (
+            (path.startswith(("/api/v1/billing/notices/", "/billing/credits/notices/")))
+            and path.endswith("/read")
+        )
+        or (
+            path.startswith(
+                (
+                    "/api/v1/billing/admin/payment-events/",
+                    "/billing/admin/payment-events/",
+                )
+            )
+            and path.endswith(("/resolve", "/replay"))
+        )
+        or (
+            path.startswith("/api/v1/billing/admin/wallets/")
+            and path.endswith("/adjust")
+        )
+    ):
+        return
     if not await is_payment_enabled():
         raise HTTPException(status_code=404, detail="付费配额系统未启用")
 
@@ -256,6 +279,8 @@ def _is_mfa_enrollment_path(path: str) -> bool:
     """Return whether a WebUI path is allowed while forced MFA enrollment is pending."""
     allowed_exact = {
         "/settings/",
+        "/settings-center",
+        "/settings-center/personal",
         "/auth/logout",
     }
     allowed_prefixes = (
@@ -355,37 +380,6 @@ async def require_csrf_header(
     return x_csrf_token
 
 
-def error_page(
-    request: Request,
-    status_code: int = 404,
-    title: str = "页面未找到",
-    message: str = "请求的资源不存在",
-    user: dict | None = None,
-    user_prefs: dict | None = None,
-) -> HTMLResponse:
-    """渲染统一的错误页面"""
-    from backend.webui.i18n import detect_language
-
-    lang = detect_language(user_prefs)
-    return get_templates().TemplateResponse(
-        request,
-        "error.html",
-        {
-            "request": request,
-            "status_code": status_code,
-            "title": title,
-            "message": message,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "user_prefs": user_prefs or {"language": "zh-CN", "items_per_page": 20},
-            "_": make_translation_func(lang),
-            "lang": lang,
-            "supported_languages": SUPPORTED_LANGUAGES,
-        },
-        status_code=status_code,
-    )
-
-
 def _safe_redirect_path(url: str) -> str:
     """Return a same-origin absolute path for redirects, or root if unsafe."""
     if not url or not url.startswith("/"):
@@ -406,7 +400,14 @@ def _safe_redirect_path(url: str) -> str:
         or decoded_url.startswith("//")
     ):
         return "/"
-    return url
+    # Rebuild from validated components instead of echoing the raw input, so the
+    # returned value cannot carry a scheme/netloc by construction.
+    # The fragment is intentionally dropped: toast_redirect appends query params
+    # after this path and a fragment would swallow them, so no caller relies on it.
+    # 从已校验的解析组件重建返回值（而非原样回显入参），构造上不可能携带
+    # scheme/netloc；fragment 有意丢弃：toast_redirect 会在其后追加 query，
+    # fragment 会吞掉这些参数，且没有调用方依赖它。
+    return urlunsplit(("", "", parsed.path, parsed.query, ""))
 
 
 def toast_redirect(
@@ -479,7 +480,7 @@ async def refresh_login_claims(payload: dict) -> dict | None:
     """从数据库刷新正式登录令牌中的权威用户声明。"""
     try:
         user_id = int(payload.get("user_id"))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
     async with db_module.async_session() as db:

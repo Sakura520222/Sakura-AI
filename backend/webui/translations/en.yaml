@@ -1,6 +1,35 @@
 # Sakura AI - English Translation File
 # Translation keys use dot-separated hierarchical structure
 
+# Migrated console API action feedback / 控制台 API 操作反馈
+vector_db:
+  delete_failed: "Operation failed. Please check logs."
+  collection_deleted: "Collection deleted"
+  clear_failed: "Clear failed. Please check logs."
+  collection_cleared: "Collection cleared"
+
+section_validation:
+  boolean_required: "Must be a boolean."
+  integer_required: "Must be an integer."
+  integer_minimum: "Must be an integer greater than or equal to {minimum}."
+  string_required: "Must be text."
+  empty_string: "Must not be empty."
+  list_required: "Must be a list."
+  object_required: "Must be a JSON object."
+  empty_strategies: "At least one strategy must be defined."
+  categories_required: "At least one Issue category must be defined."
+  label_name_length: "Label names may contain at most {maximum} characters."
+  label_name_characters: "Label name contains unsupported characters."
+  label_color: "Color must contain six hexadecimal digits."
+  number_required: "Must be a number."
+  number_range: "Must be between {minimum} and {maximum}."
+  missing_placeholders: "Required template placeholders are missing: {placeholders}."
+  unknown_placeholders: "Template contains unsupported placeholders. Use the supported placeholder names."
+  invalid_template_format: "Invalid template format. Check braces, conversions, and format specifications."
+  invalid_option: "Choose one of: {options}."
+  save_mode: "Unsupported save mode. Choose one of: {options}."
+  invalid_config: "Invalid section configuration. Check the highlighted fields."
+
 # ========== Common ==========
 common:
   loading: "Loading..."
@@ -112,426 +141,11 @@ auth:
   passkey_security_error: "Passkey security error. Please ensure the site is accessed over HTTPS with the correct domain."
   passkey_already_registered: "This authenticator has already been registered."
 
-# ========== Navigation =========="
-nav:
-  main_navigation: "Main navigation"
-  review_domain: "Reviews & Analysis"
-  repository_domain: "Repositories"
-  agent_tasks: "Tasks & Workspaces"
-  observability_domain: "Observability"
-  administration_domain: "Administration"
-  settings_domain: "Settings"
-  review_config: "Review & Analysis Policies"
-  billing_overview: "Overview"
-  account_menu: "Account menu"
-  global_config: "General Config"
-  toggle_sidebar: "Toggle sidebar"
-  toggle_dark: "Switch to dark mode"
-  toggle_light: "Switch to light mode"
-  restart_service: "Restart service"
-  restart_confirm: "Restart the service? Running tasks may be interrupted."
-  restart_warning: "The service exits shortly and must be brought back by Docker or a process supervisor."
-  restart_action: "Restart now"
-  restarting: "Restarting service"
-  restart_request_sent: "Restart request sent. Waiting for the service to recover and refresh the page."
-  restart_failed: "Unable to send the restart request. Please try again."
-  restart_timeout: "Timed out waiting for the service restart. Refresh the page after the service recovers."
-  dashboard: "Dashboard"
-  github_app: "GitHub App"
-  activity_monitor: "Live Monitor"
-  pr_reviews: "PR Reviews"
-  issue_analysis: "Issue Analysis"
-  review_logs: "Review Logs"
-  repo_scans: "Repo Scans"
-  agent_team: "Agent"
-  star_aid: "Repository Aid"
-  agent_skills: "Agent Skills"
-  action_logs: "Action Logs"
-  review_queue: "Review Queue"
-  user_management: "User Management"
-  security_management: "Security Management"
-  installed_repos: "Installed Repos"
-  ai_config: "AI Config"
-  config_backup: "Config Backup"
-  sakura_memory: "Sakura Memory"
-  system_config: "System Config"
-  vector_db: "Vector Data"
-  billing_center: "Billing"
-  plan_management: "Plan Management"
-  redemption_codes: "Redemption Codes"
-  refund_reviews: "Refund Reviews"
-  personal_settings: "Settings"
-  about: "About"
 
-announcements:
-  title: "Announcements"
-  admin_title: "Announcement Management"
-  admin_description: "Only super administrators can create, publish, or withdraw announcements."
-  description: "Service announcements, feature updates, and release notes from Sakura AI."
-  mark_all_read: "Mark all as read"
-  unread: "Unread"
-  empty: "No announcements"
-  back: "Back to announcements"
-  title_placeholder: "Announcement title"
-  content_placeholder: "Announcement content (Markdown supported)"
-  save_draft: "Save draft"
-  save_and_publish: "Save and publish now"
-  publish: "Publish"
-  withdraw: "Withdraw"
-  delete: "Delete draft"
-  created: "Announcement draft created"
-  published: "Announcement published"
-  withdrawn: "Announcement withdrawn"
-  deleted: "Announcement deleted"
-  updated: "Announcement updated"
-  edit: "Edit announcement"
-  save_changes: "Save changes"
-  delivery_history: "Publication history"
-  pagination: "Announcement pagination"
-  publication_round: "Round {version}"
-  delivery_pending: "Pending"
-  delivery_sent: "Sent"
-  delivery_failed: "Failed"
-  type_general: "General"
-  type_important: "Important"
-  type_feature: "Feature"
-  type_maintenance: "Maintenance"
-  type_release: "Release"
 
-# ========== Agent ==========
-agent_team:
-  title: "Agent"
-  description: "Super-admin only: manually select high-value Issues/scan findings and use the Agent to create and execute tasks."
-  preview_candidates: "Preview Candidates"
-  ai_filter_candidates: "AI Filter Candidates"
-  ai_filter_requirement: "AI Filter Requirement"
-  ai_filter_requirement_placeholder: "Example: select low-risk Issues that are quick to fix, small in scope, and do not require major refactoring"
-  ai_filter_desc: "Enter a natural-language requirement. AI will re-filter existing Issue analysis records and only show matching candidates; tasks are still created manually."
-  ai_filter_reason: "AI Filter Reason"
-  candidates: "Candidates"
-  no_candidates: "No eligible candidates"
-  create_task: "Create Task"
-  task_created: "Agent task created"
-  tasks: "Agent Tasks"
-  no_tasks: "No Agent tasks yet"
-  request_failed: "Request failed, please check network or retry"
-  retry: "Retry"
-  resume: "Resume"
-  cancel: "Cancel"
-  delete: "Delete"
-  task_retried: "Task resubmitted"
-  task_resumed: "Task resumed"
-  task_cancelled: "Task cancelled"
-  task_deleted: "Task deleted"
-  confirm_delete: "Delete this Agent task?"
-  delete_warning: "This also removes iterations, changed files, and feedback records. This action cannot be undone."
-  stats_total: "Total Tasks"
-  stats_active: "Active"
-  stats_completed: "Completed"
-  stats_failed: "Failed"
-  super_admin_console: "Super Admin Console"
-  queue_pressure: "Queue Pressure"
-  waiting_human: "Waiting Human"
-  success_rate: "Success Rate"
-  refresh_tasks: "Refresh Tasks"
-  load_default_allowlist: "Load Default"
-  tab_tasks: "Task Console"
-  tab_create_task: "Create Task"
-  tab_candidates: "Candidate Pool"
-  tab_workspaces: "Workspaces"
-  agent_quota_daily: "Agent Daily Quota"
-  your_agent_quota: "My Agent Quota"
-  filter_status: "Task Status"
-  filter_source: "Source"
-  filter_keyword: "Keyword"
-  filter_all: "All"
-  search_placeholder: "Search title, repo, summary, or branch"
-  sort_by: "Sort By"
-  sort_newest: "Newest"
-  sort_updated: "Recently Updated"
-  sort_score: "Highest Score"
-  select_task_hint: "Select a task on the left to inspect iterations, tests, changed files, and feedback"
-  candidates_desc: "Select auto-fixable candidates from high-value Issues and scan findings."
-  candidates_empty_hint: "Click Preview Candidates to load the candidate pool."
-  manage_workspaces: "Manage Workspaces"
-  workspace_management: "Workspace Management"
-  workspace_management_desc: "Inspect local workspaces cloned/edited by the Agent, including disk usage and recent activity. Clean up repositories without running tasks."
-  workspace_root: "Workspace Root"
-  workspace_count: "Workspace Count"
-  workspace_total_size: "Total Disk Usage"
-  workspace_files: "Files"
-  workspace_size: "Size"
-  workspace_modified: "Last Modified"
-  worktree_count: "Active worktrees"
-  workspace_no_git: "Non-Git"
-  delete_workspace: "Delete Workspace"
-  workspace_deleted: "Workspace deleted"
-  confirm_delete_workspace: "Delete this repository workspace?"
-  delete_workspace_warning: "The next task will clone the repository again. Local uncommitted changes will also be removed. This action cannot be undone."
-  no_workspaces: "No Agent workspaces yet"
-  delete_worktree: "Delete Worktree"
-  worktree_deleted: "Worktree deleted"
-  confirm_delete_worktree: "Delete this worktree? The associated Git worktree reference will also be cleaned up."
-  worktree_no_task: "No associated task"
-  no_worktrees: "No worktrees"
-  clean_orphan_worktrees: "Clean Orphan Worktrees"
-  confirm_clean_orphan_worktrees: "Clean all orphaned worktrees for completed/failed tasks? This action cannot be undone."
-  orphan_worktrees_cleaned: "Cleaned {count} orphan worktree(s)"
-  view_detail: "View Detail"
-  open_pr: "Open PR"
-  current_phase: "Current Phase"
-  iterations: "Iterations"
-  tokens: "Tokens"
-  cost: "Cost"
-  branch: "Branch"
-  started_at: "Started At"
-  completed_at: "Completed At"
-  summary: "Summary"
-  no_summary: "No summary"
-  error_message: "Error Message"
-  rate_limit_reset_at: "Rate limit reset at"
-  iteration_records: "Iteration Records"
-  iteration: "Iteration"
-  fullstack_plan: "Agent Plan"
-  fullstack_result: "Agent Result"
-  professional_review: "External PR Review"
-  test_result: "Test Result"
-  passed: "Passed"
-  not_passed: "Not Passed"
-  changed_files: "Changed Files"
-  no_iterations: "No iteration records"
-  feedback: "Feedback"
-  no_feedback: "No feedback"
-  issue_context: "Issue Context"
-  issue_ai_analysis: "Issue AI Analysis"
-  issue_discussion: "Issue Discussion"
-  no_issue_analysis: "No linked Issue AI analysis"
-  no_issue_discussion: "No Issue comments yet"
-  agent_context: "Agent Self Analysis"
-  no_agent_context: "No Agent role context yet"
-  analysis_detail: "Full Analysis Detail"
-  unresolved_items: "Unresolved Items"
-  modified_files: "Related Files"
-  ai_comment: "AI"
-  token_estimate: "Token Estimate"
-  source_issue_analysis: "Issue Analysis"
-  source_scan_finding: "Scan Finding"
-  source_scan_report_issue: "Scan Report Issue"
-  source_manual_issue: "Manual Issue"
-  source_pr_review: "PR Review /agent"
-  manual_issue_title: "Create Task from Specific Issue"
-  manual_issue_desc: "Paste an Issue URL or enter owner/repo#number. The system will verify it and generate an editable Agent task draft."
-  manual_issue_submit: "Preview Task"
-  manual_issue_input_required: "Please enter an Issue URL or reference (e.g. https://github.com/owner/repo/issues/123 or owner/repo#123)"
-  issue_preview_title: "Preview and Edit Task"
-  issue_preview_desc: "Confirm the parsed Issue result and adjust the task fields before creating it."
-  issue_preview_creating: "Creating..."
-  submission_context: "Full Context Sent to Agent"
-  submission_context_desc: "This is the server-generated production preview sent to the Agent. Edit a task field, then refresh the preview before creating the task."
-  submission_context_stale: "The task fields changed, so this server preview is unavailable until you refresh it."
-  submission_context_refresh: "Refresh server preview"
-  submission_context_refreshing: "Refreshing server preview..."
-  repo_full_name: "Repository"
-  issue_number: "Issue Number"
-  source_type: "Source Type"
-  source_id: "Source ID"
-  task_title: "Task Title"
-  priority: "Priority"
-  task_status: "Task Status"
-  candidate_score: "Candidate Score"
-  base_branch: "Base Branch"
-  branch_name: "Task Branch"
-  base_branch_placeholder: "Leave empty to choose the default branch when creating"
-  branch_name_placeholder: "Leave empty to auto-generate a task branch"
-  status_all: "All"
-  status_candidate: "Candidate"
-  status_queued: "Queued"
-  status_planning: "Planning"
-  status_cloning: "Cloning"
-  status_editing: "Editing"
-  status_self_reviewing: "Self Reviewing"
-  status_validating: "Validating"
-  status_pushing: "Pushing"
-  status_pr_opened: "PR Opened"
-  status_external_reviewing: "External Reviewing"
-  status_iterating: "Iterating"
-  status_waiting_human: "Waiting Human"
-  status_completed: "Completed"
-  status_failed: "Failed"
-  status_cancelled: "Cancelled"
-  status_abandoned: "Abandoned"
-  live: "Live"
-  live_connected: "Connected"
-  live_disconnected: "Disconnected"
-  live_refresh: "Refresh"
-  live_refreshing: "Refreshing"
-  live_empty_hint: "Select an active task to start live monitoring"
-  live_thinking: "AI is thinking..."
-  live_expand: "Expand"
-  live_collapse: "Collapse"
-  live_admin_guidance: "Admin Guidance"
-  live_prompt_placeholder: "Enter guidance prompt (Ctrl+Enter to send). Injected on next AI request..."
-  live_prompt_disabled: "Select an actionable task first"
-  live_send_guidance: "Send Guidance"
-  live_tool_details: "Details"
-  live_tool_result: "Tool result"
-  live_tool_error: "Failed"
-  live_tool_name: "Tool"
-  live_tool_path: "Path"
-  live_tool_command: "Command"
-  live_tool_query: "Query"
-  live_tool_read_file_running: "Reading file"
-  live_tool_read_file_completed: "File read"
-  live_tool_bash_running: "Running command"
-  live_tool_bash_completed: "Command completed"
-  live_tool_search_running: "Searching code"
-  live_tool_search_completed: "Search completed"
-  live_tool_edit_running: "Editing file"
-  live_tool_edit_completed: "File updated"
-  live_tool_generic_running: "Using tool"
-  live_tool_generic_completed: "Tool completed"
-  select_base_branch: "Select Base Branch"
-  base_branch_desc: "Choose the base branch for the Agent task. The PR will target this branch."
-  default_branch: "default"
-  loading_branches: "Loading branches..."
-  branch_load_failed: "Failed to load branches, please retry"
 
-# ========== Agent Skills ==========
-agent_skills:
-  title: "Agent Skills"
-  description: "Find, inspect, and manage the skill manifest that Agent can read on demand. Skills do not expand Agent tool permissions."
-  root_path: "Skills Root"
-  total_count: "Total"
-  enabled_count: "Enabled"
-  install_skill: "Install Skill"
-  install_dialog_title: "Install Skill"
-  install_dialog_desc: "Choose a GitHub source or upload a local file."
-  close_dialog: "Close install dialog"
-  install_method: "Install method"
-  github_tab: "GitHub"
-  upload_tab: "Local upload"
-  github_url: "GitHub SKILL.md URL"
-  display_name: "Display name"
-  skill_file: "Skill file"
-  install_github: "Install from GitHub URL"
-  install_github_desc: "Supports github.com blob/SKILL.md links and raw.githubusercontent.com SKILL.md links."
-  upload_skill: "Upload SKILL.md or ZIP"
-  upload_skill_desc: "Upload a single SKILL.md file, or a ZIP containing SKILL.md plus additional files. Optionally provide a display name."
-  install: "Install Skill"
-  upload: "Upload and Install"
-  name_placeholder: "Display name (optional, defaults to file title or frontmatter)"
-  installed_skills: "Installed Skills"
-  installed_skills_desc: "Enabled Skills are injected into Agent tasks as summaries; full content is read on demand with the use_skill tool."
-  search_label: "Search Skills"
-  search_placeholder: "Search name, slug, or capability"
-  filter_status: "Filter by status"
-  filter_source: "Filter by source"
-  all_statuses: "All statuses"
-  all_sources: "All sources"
-  skill: "Skill"
-  source: "Source"
-  version_source: "Version / Source"
-  capabilities: "Capability Tags"
-  status: "Status"
-  status_validation: "Status / Validation"
-  updated_at: "Updated At"
-  enabled: "Enabled"
-  disabled: "Disabled"
-  enable: "Enable"
-  disable: "Disable"
-  confirm_delete: "Delete this Skill? Local files will also be removed."
-  no_skills: "No Skills yet"
-  no_skills_desc: "Upload SKILL.md or a ZIP archive, or install one from a GitHub URL."
-  no_matches: "No matching Skills"
-  no_matches_desc: "Change the search text or clear the status and source filters."
-  no_description: "No description provided"
-  unversioned: "Unversioned"
-  source_github: "GitHub"
-  source_upload: "Upload"
-  no_capabilities: "Not declared"
-  validated: "Validated"
-  validation_error: "Validation issue"
-  validation_error_detail: "Validation detail:"
-  show_details: "Expand manifest details"
-  trigger_condition: "Trigger Condition"
-  allowed_tools: "Allowed Tools"
-  arguments: "Arguments"
-  requires: "Requirements"
-  content_hash: "Content Hash"
-  file_manifest: "File Manifest"
-  no_files: "No local files are available to display"
-  source_ref: "Source ref"
-  source_path: "Source path"
-  not_provided: "Not provided"
-  files: "files"
 
-# ========== Dashboard ==========
-dashboard:
-  title: "Dashboard"
-  pr_review_overview: "PR Review Overview"
-  not_installed: "GitHub App not installed"
-  install_app: "Install GitHub App"
-  install_hint: "Install the GitHub App to your repositories to enable automatic PR reviews. If your organization has already installed it, you can ignore this notice."
-  recent_reviews: "Recent Reviews"
-  total_reviews: "Total Reviews"
-  approved: "Approved"
-  changes_requested: "Changes Requested"
-  commented: "Commented"
-  processing: "Reviewing"
-  total_tokens: "Total Tokens"
-  review_trend: "Review Trend (Last 30 Days)"
-  decision_distribution: "Decision Distribution"
-  top_repos: "Top 10 Repos by Reviews"
-  token_trend: "Token Usage Trend (Last 30 Days)"
-  io_tokens: "Input / Output Tokens"
-  estimated_cost: "Estimated Cost"
-  this_month: "This Month"
-  this_week: "This Week"
-  today: "Today"
-  system_info: "System Info"
-  version: "Version"
-  startup_time: "Startup Time"
-  startup_duration: "Startup Duration"
-  uptime: "Uptime"
 
-# ========== PR Reviews ==========
-pr:
-  all_owners: "All owners"
-  title: "PR Reviews"
-  list: "Review List"
-  detail: "Review Detail"
-  files: "Changed Files"
-  review_strategy: "Review Strategy"
-  score: "Score"
-  author: "Author"
-  repo: "Repository"
-  branch: "Branch"
-  created: "Created"
-  additions: "Additions"
-  deletions: "Deletions"
-  changed_files: "Changed Files"
-  review_status: "Review Status"
-  file_count: "File Count"
-  line_changes: "Line Changes"
-  no_reviews: "No reviews yet"
-  filter_status: "Filter by status"
-  filter_strategy: "Filter by strategy"
-  filter_repo: "Filter by repo"
-  filter_date: "Filter by date"
-  inline_comments: "Inline Comments"
-  no_inline_comments: "No inline comments"
-  overall: "Overall"
-  file_level: "File Level"
-  line_level: "Line Level"
-  decision: "Decision"
-  summary: "Review Summary"
-  view_files: "View Files"
-  view_detail: "View Detail"
-  approved: "Approved"
-  changes_requested: "Changes Requested"
-  commented: "Commented"
-  processing: "Reviewing"
-  cancelled_status: "Cancelled"
 
 # ========== Issue Analysis ==========
 issue:
@@ -570,6 +184,14 @@ issue:
   analyzing_status: "Analyzing"
   pending_status: "Pending"
   reanalyze: "Re-analyze"
+  reanalyze_closed: "Closed Issues cannot be re-analyzed. Reopen the Issue on GitHub first."
+  reanalyze_source_unavailable: "Unable to confirm the current GitHub Issue state. Please try again later."
+  reanalyze_owner_unavailable: "Could not verify the billing user. Sign in again and retry."
+  reanalyze_admission_unavailable: "Analysis admission is temporarily unavailable. Try again later."
+  reanalyze_entitlements_pending: "Purchased legacy rights await reviewed conversion. Contact an administrator."
+  reanalyze_submit_failed: "Could not submit reanalysis. Try again later."
+  reanalyze_handoff_unconfirmed: "Analysis handoff is unconfirmed. Check execution status or contact an administrator."
+  reanalyze_task_unavailable: "Task not found or access denied."
   ai_summary: "AI Summary"
   no_summary: "No summary yet"
   no_feasibility: "No assessment yet"
@@ -581,169 +203,45 @@ issue:
   estimated_cost: "Estimated Cost"
   related_pr: "Related PRs"
   duplicate_detected: "Possible Duplicate"
+  relations: "Issue relationships"
+  relation_duplicate: "Open duplicate"
+  relation_related: "Related"
+  relation_previously_resolved: "Previously resolved"
+  relation_regression: "Regression"
+  relation_duplicate_closed: "Closed duplicate"
+  relation_previously_rejected: "Previously rejected"
+  relation_similarities: "Similarities"
+  relation_differences: "Differences"
+  relation_status_verified: "Verified comparison"
+  relation_status_failed: "Relationship verification unavailable"
+  relation_status_skipped: "Relationship verification skipped after deadline"
+  relation_status_disabled: "Relationship verification disabled"
   duplicate_of: "Duplicate of #{id}"
   error_info: "Error Info"
 
-# ========== Review Logs ==========
-log:
-  title: "Review Logs"
-  detail: "Log Detail"
-  filter_repo: "Filter by repo"
-  filter_action: "Filter by action"
-  no_logs: "No logs available"
-  action_types:
-    review_submitted: "Review Submitted"
-    comment_posted: "Comment Posted"
-    label_applied: "Label Applied"
-    review_approved: "Review Approved"
-    changes_requested: "Changes Requested"
 
-# ========== Repo Scans ==========
-scan:
-  title: "Repo Scans"
-  detail: "Scan Detail"
-  trigger_scan: "Scan Now"
-  scanning: "Scanning"
-  completed: "Completed"
-  failed: "Failed"
-  pending: "Pending"
-  indexing: "Indexing"
-  analyzing: "Analyzing"
-  reporting: "Generating Report"
-  triggered_by: "Triggered By"
-  scheduled: "Scheduled"
-  manual: "Manual"
-  description: "View repository scheduled scan records and findings"
-  confirm_trigger: "Trigger scan for all candidate repositories?"
-  no_scans: "No scans available"
-  security_issues: "Security Issues"
-  quality_issues: "Quality Issues"
-  total_issues: "Total Issues"
-  started_at: "Started At"
-  completed_at: "Completed At"
-  duration: "Duration"
-  progress: "Progress"
-  code_snippet: "Code Snippet"
-  severity:
-    critical: "Critical"
-    high: "High"
-    medium: "Medium"
-    low: "Low"
-    info: "Info"
 
-# ========== Review Queue ==========
-queue:
-  title: "Review Queue"
-  pending: "Pending"
-  processing: "Processing"
-  completed: "Completed"
-  no_items: "Queue is empty"
-  avg_duration: "Avg Duration"
-  failed: "Failed"
-  completed_at: "Completed At"
 
-# ========== User Management ==========
-user:
-  title: "User Management"
-  detail: "User Detail"
-  add_user: "Add User"
-  role: "Role"
-  quota: "Quota"
-  status: "Status"
-  roles:
-    super_admin: "Super Admin"
-    admin: "Admin"
-    user: "User"
-  statuses:
-    active: "Active"
-    disabled: "Disabled"
-  disable: "Disable User"
-  enable: "Enable User"
-  save_role: "Save Role"
-  daily_quota: "Daily Quota"
-  weekly_quota: "Weekly Quota"
-  monthly_quota: "Monthly Quota"
-  quota_used: "Used"
-  quota_remaining: "Remaining"
-  quota_unlimited: "Unlimited"
-  github_id: "GitHub ID"
-  telegram_id: "Telegram ID"
-  github_username: "GitHub Username"
-  registered_at: "Registered At"
-  confirm_edit_info: "Are you sure you want to modify this user's basic info?"
-  confirm_disable: "Are you sure you want to disable this user?"
-  confirm_enable: "Are you sure you want to enable this user?"
-  confirm_role_change: "Are you sure you want to change this user's role?"
-  delete_warning: "This action is irreversible. Associated subscriptions and usage records will be permanently removed."
-  confirm_delete_user: "Are you sure you want to permanently delete user {name}? This action cannot be undone."
-  reset_all_quota: "Reset All Quotas"
-  confirm_reset_quota: "Are you sure you want to reset all quota usage for {name}?"
 
-# ========== Installed Repos ==========
-repo:
-  title: "Installed Repos"
-  owner: "Owner"
-  name: "Repository"
-  installed_at: "Installed At"
-  no_repos: "No installed repositories"
-  install_hint: "Repositories will appear here after installing the GitHub App"
-  batch_index_issues: "Index All Issues"
-  confirm_batch_index_issues: "Confirm batch Issues indexing for all installed repositories?"
-  indexing: "Indexing..."
-  queuing: "Queuing..."
-  indexing_progress: "Indexing ({done}/{total})..."
-  batch_index_failed: "Batch indexing failed"
-  request_failed: "Request failed"
-  request_failed_status: "Request failed ({status})"
-  operation_failed: "Operation failed"
-  scan_failed: "Scan failed"
-  confirm_scan: "Confirm scan repository {repo}?"
-  scanning: "Scanning..."
-  doc_index_success: "Docs indexed: {repo} ({files} files, {chunks} chunks)"
-  doc_index_failed: "Docs index failed: {repo} - {error}"
-  code_index_success: "Code indexed: {repo} ({files} files, {chunks} chunks)"
-  code_index_failed: "Code index failed: {repo} - {error}"
-  issues_index_success: "Issues indexed: {repo} ({count} items)"
-  issues_index_failed: "Issues index failed: {repo} - {error}"
-  batch_issues_complete: "Batch Issues indexing complete: {completed} succeeded"
-  batch_issues_complete_with_failed: "Batch Issues indexing complete: {completed} succeeded, {failed} failed"
-  scan_complete: "Scan complete: {repo}"
-  scan_failed_with_error: "Scan failed: {repo} - {error}"
-  unknown_error: "Unknown error"
 
-# ========== GitHub App Authorization ==========
-github_app:
-  title: "GitHub App"
-  subtitle: "Manage repository access for your GitHub account and organizations"
-  app_title: "Sakura AI GitHub App"
-  connected: "Connected"
-  not_connected: "Not connected"
-  connect: "Connect GitHub App"
-  reauthorize: "Reauthorize"
-  authorize_hint: "Authorize with GitHub to view installations and repository access."
-  unconfigured: "GitHub App user authorization is not configured. Please contact an administrator."
-  request_failed: "Unable to load GitHub App installations. Please refresh or try again later."
-  installations: "installations"
-  authorized_repositories: "authorized repositories"
-  repositories: "repositories"
-  personal: "Personal"
-  organization: "Organization"
-  all_repositories: "All repositories"
-  selected_repositories: "Only selected repositories"
-  manage_authorization: "Manage access"
-  install_more: "Install to another account or organization"
-  toggle_repositories: "Repositories"
-  search_repositories: "Search repositories"
-  no_matching_repositories: "No matching repositories"
-  show_all_repositories: "Show all repositories"
-  show_fewer_repositories: "Show fewer repositories"
-  no_installations: "No GitHub App installations"
-  no_installations_hint: "Install the Sakura AI GitHub App, then return here and refresh."
-  public: "Public"
-  internal: "Internal"
 
 # ========== Configuration ==========
 config:
+  billing_setup_help: "Model pricing sets AI usage rates and Credits conversion. Plans and prices sets purchase amounts, Credits grants and rate limits. You can configure both while payments or billing are disabled."
+  save_errors_title: "Configuration was not fully saved"
+  save_errors_hint: "Correct the fields below. Successfully saved settings remain applied; failed fields are kept on this page."
+  save_retry_hint: "Save again after correcting the errors; retrying preserves your unsaved changes."
+  save_request_failed: "The save request failed and its outcome is unknown. Check your connection and retry."
+  save_unknown_error: "This configuration could not be saved. Check it and retry."
+  save_locate_field: "Locate the field"
+  save_resolve: "Resolve this error"
+  save_required: "This field is required."
+  save_minimum: "The value must be at least {min}."
+  save_maximum: "The value must not exceed {max}."
+  save_step: "Use a value matching the step of {step}."
+  save_short: "Enter at least {min} characters."
+  save_long: "Enter no more than {max} characters."
+  save_invalid: "Enter a valid value that meets the field requirements."
   general_title: "General Config"
   nav_global: "Global Settings"
   nav_strategy: "Strategy Templates"
@@ -752,7 +250,12 @@ config:
   agent_network_status_loading: "Reading current worker capabilities…"
   agent_network_backend: "Execution backend"
   agent_network_sandbox_ready: "sandboxd ready"
-  agent_network_egress: "Controlled egress capability"
+  agent_network_egress: "Daemon egress capability"
+  agent_network_agent_mode: "Ordinary Shell authorized mode"
+  agent_network_dependency_mode: "Temporary dependency authorized mode"
+  agent_network_dependency_ready: "Temporary dependency egress available"
+  agent_network_backend_ready: "Ordinary execution readiness"
+  agent_network_temporary_hint: "When egress is available, Dependency runs and run_command with network_capability=dependency_egress can access arbitrary public destinations during that execution, including package hooks. There is no command or domain allowlist. Under web_tools, the next ordinary Shell command remains offline."
   agent_network_available: "Available"
   agent_network_unavailable: "Unavailable"
   agent_network_not_applicable: "Not applicable"
@@ -895,6 +398,7 @@ config:
   ai_model_vision: "Supports Image Input"
   ai_model_effort_supported: "Supports effort"
   ai_model_reasoning_content: "Supports reasoning_content"
+  ai_model_stream_usage: "Request stream usage (disable for incompatible endpoints)"
   ai_model_temperature_supported: "Supports temperature"
   ai_model_top_p_supported: "Supports top_p"
   ai_model_top_k_supported: "Supports top_k"
@@ -981,7 +485,10 @@ config:
     payment: "Payment & Quota Config"
     registration_quota: "Self-registration Quota Config"
   label:
-    max_concurrent_reviews: "Max concurrent reviews"
+    max_concurrent_reviews: "PR service execution concurrency"
+    max_concurrent_issues: "Issue service execution concurrency"
+    service_execution_lease_seconds: "Service execution lease duration (seconds)"
+    service_execution_poll_seconds: "Service execution queue poll interval (seconds)"
     review_timeout_seconds: "PR/Issue/repository scan soft timeout (seconds)"
     enable_auto_review: "Enable webhook auto review"
     enable_check_runs: "Enable Check Runs progress"
@@ -1025,6 +532,16 @@ config:
     enable_semantic_issue_linking: "Enable Semantic Issue Linking"
     semantic_issue_similarity_threshold: "Similarity Threshold"
     semantic_issue_max_links: "Max Linked Issues"
+    pr_issue_related_confidence_threshold: "PR Related Confidence Threshold"
+    pr_issue_closing_confidence_threshold: "PR Closing Confidence Threshold"
+    pr_issue_max_files: "PR Verification File Limit (Preserve Links When Exceeded)"
+    pr_issue_max_input_tokens: "PR Verification Request Input Token Limit (Bounded by Summary Model Context)"
+    billing_enabled: "Enable Credits usage billing"
+    billing_charge_failed_operations: "Charge failed operations"
+    billing_charge_failed_calls: "Charge failed attempts in completed operations"
+    billing_initial_reserve_credits: "Initial Credits reservation"
+    billing_reservation_ttl_seconds: "Reservation recovery timeout (seconds)"
+    payment_partial_refund_policy: "Partial refund policy"
     payment_enabled: "Enable Payment System"
     payment_order_expire_minutes: "Order Expiry (minutes)"
     payment_default_currency: "Default Currency"
@@ -1075,7 +592,8 @@ config:
     agent_team_execution_backend: "Agent Execution Backend"
     agent_team_network_policy: "Agent Network Policy"
     agent_team_repo_allowlist: "Repo Allowlist"
-    agent_team_max_concurrent: "Max Concurrent Tasks"
+    agent_team_max_concurrent: "Agent service execution concurrency"
+    agent_team_subagent_concurrency: "Concurrent Subagent Slots"
     agent_team_min_priority: "Min Issue Priority"
     agent_team_feasibility_keywords: "Feasibility Keywords"
     agent_team_draft_pr: "Create Draft PR"
@@ -1098,13 +616,33 @@ config:
     init_user_issue_weekly_quota: "Self-register Base Weekly Issue Quota"
     init_user_issue_monthly_quota: "Self-register Base Monthly Issue Quota"
     register_quota_multiplier: "Self-register Quota Multiplier"
+    issue_corpus_freshness_seconds: "Issue Corpus Sync Interval (seconds)"
+    issue_corpus_batch_size: "Issue Corpus Batch Size"
+    issue_detect_duplicates: "Verify Issue Relationships"
+    issue_relation_max_candidates: "Issue Relation Candidate Limit"
+    issue_relation_max_input_tokens: "Issue Relation Complete Request Input Token Limit"
+    issue_relation_candidate_max_comments: "Issue Candidate Newest Comment Limit"
+    issue_relation_candidate_comment_max_chars: "Issue Candidate Comment Character Limit"
+    issue_relation_similarity_threshold: "Issue Relation Recall Similarity"
+    issue_relation_confidence_threshold: "Issue Relation Confidence Threshold"
+    issue_duplicate_confidence_threshold: "Open Duplicate Confidence Threshold"
+    issue_candidate_pool_multiplier: "Issue Candidate Pool Multiplier"
   desc:
-    max_concurrent_reviews: "Maximum concurrent PR review tasks; excess tasks queue"
+    billing_enabled: "Configure all actual model prices and conversions before enabling. Disabled by default; historic Usage is never automatically charged."
+    billing_charge_failed_operations: "When disabled, failed operations retain actual provider cost without a new user charge."
+    billing_charge_failed_calls: "Whether users pay for failed/retried attempts with actual Usage inside a completed operation. Disabled by default."
+    billing_initial_reserve_credits: "Initial Credits reservation per operation, as a decimal string. This is not a total task budget or an upper bound on unknown costs."
+    billing_reservation_ttl_seconds: "Recovery marks expired unfinished operations for reconciliation and releases reservations. Minimum 60 seconds."
+    payment_partial_refund_policy: "Reject partial refunds by default. Optional proportional refunds apply only to unused Credits from Credits-only orders and require an idempotent event key."
+    max_concurrent_reviews: "Combined PR execution capacity across API/Worker instances sharing the same database; excess tasks queue. Plans separately limit each user's registered unfinished business executions."
+    max_concurrent_issues: "Combined Issue execution capacity across API/Worker instances sharing the same database; excess tasks queue. Plans separately limit each user's registered unfinished business executions."
+    service_execution_lease_seconds: "Shared execution slot lease duration (30–3600 seconds). Running tasks renew every one-third of this duration; slots are reclaimed after expiry following an abnormal exit. This does not limit total task duration."
+    service_execution_poll_seconds: "Poll interval while waiting for shared service execution slots (0.05–60 seconds), for PR, Issue and Agent tasks."
     review_timeout_seconds: "Shared soft timeout in seconds for PR reviews, Issue analysis, and repository scans; the next AI call is prompted after it elapses"
     enable_auto_review: "When enabled, webhook-triggered PR changes are reviewed automatically"
     enable_check_runs: "Sync review progress to the GitHub Checks panel"
     enable_analysis_check: "Enable the secondary Analysis Check (AI runtime metrics); tool mode only"
-    enable_findings_check: "Enable the secondary Findings Check (findings stats); only when publishable findings exist"
+    enable_findings_check: "Enable the secondary Findings Check (some issues found); only when publishable findings exist"
     analysis_min_interval_sec: "Minimum interval between Analysis Check snapshots written to GitHub"
     protocol_repair_max_attempts: "Max repair attempts for protocol envelope parse failures (1-10)"
     web_search_enabled: "Allow AI to search the web for up-to-date information"
@@ -1117,6 +655,19 @@ config:
     ai_api_max_retries: "Retries after the initial AI request fails or returns an empty response; 0 sends only the initial request"
     ai_api_initial_retry_delay_seconds: "Base delay before the first retry; later retries use exponential backoff"
     ai_api_total_timeout_seconds: "Maximum total duration allowed for one AI call retry loop"
+    pr_issue_max_files: "Read PR files lazily up to this limit; preserve semantic links when exceeded, pages are missing, or patches are incomplete"
+    pr_issue_max_input_tokens: "Estimated input limit for the entire request including PR description, Issues, JSON, and system instructions; summary candidate context, output budget, and protocol reserve also apply"
+    issue_corpus_freshness_seconds: "Minimum interval between Issue corpus reconciliations; 0 reconciles every retrieval"
+    issue_corpus_batch_size: "Maximum Issues embedded and written in one synchronization batch"
+    issue_detect_duplicates: "Verify open duplicates and related Issues before main analysis; compare closed history only without an open duplicate"
+    issue_relation_max_candidates: "Maximum candidates verified per open or historical phase (1-200, default 5); invalid configuration fails the relation phase while main analysis continues"
+    issue_relation_max_input_tokens: "Estimated input limit for the full open or historical request including bodies, comments, language, JSON and system prompt; all summary candidate context, output and reserve budgets also apply. Exceeded or unknown budgets fail observably while main analysis continues"
+    issue_relation_candidate_max_comments: "Lazily read at most this many newest comments per candidate when discussion is enabled; older discussion may be omitted, with provenance and bounds supplied to inference"
+    issue_relation_candidate_comment_max_chars: "Maximum exact source characters retained per candidate comment; inference receives explicit truncation markers and must not treat omitted content as evidence"
+    issue_relation_similarity_threshold: "Minimum cosine similarity for recall; retrieval alone never decides a relation"
+    issue_relation_confidence_threshold: "Minimum confidence for related and historical relationships"
+    issue_duplicate_confidence_threshold: "Minimum confidence for verified open duplicates"
+    issue_candidate_pool_multiplier: "Recall this multiple of the target candidate count before exclusions and cosine filtering (1-10, default 3); invalid configuration fails before corpus reconciliation"
     issue_auto_rewrite_title: "When enabled, AI generates a normalized title and auto-modifies it during Issue analysis (disabled by default)"
     issue_vision_enabled: "Safely download and compress images from Issue bodies and comments, then send them to image-capable AI models as multimodal input"
     enable_repo_scan: "Periodically scan installed repos for potential issues"
@@ -1140,9 +691,10 @@ config:
     agent_team_enabled: "When enabled, super-admins can manually select high-value Issues/scan findings and use the Agent to execute tasks"
     agent_team_workspace_root: "Root directory for Agent workspace, each task creates a subdirectory (default: ./workplace)"
     agent_team_execution_backend: "Agent command execution backend; sandbox uses the independent sandboxd isolation boundary, while local is source-development-only and rejected for image deployments"
-    agent_team_network_policy: "Agent network policy: offline disables network access; web_tools (default) allows only the controlled Web tools; full_access allows Agent/Dependency runners to use sandboxd's fixed egress network"
+    agent_team_network_policy: "Agent network policy: offline denies all egress; web_tools (default) allows controlled Web tools and temporary dependency egress, while ordinary Shell remains offline. Dependency runs request egress implicitly; run_command can explicitly set network_capability=dependency_egress for any command, including package hooks, with no command or domain allowlist. Egress ends with that execution. full_access allows all runner egress; local requires full_access and provides no OS isolation."
     agent_team_repo_allowlist: "Allowed repos for Agent operations (comma-separated owner/repo), empty means no restriction"
-    agent_team_max_concurrent: "Maximum number of concurrent tasks"
+    agent_team_max_concurrent: "Combined Agent execution capacity across API/Worker instances sharing the same database; excess tasks queue. Plans separately limit each user's registered unfinished business executions."
+    agent_team_subagent_concurrency: "Read-only subagents running at once in a new parent session. Additional children queue; cumulative spawns and calls are unlimited and do not end the parent task"
     agent_team_min_priority: "Minimum Issue priority requirement for candidate tasks"
     agent_team_feasibility_keywords: "Keywords for judging if an Issue is auto-fixable (comma-separated)"
     agent_team_draft_pr: "Create PRs in Draft mode, needs manual mark as Ready"
@@ -1153,7 +705,7 @@ config:
     agent_team_auto_install_deps: "Automatically detect and install dependencies from pyproject.toml or requirements.txt after cloning the repo"
     agent_team_dependency_install_attempts: "Maximum install attempts for transient network failures (including the first, 1-5); permanent errors are not retried"
     agent_team_dependency_retry_delay_seconds: "Initial retry delay in seconds (0-60), increasing exponentially; task cancellation interrupts the wait"
-    agent_team_skills_enabled: "When enabled, Agent tasks load enabled Skills as summaries and can read full SKILL.md content with the use_skill tool"
+    agent_team_skills_enabled: "Controls DB and repository Skill discovery, context and body calls. Disabled Skills cannot be reactivated through cache or restored history. Independent AGENTS.md rules remain active; existing workflows may end autonomously for cleanup"
     agent_team_skills_root: "Local storage root for Skills, default ./Skills; each Skill is stored as <slug>/SKILL.md"
     init_admin_daily_quota: "Daily PR review quota assigned to the initial admin created by Setup Wizard"
     init_admin_weekly_quota: "Weekly PR review quota assigned to the initial admin created by Setup Wizard"
@@ -1169,7 +721,7 @@ config:
     web_search_provider_duckduckgo: "DuckDuckGo (free)"
     web_search_provider_tavily: "Tavily"
     agent_team_network_policy_offline: "Offline (isolated)"
-    agent_team_network_policy_web_tools: "Controlled Web tools only (recommended)"
+    agent_team_network_policy_web_tools: "Web tools + temporary dependency egress (recommended)"
     agent_team_network_policy_full_access: "Full access"
     ai_provider_openai: "OpenAI"
     ai_provider_deepseek: "DeepSeek"
@@ -1260,71 +812,243 @@ settings:
     zh-CN: "简体中文"
     en: "English"
 
-# ========== Security Management ==========
-security:
-  title: "Security Management"
-  description: "Visible to super admins only. Review user MFA status and perform security resets."
-  user_mfa_status: "User MFA Status"
-  user_detail: "User Security Detail"
-  recent_events: "Recent Security Events"
-  last_event: "Last Event"
-  danger_zone: "Danger Zone"
-  danger_zone_desc: "These actions reset user multi-factor authentication methods. Use with caution."
-  global_mfa_requirement: "Global MFA Requirement"
-  global_mfa_requirement_desc: "When enabled, every user without TOTP or a passkey must complete MFA enrollment before using normal WebUI and API features."
-  enabled_globally: "Enabled Globally"
-  disabled_globally: "Disabled Globally"
-  enable_global_mfa: "Require MFA Globally"
-  disable_global_mfa: "Disable Global MFA Requirement"
-  mfa_requirement: "MFA Requirement"
-  mfa_requirement_desc: "When enabled, the user must enable TOTP or add a passkey before accessing normal WebUI and API features."
-  required: "Required"
-  not_required: "Not Required"
-  require_mfa: "Require MFA"
-  unrequire_mfa: "Remove MFA Requirement"
-  reset_totp: "Reset TOTP"
-  delete_all_passkeys: "Delete All Passkeys"
-  reset_all_mfa: "Reset All MFA"
-  confirm_reset_totp: "Reset this user's TOTP and recovery codes?"
-  confirm_delete_all_passkeys: "Delete all passkeys for this user?"
-  confirm_delete_passkey: "Delete this passkey?"
-  confirm_reset_all_mfa: "Reset all MFA methods for this user? This cannot be undone."
 
-# ========== Setup Wizard ==========
-wizard:
-  title: "Setup Wizard"
-  step: "Step"
-  welcome: "Welcome to Sakura AI"
-  welcome_desc: "Let's complete the initial setup in a few simple steps"
-  step1_title: "GitHub App Configuration"
-  step1_desc: "Configure the GitHub App basic settings"
-  step2_title: "AI Model Configuration"
-  step2_desc: "Configure the AI model API connection"
-  step3_title: "Database Configuration"
-  step3_desc: "Configure the database connection"
-  step4_title: "Telegram Bot Configuration"
-  step4_desc: "Configure Telegram Bot notifications"
-  step5_title: "Complete Setup"
-  step5_desc: "Confirm and save all settings"
-  app_id: "App ID"
-  private_key: "Private Key"
-  webhook_secret: "Webhook Secret"
-  app_domain: "App Domain"
-  app_port: "App Port"
-  api_base: "API Base URL"
-  api_key: "API Key"
-  model_name: "Model Name"
-  database_url: "Database Connection URL"
-  bot_token: "Bot Token"
-  admin_ids: "Admin IDs (comma-separated)"
-  config_complete: "Setup Complete!"
-  start_service: "Start Service"
-  test_connection: "Test Connection"
-  connection_success: "Connection successful"
-  connection_failed: "Connection failed"
 
 # ========== Billing ==========
 billing:
+  account_validation:
+    account_unavailable: "Select a configured, enabled AI account. The account is missing or disabled."
+    auxiliary_unavailable: "Configure this independent embedding or reranking service first."
+    invalid_source: "Select a valid AI account or a configured independent service."
+  form:
+    plan_delete_blocked: "This plan has orders, issued redemption codes or active subscriptions. Disable it instead of deleting it."
+    provider_id: "Provider"
+    account_id: "Configured AI account"
+    account_pricing_help: "Publish immutable price versions for each configured AI account, model and call type. Historical bills retain their prices. Configure every price and conversion before enabling charges."
+    legacy_provider_price: "Historical provider price without an account"
+    source_scope: "Configured billing source"
+    account_source: "AI account models"
+    embedding_source: "Independent Embedding configuration"
+    rerank_source: "Independent Rerank configuration"
+    source_scope_help: "Model calls use configured AI account prices. Independent Embedding and Rerank use their own configured models and do not borrow another account."
+    auxiliary_model_help: "The model and call type come from this independent service's current configuration. Change its model in global configuration."
+    auxiliary_unavailable: "This independent service configuration is unavailable. Choose another billing source."
+    choose_account: "Choose a configured AI account"
+    account_disabled: "Disabled"
+    account_unavailable: "Account removed or unavailable; choose another account"
+    no_accounts: "No AI accounts are configured."
+    configure_accounts: "Configure AI accounts"
+    model_id: "AI model"
+    choose_model: "Choose a model for this account"
+    model_unavailable: "Unavailable in this account's model list; choose another model"
+    models_loading: "Automatically fetching this account's models…"
+    models_ready: "{count} models are available for this account."
+    no_models: "This account has no available models. Check its account and model settings in AI configuration, then retry."
+    models_failed: "The latest model list could not be fetched. Saved models remain available; check the account and retry."
+    refresh_models: "Refresh model list"
+    call_kind: "Call type"
+    config_mode: "Editing mode"
+    fields_mode: "Form fields"
+    json_mode: "Advanced JSON"
+    source_prices: "Provider base prices"
+    settlement: "User settlement and Credits"
+    source_help: "Enter the provider's verified prices. Every zero price must be entered explicitly; blank optional dimensions remain unknown."
+    settlement_help: "Configure the exchange rate, markup and Credits conversion explicitly. No commercial defaults are supplied."
+    model_help: "Models are fetched automatically for the selected AI account, including its saved and default models. Prices are stored separately for each account."
+    currency: "Provider cost currency"
+    settlement_currency: "Settlement currency"
+    fx_rate: "Exchange rate"
+    fx_help: "Settlement currency units for one provider currency unit. Enter 1 explicitly if the currencies are the same."
+    markup: "Markup multiplier"
+    markup_help: "Multiplier applied after currency conversion. Enter 1 explicitly for no markup."
+    credits_per_currency_unit: "Credits per settlement currency unit"
+    credits_help: "Credits charged for one settlement currency unit. This is your configured conversion, not an official default."
+    unit: "Provider billing unit"
+    unit_tokens: "Tokens"
+    unit_requests: "Requests"
+    unit_documents: "Documents"
+    unit_search_units: "Search units"
+    token_scale: "Token price denominator"
+    scale_1: "Per token"
+    scale_1000: "Per 1,000 tokens"
+    scale_1000000: "Per 1,000,000 tokens"
+    scale_help: "All entered token prices use this denominator. The published version stores exact prices per million tokens."
+    input_price: "Input price"
+    output_price: "Output price"
+    cached_input_price: "Cached input / cache read price"
+    cache_creation_price: "Cache creation price"
+    reasoning_price: "Reasoning output price"
+    unit_price: "Price per billing unit"
+    meter: "Reported provider counter"
+    meter_help: "Select the actual counter returned by the provider. Documents and search units are not converted into invented token counts."
+    cache_read_supported: "Cache read support"
+    cache_creation_supported: "Cache creation support"
+    reasoning_supported: "Reasoning usage support"
+    support_unknown: "Not yet verified"
+    support_true: "Verified supported"
+    support_false: "Verified unsupported"
+    capabilities_help: "Set unsupported only after verifying the model's API. Missing Usage does not mean zero cost."
+    chat: "Model call (standard and streaming)"
+    chat_stream: "Streaming model call"
+    context_compression: "Context compression"
+    embedding: "Embedding"
+    rerank: "Rerank"
+    config: "Advanced price configuration"
+    exact_help: "Use decimal strings and a dot as the decimal separator. No floating-point price calculation is used."
+    new_version: "Publish a new price version"
+    load_version: "Load into editor"
+    editing_version: "Loaded version {version}. Publishing creates a new version and keeps this version and historical bills unchanged."
+    version_not_found: "The selected price version no longer exists. Choose a version from the pricing history."
+    identity_required: "{field_key} is required and must fit the supported ID length."
+    invalid_currency: "Choose a supported currency for {field_key}."
+    positive_decimal: "{field_key} must be an explicit positive decimal value."
+    nonnegative_decimal: "{field_key} must be a finite, nonnegative decimal value. Enter 0 explicitly for a zero price."
+    invalid_choice: "Choose a supported value for {field_key}."
+    invalid_json_prices: "Price JSON must include currencies, positive conversion factors and complete prices. Quote decimal amounts; floats, unknown fields and unsupported units are rejected."
+  model_pricing: "Model pricing"
+  refund_amount_unrepresentable: "This refund rounds to zero in the payment currency. Increase the amount to a representable value; no Credits were held and no refund was sent."
+  plan_pricing: "Plans and prices"
+  validation:
+    boolean: "{field_key} must be explicitly enabled or disabled."
+    credits: "{field_key} must be non-negative Credits with at most six decimal places, within the supported range."
+    reservation_ttl: "{field_key} must be an integer of at least 60 seconds."
+    refund_policy: "{field_key} must use a supported refund policy."
+    legacy_sources: "Review and convert purchased legacy entitlements before enabling Credits billing. Orders requiring review: {orders}."
+    legacy_plan: "Configure Credits for plan {plan_id}, or disable this legacy paid plan before enabling Credits billing."
+    main_role: "Configure the main model role in AI settings before enabling Credits billing."
+    missing_prices: "Configure complete pricing and conversion for these {count} model calls before enabling Credits billing."
+  pending_payment_events: "Payment and refund events awaiting reconciliation"
+  payment_events_help: "Only previously verified incoming events are handled here. Reprocessing never sends a new payment or refund request. Incomplete evidence remains pending."
+  payment_event_type: "Event type"
+  payment_event_amount: "Reported amount"
+  unknown_amount: "Unknown amount"
+  unknown_currency: "Unknown currency"
+  minor_units: "Integer currency minor units"
+  unknown_currency_unit: "Unknown currency unit; original integer shown"
+  order_id: "Order ID"
+  reconciliation_reason: "Reconciliation reason"
+  replay_payment_event: "Reprocess verified event"
+  resolve_payment_event: "Save reconciliation and process"
+  source_evidence: "Source evidence (receipt or verification reference)"
+  reviewed_order_id: "Verified order ID (optional)"
+  checkout_minor_amount: "Original checkout minor amount (optional)"
+  checkout_currency: "Original checkout currency (optional)"
+  refund_reference_id: "Completed refund reference ID (optional)"
+  verified_refund_amount: "Verified refund minor amount (optional)"
+  refund_currency: "Verified refund currency (optional)"
+  resolution_fields_help: "Enter only evidence confirmed with the payment provider. A checkout amount requires an order ID and currency. A completed refund requires its reference, integer amount and currency. Do not enter a user ID or wallet balance."
+  no_pending_payment_events: "No events awaiting reconciliation"
+  payment_event_processed: "Verified event processed"
+  payment_event_pending: "The event is retained: evidence or accounting still needs reconciliation"
+  invalid_payment_evidence: "Reconciliation evidence is invalid or conflicts; accounting has not completed"
+  pricing_support_flags_help: "Optional Boolean flags cache_read_supported, cache_creation_supported and reasoning_supported must reflect verified provider capabilities. Set false only for confirmed unsupported dimensions. Missing counters or unknown semantics are never automatically treated as zero."
+  price_minor_units_help: "Use cents for CNY / USD, yen for JPY, and millionths for USDT. Enter an integer for the selected currency."
+  notices_title: "Earlier balance notifications"
+  notices_help: "New low balance alerts appear in Notification Center and follow your delivery preferences. Earlier notices remain here; marking them read never changes your bill."
+  low_balance_notice: "Available Credits reached your warning threshold. Check your current balance."
+  mark_read: "Mark as read"
+  notice_read: "Read"
+  no_notices: "No balance notifications"
+  kind_migration: "Legacy entitlement conversion"
+  legacy_remaining: "Remaining legacy one-time entitlements (never regenerated by resets)"
+  grant_plan_title: "Grant plan entitlements"
+  grant_plan_help: "Grant a configured plan. Each form carries a unique event key; retrying the same form grants it once."
+  refunded_amount: "Refunded amount"
+  choose_currency: "Choose currency"
+  unsupported_currency: "Unsupported; select a supported currency"
+  plan_currency: "Plan payment currency"
+  settled_credits: "Settled Credits"
+  credits_title: "Credits Billing"
+  credits_description: "Credits are settled from actual AI usage. Request and concurrency limits control access."
+  credit_balance: "Posted balance"
+  credit_reserved: "Reserved Credits"
+  credit_available: "Available Credits"
+  credit_grant: "Credits granted"
+  credit_transactions: "Credits transactions"
+  credit_change: "Credits change"
+  feature: "Feature"
+  source: "Source"
+  source_unavailable: "Source unavailable"
+  operation_id: "Operation ID"
+  transaction_kind: "Transaction type"
+  transaction_time: "Posted at"
+  all_features: "All features"
+  all_kinds: "All transaction types"
+  apply_filters: "Filter"
+  no_transactions: "No Credits transactions yet"
+  previous_page: "Previous"
+  next_page: "Next"
+  transaction_count: "{count} transactions"
+  operations_title: "Recent operations and settlement status"
+  pending_help: "Operations awaiting pricing or reconciliation do not yet have a final bill. Known usage is retained for reconciliation."
+  no_operations: "No operations yet"
+  low_balance_threshold: "Low balance threshold (Credits)"
+  low_balance_help: "Set 0 to disable. Each low balance episode creates one Notification Center alert; Email and Telegram follow your subscriptions. Topping up re-arms it."
+  low_balance_message: "Your Credits balance is low: {balance} Credits available. Review your bill or top up."
+  insufficient_credits: "Insufficient available Credits. Top up and try again."
+  rate_limit_exceeded: "Request or concurrency limit reached. Try again later."
+  threshold_saved: "Low balance threshold saved"
+  invalid_config: "Invalid billing configuration; nothing was saved. Check decimal precision, required fields and limits."
+  admin_pricing: "Billing Pricing and Adjustments"
+  pricing_help: "Publish immutable price versions per provider, model and call type. Historical bills retain their prices. Configure every price and conversion before enabling charges."
+  pricing_config: "Pricing configuration (JSON)"
+  pricing_units_help: "Use quoted decimal strings for prices and conversion factors. Token prices are per million tokens; other units require unit_price and an explicit meter. No default commercial prices are supplied."
+  publish_price: "Publish price version"
+  price_history: "Published price versions"
+  provider_id: "Provider ID"
+  model_id: "Model ID"
+  call_kind: "Call type"
+  price_version: "Price version"
+  view_config: "View configuration"
+  no_prices: "No pricing configured"
+  price_published: "Price version published"
+  adjust_credits: "Adjust Credits balance"
+  adjustment_help: "Positive values add Credits; negative values deduct. Supply a unique event key and reason. Every adjustment creates an auditable transaction."
+  target_user_id: "User ID"
+  idempotency_key: "Unique event key"
+  adjustment_reason: "Adjustment reason"
+  adjustment_saved: "Credits adjustment posted"
+  credits_and_limits: "Credits and rate limits"
+  concurrency_limit: "Per-user business execution limit"
+  plan_concurrency_limit: "Concurrent task limit: {count}"
+  concurrency_limit_help: "PR, Issue, Agent and Repo Scan share this per-user limit. Queued and running executions count while registered without a terminal outcome. Recording completion, failure or cancellation releases the slot, even while the bill awaits reconciliation. Global settings separately limit service execution capacity. Leave blank to omit a user limit from this plan."
+  rate_limits_config: "Rate limit additions (JSON)"
+  rate_limits_help: "Use nonnegative integers: pr_daily / pr_weekly / pr_monthly, issue_daily / issue_weekly / issue_monthly, agent_daily / agent_weekly / agent_monthly, repo_scan_daily. These limits are separate from billing balance."
+  legacy_entitlement_help: "Legacy one-time counts preserve existing entitlements and are not regenerated by resets. Periodic additions only affect rate limits."
+  feature_pr_review: "PR Review"
+  feature_issue_analysis: "Issue Analysis"
+  feature_agent: "Agent"
+  feature_repo_scan: "Repository Scan"
+  kind_purchase: "Purchase"
+  kind_grant: "Grant"
+  kind_consumption: "Consumption"
+  kind_refund: "Refund or reversal"
+  kind_adjustment: "Admin adjustment"
+  status_not_started: "Not started"
+  status_not_called: "Not called"
+  status_pending: "Pending"
+  status_running: "Running"
+  status_usage_known: "Usage recorded"
+  status_pending_pricing: "Awaiting pricing"
+  status_pending_reconciliation: "Awaiting reconciliation"
+  status_needs_reconciliation: "Awaiting reconciliation"
+  status_settled: "Settled"
+  status_cancelled: "Cancelled"
+  status_failed: "Failed"
+  status_reversed: "Reversed"
+  status_completed: "Completed"
+  rate_pr_daily: "Daily PR limit"
+  rate_pr_weekly: "Weekly PR limit"
+  rate_pr_monthly: "Monthly PR limit"
+  rate_issue_daily: "Daily Issue limit"
+  rate_issue_weekly: "Weekly Issue limit"
+  rate_issue_monthly: "Monthly Issue limit"
+  rate_agent_daily: "Daily Agent limit"
+  rate_agent_weekly: "Weekly Agent limit"
+  rate_agent_monthly: "Monthly Agent limit"
+  rate_repo_scan_daily: "Daily Repository Scan limit"
+  rate_repo_scan_weekly: "Weekly Repository Scan limit"
+  rate_repo_scan_monthly: "Monthly Repository Scan limit"
   datetime_local_fold: "DST repeated-time offset selection"
   datetime_local_fold_auto: "Not repeated (automatic)"
   datetime_local_fold_early: "Earlier offset (fold=0)"
@@ -1359,10 +1083,10 @@ billing:
   code_count: "Count"
   plan_type: "Plan Type"
   duration_days: "Duration (days)"
-  current_quota: "Current Quota"
-  pr_quota: "PR Review Quota"
-  issue_quota: "Issue Analysis Quota"
-  agent_quota: "Agent Quota"
+  current_quota: "Current request limits"
+  pr_quota: "PR Review request limit"
+  issue_quota: "Issue Analysis request limit"
+  agent_quota: "Agent request limit"
   daily: "Daily"
   weekly: "Weekly"
   monthly: "Monthly"
@@ -1379,10 +1103,10 @@ billing:
   no_orders: "No orders yet"
   create_plan: "Create Plan"
   plan_name: "Plan Name"
-  price_cents: "Price (cents)"
+  price_cents: "Price (integer currency minor units)"
   subscription_days: "Subscription Days"
-  pr_review_quota: "PR Review Quota"
-  issue_analysis_quota: "Issue Analysis Quota"
+  pr_review_quota: "PR Review limits and legacy entitlements"
+  issue_analysis_quota: "Issue Analysis limits and legacy entitlements"
   one_time_bonus: "One-time Bonus"
   daily_add: "Daily+"
   weekly_add: "Weekly+"
@@ -1438,7 +1162,7 @@ billing:
   confirm_batch_delete: "Are you sure you want to delete selected items? Used codes will be skipped."
   payment_result: "Payment Result"
   payment_success: "Payment Successful"
-  payment_processing: "Your order is being processed, quota will be credited shortly"
+  payment_processing: "Your order is being processed. Credits and plan entitlements are granted after confirmation"
   payment_cancelled: "Payment Cancelled"
   payment_cancelled_desc: "You have cancelled the payment. You can purchase again anytime."
   payment_failed: "Payment Failed"
@@ -1464,8 +1188,9 @@ billing:
   no_refund_requests: "No refund requests"
   refund_error: "Refund Error"
   confirm_refund: "Confirm refund? Quotas will be revoked and payment will be returned to the original payment method."
-  confirm_delete_order: "Delete this order record? This action cannot be undone."
-  order_deleted: "Order deleted"
+  hide_order: "Hide order"
+  confirm_delete_order: "Hide this order from your list? Payment and billing records will be preserved."
+  order_deleted: "Order hidden from your list"
   crypto_payment_title: "Crypto Payment"
   crypto_payment_subtitle: "Scan the QR code or manually send to the address below"
   crypto_amount_to_pay: "Amount to Pay"
@@ -1485,7 +1210,7 @@ billing:
   crypto_instructions_title: "Instructions"
   crypto_instruction_1: "Use a wallet that supports the chain (e.g. TronLink for TRC20)"
   crypto_instruction_2: "Send exactly the amount shown above, otherwise the payment may not be credited"
-  crypto_instruction_3: "Your quota will be credited automatically once confirmed"
+  crypto_instruction_3: "Credits and plan entitlements are granted automatically after confirmation"
   crypto_instruction_4: "Do not send any other assets to this address"
   crypto_retry_purchase: "Retry Purchase"
   crypto_continue_payment: "Continue Payment"
@@ -1629,37 +1354,13 @@ version_manager:
   development_risk: "Development builds may be unstable and have no formal Release. Continue?"
   channel_switch_risk: "The running image channel differs from the selected stable build. Switch to stable?"
 
-about:
-  title: "About"
-  version: "Version"
-  channel_stable: "Stable"
-  channel_development: "Development"
-  channel_source: "Source"
-  build_revision: "Build Revision"
-  tech_stack: "Tech Stack"
-  backend_runtime: "Backend Runtime"
-  web_framework: "Web Framework"
-  database: "Database"
-  ai_model: "AI Model"
-  cache: "Cache"
-  description: "Sakura AI is an intelligent GitHub PR/Issue review bot that leverages AI to automatically analyze code quality, detect issues, and provide improvement suggestions."
-  links: "Project Links"
-  github_repo: "GitHub Repository"
-  github_repo_desc: "Browse the source and star the project"
-  documentation: "Documentation"
-  documentation_desc: "Deployment, configuration and usage guides"
-  report_issue: "Report an Issue"
-  report_issue_desc: "Submit an issue or feature request"
 
-# ========== Error ==========
-error:
-  page_not_found: "Page Not Found"
-  resource_not_exist: "The requested resource does not exist"
-  back_dashboard: "Back to Dashboard"
-  csrf_failed: "CSRF verification failed"
 
 # ========== System Core Config ==========
 system_config:
+  value_greater_than: "{field_key} must be greater than {min_v}"
+  value_less_than: "{field_key} must be less than {max_v}"
+  value_max_required: "{field_key} must not exceed {max_v}"
   title: "System Core Config"
   description: "Manage infrastructure settings: database, GitHub App, OAuth, etc. Changes take effect immediately; some require a restart."
   warning_badge: "Advanced"
@@ -1790,6 +1491,24 @@ system_config:
   key_notification_retry_backoff_factor_desc: "Multiplier applied to the delay before each retry."
   key_notification_rate_limit_seconds: "Notification Rate Limit (seconds)"
   key_notification_rate_limit_seconds_desc: "Minimum interval before each delivery attempt."
+  key_notification_poll_seconds: Notification recovery interval (seconds)
+  key_notification_poll_seconds_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_batch_size: Recovery batch size
+  key_notification_batch_size_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_send_timeout_seconds: Send timeout (seconds)
+  key_notification_send_timeout_seconds_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_webhook_enabled: Enable Webhooks
+  key_notification_webhook_enabled_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_webhook_timeout_seconds: Webhook timeout (seconds)
+  key_notification_webhook_timeout_seconds_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_webhook_response_max_bytes: Webhook maximum response bytes
+  key_notification_webhook_response_max_bytes_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_webhook_allowed_hosts: Allowed Webhook hosts
+  key_notification_webhook_allowed_hosts_desc: Comma-separated hosts; empty permits public HTTPS hosts. Private addresses are always
+  key_notification_email_verification_ttl_seconds: Email verification lifetime (seconds)
+  key_notification_email_verification_ttl_seconds_desc: Managed by system configuration; changes apply to new notification operations.
+  key_notification_verification_max_attempts: Maximum endpoint verification attempts
+  key_notification_verification_max_attempts_desc: Managed by system configuration; changes apply to new notification operations.
   key_app_domain: "App Domain"
   key_app_domain_desc: "Deployment domain or IP for generating Webhook URL and OAuth callbacks"
   key_app_port: "App Port"
@@ -1805,39 +1524,13 @@ system_config:
   key_bot_username: "Bot Username"
   key_bot_username_desc: "GitHub App bot username (optional), used for idempotency checks"
 
-# ========== Vector Store & DB Management ==========
-vector_db:
-  title: "Vector Store & DB Management"
-  description: "Manage ChromaDB vector collections and database connections. View, delete, clear collections, and test connectivity."
-  warning_title: "Proceed with Caution"
-  warning_desc: "Deleting or clearing collections is irreversible and may break vector search for associated repositories. Confirm the scope of impact before acting."
-  connection_tests: "Connection Tests"
-  test_mysql: "Test MySQL Connection"
-  test_chromadb: "Test ChromaDB Connection"
-  collections: "Vector Collections"
-  collection_name: "Collection Name"
-  repo_name: "Linked Repo"
-  doc_count: "Documents"
-  no_collections: "No vector collections found. Collections are created automatically when a repo is first indexed."
-  repo_label: "Linked Repo"
-  clear_collection: "Clear Docs"
-  select_all: "Select All"
-  delete_selected: "Delete Selected"
-  showing_sample: "Showing sample (first 50 of total)"
-  no_documents: "This collection is empty"
-  confirm_delete_collection: "Are you sure you want to delete this collection? All documents will be lost permanently."
-  confirm_clear_collection: "Are you sure you want to clear all documents? The collection will be kept but its content will be erased."
-  confirm_delete_docs: "Are you sure you want to delete the selected documents? This is irreversible."
-  no_docs_selected: "No documents selected"
-  collection_not_found: "Collection not found"
-  collection_deleted: "Collection deleted"
-  collection_cleared: "Collection cleared"
-  docs_deleted: "Documents deleted"
-  delete_failed: "Operation failed. Please check logs."
-  clear_failed: "Clear failed. Please check logs."
 
 # ========== Toast Messages ==========
 toast:
+  config_fields_invalid: "Configuration could not be saved: {error}"
+  config_unknown_save_target: "This configuration save target is not supported."
+  config_save_http_failed: "Configuration save request failed (HTTP {status}). Sign in again or retry."
+  config_payload_invalid: "The configuration save request is invalid. Refresh the page and retry."
   value_min_required: "{field_key} must be at least {min_v}"
   success: "Success"
   error: "Error"
@@ -1892,6 +1585,7 @@ toast:
   agent_skill_installed: "Skill installed successfully"
   agent_skill_install_failed: "Skill installation failed"
   config_saved_live: "Configuration saved and applied"
+  config_saved_pending: "Configuration saved. Runtime application is pending and will be retried."
   config_backup_export_failed: "Configuration backup export failed: {reason}"
   config_backup_invalid: "Invalid backup file: {reason}"
   config_backup_import_failed: "Configuration backup import failed; current configuration was not changed"
@@ -1946,6 +1640,7 @@ toast:
   refund_request_submitted: "Refund request submitted and waiting for super-admin review. Order: {order_no}"
   refund_request_exists: "This order already has a pending refund request"
   refund_approved: "Refund request approved and processed"
+  refund_pending_reconciliation: "Refund awaiting provider reconciliation; the request remains pending"
   refund_rejected: "Refund request rejected"
   refund_failed: "Refund execution failed: {error}"
   payment_success: "Payment Successful"
@@ -1977,6 +1672,8 @@ api:
   user_status_changed: "User {username} has been {status}"
   cannot_delete_self: "Cannot delete yourself"
   user_deleted: "User {name} deleted"
+  user_deactivated_retained: "User {name} deactivated; financial and entitlement records retained"
+  agent_dispatch_pending: "Task submission is awaiting confirmation. Check again later or contact an administrator."
   telegram_id_used: "Telegram ID {telegram_id} is already used by another user"
   agent_skill_installed: "Skill [{slug}] installed"
   agent_skill_install_failed: "Skill installation failed: {error}"
@@ -1995,69 +1692,9 @@ api:
   ai_tool_iterations_range: "AI tool iterations must be between 1-150"
   unsupported_search_provider: "Unsupported search provider"
 
-# ========== Comment Templates ==========
-comment:
-  reviewing: "🔄 Reviewing..."
-  reviewing_with_strategy: "Sakura AI is analyzing this PR using **{strategy_name}** strategy, please wait..."
-  thinking: "Sakura is thinking... This may take from a few seconds to minutes depending on code complexity."
-  review_report: "🌸 Sakura AI Review Report"
-  review_passed: "Approved"
-  request_changes: "Changes Requested"
-  review_comment: "Review Comment"
-  review_failed: "Review Failed"
-  review_error_desc: "Sakura encountered an error during review"
-  check_logs: "Please check system logs or contact the administrator"
-  overall_score: "Overall Score"
-  view_detail: "View detailed review report"
-  auto_generated: "This comment was auto-generated by Sakura AI"
-  score_suffix: "/10"
-  decision_approve: "Approve merge"
-  decision_changes: "Fix required before resubmitting"
-  decision_comment: "Manual review requested"
-  block_reason: "Block reason"
 
-# ========== Issue Analysis Comment ==========
-issue_comment:
-  title: "🌸 Sakura AI Issue Analysis Report"
-  analysis_result: "Analysis Result"
-  category: "Category"
-  priority: "Priority"
-  feasibility: "Feasibility"
-  summary: "Summary"
-  suggested_labels: "Suggested Labels"
-  suggested_assignees: "Suggested Assignees"
-  suggested_title: "Suggested Title"
-  auto_generated: "This comment was auto-generated by Sakura AI"
 
-# ========== Scan Report ==========
-scan_report:
-  title: "🌸 Code Security & Quality Scan Report"
-  repo: "Repository"
-  scan_time: "Scan Time"
-  summary: "Scan Summary"
-  rounds: "AI Rounds"
-  indexed_chunks: "Indexed Chunks"
-  security_issues: "Security Issues"
-  quality_issues: "Quality Issues"
-  severity: "Severity"
-  file: "File"
-  line: "Line"
-  description: "Description"
-  suggestion: "Suggested Fix"
-  total_issues: "Total Issues"
-  critical_issues: "Critical Issues"
-  auto_generated: "This report was auto-generated by Sakura AI"
 
-# ========== Action Logs ==========
-action_log:
-  title: "Action Logs"
-  admin_action: "Admin Action"
-  user: "Operator"
-  action: "Action Type"
-  target: "Target"
-  time: "Time"
-  detail: "Detail"
-  no_logs: "No action logs available"
 
 # ========== Strategy Config ==========
 strategy:
@@ -2140,7 +1777,7 @@ strategy:
   user_template_desc: "Placeholders: {title}, {file_count}, {import_context}"
   save_depgraph: "Save Dependency Graph Config"
   issue_analysis: "Issue Analysis"
-  issue_system_prompt_desc: "System prompt for Issue analysis. Defines the AI role, analysis dimensions, and output format."
+  issue_system_prompt_desc: "Issue analysis focus. Investigation adapts to validity, information, impact and complexity: spam or incomplete reports receive brief handling, while complex and high-risk issues retain deep analysis. The system supplies the structured protocol and safety constraints."
   issue_categories: "Category Definitions"
   issue_categories_desc: "Define Issue categories. Each row contains name, description, and keywords (comma separated)."
   add_category: "Add Category"
@@ -2152,145 +1789,10 @@ strategy:
   issue_comment_template_zh: "Comment Template (Chinese)"
   issue_comment_template_en: "Comment Template (English)"
   issue_template_variables: "Available template variables:"
+  issue_template_layout_hint: "Both templates must include {summary} (conclusion and evidence) and {feasibility} (recommended action); other variables are optional. Built-in defaults fold metadata and hide empty suggestions. Existing custom templates retain their layout and fallback text. Only listed variables are supported; write literal braces as {{ and }}."
   save_issue_analysis: "Save Issue Analysis Config"
   issue_config_hint: "This page manages analysis prompts, categories, priority rules, and comment templates. Issue feature toggles (enable analysis, auto assignment, title rewriting, etc.) are available in Global Config → Issue Analysis."
 
-# ========== Activity Monitor ==========
-activity:
-  title: "Live Activity Monitor"
-  description: "Real-time aggregated view of PR reviews, Issue analyses, and repo scan statuses"
-  connected: "Live"
-  disconnected: "Disconnected"
-  refresh: "Refresh"
-  refreshing: "Refreshing..."
-  active_pr_reviews: "Active PR Reviews"
-  active_issue_analyses: "Active Issue Analyses"
-  active_repo_scans: "Active Repo Scans"
-  filter_all: "All"
-  filter_pr: "PR Reviews"
-  filter_issue: "Issue Analysis"
-  filter_scan: "Repo Scans"
-  empty_title: "No Active Tasks"
-  empty_hint: "Active PR reviews, Issue analyses, and repo scans will appear here in real-time"
-  type_pr: "PR Review"
-  type_issue: "Issue Analysis"
-  type_scan: "Repo Scan"
-  status_pending: "Pending"
-  status_reviewing: "Reviewing"
-  status_analyzing: "Analyzing"
-  status_indexing: "Indexing"
-  status_reporting: "Reporting"
-  status_completed: "Completed"
-  status_failed: "Failed"
-  status_cancelled: "Cancelled"
-  progress: "Progress"
-  view_detail: "View Detail"
-  time_just_now: "just now"
-  time_minutes_ago: " min ago"
-  time_hours_ago: " hours ago"
-  time_days_ago: " days ago"
-  # Conversation stream UI
-  stream_empty_title: "Select a task to view live conversation"
-  stream_empty_hint: "Click a task card on the left to see the AI analysis in real-time"
-  thinking: "AI processing..."
-  score: "Score"
-  health_score: "Health Score"
-  findings: "Findings"
-  decision: "Decision"
-  completed: "Completed"
-  error: "Error occurred"
-  expand: "Expand"
-  collapse: "Collapse"
-  tool_unknown: "Tool call"
-  tool_index: "Code indexing"
-  tool_read: "Read file"
-  tool_bash: "Run command"
-  tool_search: "Search code"
-  tool_edit: "Edit file"
-  tool_generic: "Tool"
-  tool_completed: "completed"
-  tool_failed: "failed"
-  # New observability page
-  no_active_tasks: "No observable activity"
-  loading: "Loading..."
-  select_prompt: "Select a session on the left to view details"
-  events: "Event timeline"
-  no_events: "No events"
-  reasoning: "Reasoning status"
-  reasoning_omitted_hint: "Reasoning is shown per visibility policy; when the provider exposes no displayable summary this area keeps a deterministic hint."
-  status_open: "Ready"
-  status_archived: "Archived"
-  status_partial: "Partial"
-  current_phase: "Current phase"
-  active_models: "Active models"
-  context_usage: "Context usage"
-  current_request_context: "Current / selected request context"
-  context_unavailable: "No context measurement available"
-  total_usage: "Cumulative usage"
-  session_usage_total: "Session total (all observed model calls)"
-  input_tokens: "Input tokens"
-  output_tokens: "Output tokens"
-  reasoning_tokens: "Reasoning tokens"
-  cached_tokens: "Cached tokens"
-  context_revisions: "Context revisions"
-  messages: "messages"
-  compression_history: "Compression and context operations"
-  no_compression: "No compression or context replacement yet"
-  invocations: "Invocations"
-  phase_admitted: "Admitted"
-  phase_preparing_context: "Preparing context"
-  phase_model_request: "Calling model"
-  phase_embedding_request: "Generating embeddings"
-  phase_processing_response: "Processing response"
-  phase_context_compaction: "Compacting context"
-  phase_model_followup: "Preparing model follow-up"
-  phase_retry_wait: "Waiting to retry"
-  phase_provider_error: "Provider request failed"
-  phase_tool_failed: "Tool execution failed"
-  phase_tool: "Running tool"
-  conversation_first: "Complete conversation first, execution diagnostics second"
-  diagnostics: "Diagnostics"
-  diagnostics_hint: "Models, tokens, context, and compression"
-  reconnecting: "Reconnecting"
-  waiting: "Waiting for activity"
-  loading_conversation: "Loading the complete conversation..."
-  load_earlier: "Load earlier history"
-  new_messages: "new messages"
-  filter_all_entries: "All entries"
-  filter_messages: "Conversation"
-  filter_model: "Model and reasoning"
-  filter_tools: "Tools"
-  filter_context: "Context"
-  all_roles: "All roles"
-  all_threads: "All threads"
-  all_invocations: "All invocations"
-  reset_filters: "Reset"
-  compacted_history_hint: "Historical message: no longer in the current model context and replaced by a later Context Revision."
-  fallback_attempt: "This Attempt belongs to a retry or model fallback chain"
-  context_operation: "Context compression / replacement"
-  no_conversation_entries: "No conversation entries match the current filters"
-  clear_sensitive: "Close and clear plaintext"
-  restricted_content: "This body is restricted by the server-side authorization policy."
-  super_admin_expand_hint: "Sensitive text is excluded from batch responses; a super admin may request an audited read."
-  encryption_unavailable: "Sensitive observability data was not saved because encryption is unavailable."
-  sensitive_capture_failed: "Sensitive observability capture failed."
-  reasoning_running: "Reasoning in progress"
-  reasoning_omitted: "Reasoning occurred, but the provider returned no readable content."
-  reasoning_unavailable: "The provider reported no reasoning content or metadata; this does not prove that no reasoning occurred."
-  reasoning_summarized: "The provider returned an explicitly identified reasoning summary; it is not raw chain of thought."
-  reasoning_provider_exposed: "The provider returned readable reasoning; only a super admin may request an audited view."
-  reasoning_encrypted_opaque: "The provider returned an unreadable encrypted reasoning block; only type, size, and hash are retained."
-  view_reasoning_content: "View readable reasoning on demand"
-  view_reasoning_summary: "View reasoning summary on demand"
-  view_request_projection: "View effective request on demand"
-  view_response_projection: "View response projection on demand"
-  view_message_content: "View full message on demand"
-  view_tool_arguments: "View tool arguments on demand"
-  view_tool_result: "View tool result on demand"
-  label_recommendation_request: "Label recommendation request"
-  label_recommendation_response: "Label recommendation response"
-  opaque_not_displayable: "Provider-encrypted content is unreadable"
-  unknown: "Unknown"
 
 # ========== Repository mutual-star-aid ==========
 star_aid:
@@ -2356,7 +1858,9 @@ star_aid:
   ban_member: "Ban member"
   unban_member: "Unban member"
   ban_success: "Member banned"
+  ban_failed: "Failed to ban the member. Please check logs."
   unban_success: "Member unbanned"
+  unban_failed: "Failed to unban the member. Please check logs."
   admin_members: "Members"
   admin_repositories: "Repositories"
   repository: "Repository"
@@ -2421,138 +1925,1865 @@ star_aid:
   members_total: "Total members"
   repositories_total: "Total repositories"
 
-setup:
-  optional: "optional"
-  backup_title: "Restore from a configuration backup (optional)"
-  backup_description: "Select a JSON file exported from Config Backup. The wizard validates it, prefills connection details, and restores its global, AI, and system settings when setup is completed."
-  backup_plaintext_warning: "Backups contain plaintext secrets and connection credentials. Use only a trusted file over a secure network."
-  backup_choose: "Choose configuration backup"
-  backup_checking: "Validating..."
-  backup_loaded: "Loaded {filename}: {sections}, {count} settings in total."
-  backup_admin_required: "Administrator users are not imported. Continue the wizard to create the super administrator for this deployment."
-  backup_needs_database: "This backup has no database connection setting. Enter the database URL manually in the next step."
-  backup_overwrite_connection: "Overwrite this deployment's database/Redis connection with the backup values (for cross-environment migration; the current deployment's addresses are kept by default)."
-  backup_too_large: "The backup exceeds the 5 MiB limit"
-  backup_read_failed: "The backup could not be read or validated"
 
-  # ===== Verify page =====
-  verify_title: "Setup Wizard Security Verification"
-  verify_description: "Copy the Setup Token from the application startup logs and paste it below to continue the first deployment configuration."
-  verify_token_label: "Setup Token"
-  verify_placeholder: "Paste the Token from the logs"
-  verify_submit: "Verify & Continue"
-  verify_tip: "The Token is generated on each application startup and can be found in the startup logs."
-  verify_invalid: "Invalid Token. Please check the Token in the logs."
+agent_plugins:
+  title: "Agent Plugins"
+  description: "Manage deployment MCP services, lifecycle hooks and installed Skills. Configured tools run unattended within the selected runtime and network policy."
+  skills_status: "{enabled} enabled / {total} installed"
+  manage_skills: "Install and manage Skills"
+  configured: "Configured MCP services and hooks"
+  enabled: "Enabled"
+  disabled: "Disabled"
+  empty: "No MCP services or lifecycle hooks configured."
+  profile: "Runtime permission profile"
+  profile_read_only: "Read only"
+  profile_workspace_write: "Workspace write"
+  profile_autonomous: "Autonomous (default)"
+  profile_full_access: "Full access"
+  profile_help: "Profiles remain subject to the deployment sandbox and network policy. Read-only child agents cannot run command hooks."
+  editor: "Plugin configuration"
+  scope_selected: "Selected repositories (empty list disables access)"
+  scope_all: "All repositories"
+  scope_help: "Set scopes by MCP server ID. An omitted scope or All repositories allows every repository; an empty selected list allows none."
+  editor_help: "Add or remove entries to install or delete a plugin; use enabled to switch it on or off. Header values are masked; unchanged masks preserve saved values for the same server and URL. Credentials may reference only SAKURA_MCP_* deployment variables."
+  example: "Configuration example"
+  example_help: "MCP timeout_seconds is an HTTP I/O inactivity timeout, not a task duration limit. Omitted timeout uses the Settings default. Omit repository scopes for all repositories; an empty list disables access for all repositories. Read-only MCP tools require an explicit trusted read_only policy. Commands are configured here by administrators, never loaded from repository hooks."
+  save: "Save plugins"
+  invalid: "Invalid plugin configuration or profile. Nothing was saved."
+  saved: "Plugin configuration saved."
+  use_plugin_page: "Use Agent Plugins to update plugin configuration and permission profiles."
+  form:
+    editor_server_id: "MCP server ID"
+    field:
+      version: "Configuration version"
+      mcp: "MCP services"
+      servers: "Servers"
+      hooks: "Lifecycle hooks"
+      mcp_repository_scopes: "MCP repository scopes"
+      id: "ID"
+      url: "Service URL"
+      timeout_seconds: "I/O inactivity timeout (seconds)"
+      headers: "Headers (saved values stay masked)"
+      credential_headers: "Credential environment references"
+      default_policy: "Default tool policy"
+      tools: "Tool policy overrides"
+      required_capabilities: "Required capabilities"
+      event: "Lifecycle event"
+      kind: "Action kind"
+      argv: "Command and arguments (one argument per item)"
+      required: "Block continuation on failure"
+      read_only: "Read-only tool"
+      enabled: "Enabled"
+    option:
+      session_start: "Session start"
+      before_model: "Before model call"
+      after_model: "After model call"
+      before_tool: "Before tool call"
+      after_tool: "After tool call"
+      before_write: "Before write"
+      after_write: "After write"
+      before_finish: "Before finish"
+      after_finish: "After finish"
+      task_failed: "Task failed"
+      task_cancelled: "Task cancelled"
+      command: "Run command"
+      audit: "Record audit"
 
-  # ===== Wizard page =====
-  page_title: "Initial Setup - Sakura AI"
-  header_title: "Sakura AI Initial Setup"
-  step_progress: "Step {current} / {total}"
-  step_welcome: "Welcome"
-  step_database: "Database"
-  step_github: "GitHub App"
-  step_ai_notify: "AI & Notifications"
-  step_admin: "Admin"
-  welcome_title: "Welcome to Sakura AI"
-  welcome_desc: "GitHub PR/Issue AI Review Bot"
-  welcome_guide: "The setup wizard will guide you through the following:"
-  welcome_db_cache: "Database & Cache"
-  welcome_db_cache_desc: "MySQL / PostgreSQL / Redis"
-  welcome_github_app: "GitHub App"
-  welcome_github_app_desc: "App ID, private key, Webhook secret"
-  welcome_ai_accounts: "AI Accounts & Roles"
-  welcome_ai_accounts_desc: "After initialization, manage accounts and role bindings on the AI configuration page"
-  welcome_rag: "RAG Configuration (Optional)"
-  welcome_rag_desc: "Embedding and reranking models to enhance review quality"
-  welcome_admin: "Admin Account"
-  welcome_admin_desc: "Set up the WebUI administrator"
-  prereq_title: "Prerequisites: "
-  prereq_body: "You need a GitHub account and a created GitHub App."
-  prereq_guide: "Click here to view the creation guide"
 
-  # ===== Database step =====
-  db_title: "Database Configuration"
-  db_desc: "Stores review records, user quotas, and other data"
-  db_conn_label: "Database Connection String"
-  db_conn_help: "Supports MySQL and PostgreSQL. The app will automatically create the required tables."
-  db_conn_format: "Format: mysql+asyncmy://username:password@host:port/database"
-  redis_label: "Redis Connection Address"
-  redis_help_1: "Used for SSE real-time push and caching. Docker deployments use"
-  redis_help_2: "by default; for local testing, change it to"
-  test_connection: "Test Connection"
-  test_redis: "Test Redis"
-  testing: "Testing..."
+config_center:
+  title: Configuration centre
+  description: Browse by category. Ordinary changes save automatically.
+  search: Search all settings
+  search_placeholder: Name, description or configuration key
+  categories: Settings categories
+  loading: Loading…
+  empty: Dedicated operations for this category appear below.
+  advanced: Advanced settings
+  reset: Restore default
+  retry: Retry
+  saved: Saved
+  saving: Saving…
+  unchanged: Unchanged
+  unsaved: Unsaved changes
+  failed: Save failed
+  restart_required: Saved; restart required
+  pending: Persisted; runtime update pending retry
+  source: Configuration source
+  builtin: Built-in default
+  environment: Deployment environment
+  database: Database override
+  user: User override
+  default: Built-in default
+  inherited: Inherited value
+  follow_request_language: Follow request/UI language
+  confirmed: Confirm and save
+  credential: Credential configured; enter a new value to replace it
+  credential_empty: No credential configured
+  confirm_secret: Replace this credential? This may affect running services.
+  confirm_reset: Remove this field override and inherit its default? Other fields
+    stay unchanged.
+  conflict: Another tab or administrator changed this setting. Your draft is preserved.
+    Load the server value before editing again.
+  reload_field: Use server value
+  invalid_type: Incorrect type. Check the input.
+  invalid_choice: Choose a valid option.
+  out_of_range: Value is outside the allowed range.
+  invalid_value: Value failed domain validation.
+  invalid_structure: Invalid structure or missing template placeholders.
+  invalid_request: Invalid request format.
+  cross_field: Related fields do not satisfy their constraints.
+  credential_required: Enter a new credential; empty or masked values are not accepted.
+  confirmation_required: Explicit confirmation is required.
+  not_resettable: There is no safe generic default; use the dedicated operation.
+  unknown_field: Setting not found or access denied.
+  storage_unavailable: Storage is unavailable. Retry; your draft is preserved.
+  network: Request failed or timed out. Please retry.
+  leave: There are unsaved changes. Leave this page?
+  no_results: No matching settings
+  model: Model capability overrides
+  provider: Provider
+  model_id: Model ID
+  load_model: Open model settings
+  bindings: Role bindings (account and model form one atomic setting)
+  invalid_json: Enter valid JSON.
+  theme: Theme
+  confirm_discard: Discard your draft and load the current server value?
+  category:
+    personal: Personal
+    ai: AI and models
+    review: PR review
+    issue: Issue analysis
+    agent: Agent
+    labels: Labels and scans
+    system: System and integrations
+    backup: Backup and restore
+  fetch_slug: Fetch GitHub App slug
+  test_connection: Test connection
+  account: AI account
+  fallback: "Fallback models"
+  fallback_help: "Tried in this order when the primary model is unavailable. The same account can use different models."
+  fallback_empty: "No fallback models added."
+  fallback_item: "Fallback"
+  primary_assignment: "Primary model"
+  add_fallback: "Add fallback"
+  remove_fallback: "Remove fallback"
+  binding_help: "Select an account and model. The primary model and fallback order save together automatically."
+  binding_incomplete: "Choose an account and enter a model for every row. Complete rows save automatically."
+  account_disabled: "Disabled"
+  account_unavailable: "Account no longer exists; choose another"
+  editor_add: "Add item"
+  editor_remove: "Remove"
+  editor_move_up: "Move up"
+  editor_move_down: "Move down"
+  editor_item: "Item"
+  editor_empty: "No entries yet. Use the button below to add one."
+  editor_new_entry: "New entry"
+  editor_add_entry: "Add entry"
+  editor_key: "Name"
+  editor_label_name: "Label name"
+  editor_strategy_id: "Strategy ID"
+  editor_repository: "Repository (owner/repo)"
+  editor_add_field: "Add setting"
+  editor_unset: "Use default"
+  editor_value_type: "Value type"
+  editor_type_string: "Text"
+  editor_type_integer: "Integer"
+  editor_type_number: "Number"
+  editor_type_boolean: "Switch"
+  editor_type_array: "List"
+  editor_type_object: "Settings"
+  editor_type_null: "Not set (inherit default)"
+  editor_not_set: "Not set; use default behaviour."
+  editor_incomplete: "Complete the required fields and check the input to save automatically."
+  editor_duplicate_key: "Duplicate name. Use a different name for each entry."
+  editor_form: "Form editor"
+  editor_raw: "Advanced raw JSON"
+  editor_raw_help: "For importing or bulk editing. The format is checked before switching back to the form."
+  select_account: Select an account
+  follow_main: Follow main role
+  restart: Restart application
+  deployment: Deployment configuration
+  deployment_owned: Connections are owned by connection.json or deployment environment variables. Edit deployment configuration and restart; runtime database overrides cannot move the live connection.
+  field:
+    type: "Thinking mode"
+    context_window_tokens: "Context window (tokens)"
+    max_output_tokens: "Maximum output (tokens)"
+    capabilities: "Model capabilities"
+    vision: "Image input"
+    tools: "Tool calls"
+    streaming: "Streaming output"
+    reasoning_content: "Reasoning output"
+    thinking: "Thinking mode"
+    effort: "Reasoning effort"
+    prompt_caching: "Prompt caching"
+    temperature: "Temperature"
+    top_p: "Top P"
+    top_k: "Top K"
+    reasoning_params: "Generation and reasoning parameters"
+    quick: "Quick review"
+    standard: "Standard review"
+    deep: "Deep review"
+    large: "Large change review"
+    conditions: "Conditions"
+    priority_rules: "Priority rules"
+    critical: "Critical"
+    high: "High"
+    medium: "Medium"
+    low: "Low"
+    search_in_files: "File content search"
+    sakura_memory: "Sakura memory"
+    initialization: "Initialization"
+    git_tools: "Git tools"
+    ci_failure_injection: "CI failure context"
+    directory_convention: "Directory conventions"
+    knowledge_extraction: "Knowledge extraction"
+    consolidation: "Memory consolidation"
+    reflection: "Reflection"
+    issue_reflection: "Issue reflection"
+    review_templates: "Chinese review templates"
+    review_templates_en: "English review templates"
+    memory: "Memory"
+    rules: "Rules"
+    plans: "Plans"
+    docs: "Documentation"
+    dependencies: "Dependencies"
+    build: "Build"
+    ci: "Continuous integration"
+    bug: "Bug"
+    duplicate: "Duplicate"
+    good first issue: "Good first issue"
+    help wanted: "Help wanted"
+    invalid: "Invalid"
+    question: "Question"
+    wontfix: "Won't fix"
+    performance: "Performance"
+    stream_usage: "Request stream usage (disable for incompatible endpoints)"
+    approve: "Approve"
+    approve_threshold: "Approve threshold"
+    auto_create: "Auto create"
+    auto_create_subdirs: "Auto create subdirs"
+    auto_init: "Auto init"
+    block_on_critical: "Block on critical"
+    block_threshold: "Block threshold"
+    categories: "Categories"
+    cleanup_old_reflections: "Cleanup old reflections"
+    code_extensions: "Code extensions"
+    color: "Color"
+    comment: "Comment"
+    comment_template: "Comment template"
+    comment_template_en: "Comment template en"
+    concurrency: "Concurrency"
+    confidence_threshold: "Confidence threshold"
+    default_branch_count: "Default branch count"
+    default_commit_count: "Default commit count"
+    default_context_lines: "Default context lines"
+    default_max_results: "Default max results"
+    description: "Description"
+    documentation: "Documentation"
+    enable_ai_tools: "Enable ai tools"
+    enable_idempotency_check: "Enable idempotency check"
+    enable_project_structure: "Enable project structure"
+    enabled: "Enabled"
+    enhancement: "Enhancement"
+    ignored_patterns: "Ignored patterns"
+    init_commit_message: "Init commit message"
+    interval: "Interval"
+    issue_reference_keywords: "Issue reference keywords"
+    keywords: "Keywords"
+    max_annotations_per_record: "Max annotations per record"
+    max_changed_files: "Max changed files"
+    max_comments: "Max comments"
+    max_context_lines: "Max context lines"
+    max_file_bytes: "Max file bytes"
+    max_file_lines: "Max file lines"
+    max_file_output_chars: "Max file output chars"
+    max_file_size: "Max file size"
+    max_files: "Max files"
+    max_files_for_deep_strategy: "Max files for deep strategy"
+    max_files_to_search: "Max files to search"
+    max_lines: "Max lines"
+    max_linked_issues_in_prompt: "Max linked issues in prompt"
+    max_major_issues: "Max major issues"
+    max_matches_per_file: "Max matches per file"
+    max_memory_chars: "Max memory chars"
+    max_new_commits: "Max new commits"
+    max_output_chars: "Max output chars"
+    max_records: "Max records"
+    max_sakura_chars: "Max sakura chars"
+    max_structure_files: "Max structure files"
+    max_total_scan_bytes: "Max total scan bytes"
+    min_reflections: "Min reflections"
+    model: "Model"
+    name: "Name"
+    partial_commit: "Partial commit"
+    placeholder: "Placeholder"
+    priority: "Priority"
+    prompt: "Prompt"
+    prompt_template: "Prompt template"
+    refactor: "Refactor"
+    repo_overrides: "Repo overrides"
+    request_changes: "Request changes"
+    retention_days: "Retention days"
+    skip_binary: "Skip binary"
+    skip_extensions: "Skip extensions"
+    skip_paths: "Skip paths"
+    skip_placeholder: "Skip placeholder"
+    style: "Style"
+    system_prompt: "System prompt"
+    test: "Test"
+    use_search_api: "Use search api"
+    user_template: "User template"
+  group:
+    strategy.strategies: Strategies
+    strategy.file_filters: File filters
+    strategy.context_enhancement: Context enhancement
+    strategy.review_policy: Review policy
+    strategy.issue_analysis: Issue analysis
+    strategy.pr_summary: Pr summary
+    strategy.pr_dependency_graph: Pr dependency graph
+    strategy.scan: Scan
+    label.definitions: Definitions
+    label.recommendation: Recommendation
+    label.conflict_rules: Conflict rules
+    preferences: Preferences
+    ai_strategy: "AI calls, compression and usage capture"
+    bindings: "AI roles and fallbacks"
+    model: "Model capabilities and generation parameters"
+  label:
+    enable_issue_analysis: "Enable automatic Issue analysis"
+    issue_auto_assign: "Assign Issues automatically"
+    issue_assignee_confidence_threshold: "Assignment confidence threshold"
+    issue_auto_assign_max: "Maximum automatic assignees"
+    issue_suggest_assignees: "Suggest assignees"
+    issue_suggest_milestones: "Suggest milestones"
+    issue_max_files_per_analysis: "Maximum files per analysis"
+    issue_vector_store_rich_metadata: "Store rich Issue metadata"
+    issue_include_comments: "Include Issue comments in analysis"
+    agent_team_candidate_cache_ttl: "Candidate task cache lifetime (seconds)"
+    init_admin_agent_daily_quota: "Initial administrator daily Agent quota"
+    init_admin_agent_weekly_quota: "Initial administrator weekly Agent quota"
+    init_admin_agent_monthly_quota: "Initial administrator monthly Agent quota"
+    init_user_agent_daily_quota: "Initial user daily Agent quota"
+    init_user_agent_weekly_quota: "Initial user weekly Agent quota"
+    init_user_agent_monthly_quota: "Initial user monthly Agent quota"
+    star_aid_enabled: "Enable repository aid"
+    star_aid_auto_star_enabled: "Enable automatic stars"
+    star_aid_scheduler_enabled: "Enable repository aid scheduler"
+    star_aid_min_interval_minutes: "Minimum aid interval (minutes)"
+    star_aid_max_interval_minutes: "Maximum aid interval (minutes)"
+    star_aid_batch_size: "Members per batch"
+    star_aid_user_daily_limit: "Daily aid limit per user"
+    star_aid_repo_daily_limit: "Daily aid limit per repository"
+    star_aid_summary_enabled: "Generate aid summaries"
+    star_aid_summary_language: "Aid summary language"
+  option:
+    zh-CN: "简体中文"
+    en: "English"
+    system: "Follow system"
+    light: "Light"
+    dark: "Dark"
+    sandbox: "Isolated sandbox"
+    local: "Local runtime"
+    offline: "Offline"
+    web_tools: "Web tools only"
+    full_access: "Full network access"
+    critical: "Critical"
+    high: "High"
+    medium: "Medium"
+    low: "Low"
+    none: "None"
+    minimal: "Minimal"
+    xhigh: "Extra high"
+    max: "Maximum"
+    adaptive: "Adaptive thinking"
+    disabled: "Disable thinking"
+    reject: "Reject partial refunds"
+    proportional_unused_credits: "Refund proportional unused Credits"
+    ai: "AI generated"
+    static: "Static analysis"
+    ssl: "SSL/TLS encryption"
+    starttls: "STARTTLS encryption"
+    DEBUG: "Debug (DEBUG)"
+    INFO: "Information (INFO)"
+    WARNING: "Warning (WARNING)"
+    ERROR: "Error (ERROR)"
+    CRITICAL: "Critical (CRITICAL)"
+  help:
+    enable_issue_analysis: "Automatically analyze newly created Issues when enabled."
+    issue_auto_assign: "Assign Issue owners automatically based on AI recommendations."
+    issue_assignee_confidence_threshold: "Automatically assign only when assignee confidence reaches this threshold (0–1)."
+    issue_auto_assign_max: "Maximum number of people automatically assigned to one Issue."
+    issue_suggest_assignees: "Suggest suitable assignees during AI analysis."
+    issue_suggest_milestones: "Suggest suitable milestones during AI analysis."
+    issue_max_files_per_analysis: "Maximum number of files read during one analysis."
+    issue_vector_store_rich_metadata: "Include AI category, priority and feasibility assessments in vector search results."
+    issue_include_comments: "Include Issue discussion comments so AI analysis can consider community feedback."
+    agent_team_candidate_cache_ttl: "Candidate pool memory cache lifetime in seconds; 0 queries fresh data every time."
+    init_user_agent_daily_quota: "Base daily Agent quota for self-registered users."
+    init_user_agent_weekly_quota: "Base weekly Agent quota for self-registered users."
+    init_user_agent_monthly_quota: "Base monthly Agent quota for self-registered users."
+    star_aid_enabled: "Global repository aid switch; disabling it makes the page read-only."
+    star_aid_auto_star_enabled: "Enable automatic stars; manual stars and displays remain available when disabled."
+    star_aid_scheduler_enabled: "Start the repository aid background scheduler."
+    star_aid_min_interval_minutes: "Minimum interval in minutes between two automatic stars by one member."
+    star_aid_max_interval_minutes: "Maximum interval in minutes between two automatic stars by one member."
+    star_aid_batch_size: "Maximum number of members processed in one scheduler round."
+    star_aid_user_daily_limit: "Daily automatic star limit per user; 0 disables automatic stars."
+    star_aid_repo_daily_limit: "Daily new automatic star limit per repository; 0 accepts no new stars."
+    star_aid_summary_enabled: "Generate AI summaries for displayed repositories."
+    star_aid_summary_language: "AI summary language; an empty value follows the UI language."
+    categories: "Expand a category to edit its name, description and keywords. Use the buttons to add or remove categories."
+    keywords: "One keyword per row. Add or remove rows without quotes or commas."
+    skip_extensions: "One excluded extension or filename per row, such as .lock."
+    skip_paths: "One excluded directory or path pattern per row, such as node_modules/."
+    code_extensions: "One extension or filename to recognize as code per row."
+    ignored_patterns: "One excluded file pattern per row, such as *.md."
+    repo_overrides: "Add an owner/repo and choose settings to override. Unset settings continue to inherit the global value."
+    context_window_tokens: "Total model context length. The inherited value comes from the selected provider's model metadata."
+    max_output_tokens: "Maximum output tokens for one generation; match the actual model's capabilities."
+    thinking: "Choose a thinking mode. An unset value inherits the model default."
+    temperature: "Output randomness; used only when the model supports this parameter."
+    top_p: "Nucleus sampling; used only when the model supports this parameter."
+    top_k: "Number of sampling candidates; used only when the model supports this parameter."
+    effort: "Reasoning effort; support is determined by the model capability configuration."
 
-  # ===== GitHub App step =====
-  gh_title: "GitHub App Configuration"
-  gh_desc: "Receives Webhook events and posts review comments"
-  gh_app_id_label: "GitHub App ID"
-  gh_app_id_help: "Found in the General section of your GitHub App settings page"
-  gh_key_label: "GitHub App Private Key"
-  gh_key_help: "Generate and download the .pem file from your GitHub App settings page, then paste the full content"
-  gh_secret_label: "Webhook Secret"
-  gh_secret_help: "The secret configured in the Webhook section of your GitHub App settings"
-  test_github: "Test GitHub App"
-
-  # ===== AI & Notifications step =====
-  ai_title: "Notifications & Optional RAG Configuration"
-  ai_desc: "Setup does not require AI readiness; after completion, create accounts and bind roles on the AI configuration page"
-  ai_note: "AI accounts, models, role bindings, and fallback policies are not written to legacy config keys during Setup. After initialization, use the AI configuration page with account IDs."
-  rag_title: "RAG Embedding & Reranking Configuration (Optional)"
-  rag_desc: "RAG enables code vector retrieval to enhance review quality. Leave blank to use defaults (SiliconFlow); if the embedding API key is empty, RAG is disabled automatically."
-  rag_embed_key: "Embedding API Key"
-  rag_embed_key_help: "Leave blank to use the AI API Key above"
-  rag_embed_url: "Embedding API Base URL"
-  rag_embed_model: "Embedding Model"
-  rag_rerank_key: "Reranking API Key"
-  rag_rerank_key_help: "Leave blank to use the Embedding API Key"
-  rag_rerank_url: "Reranking API Base URL"
-  rag_rerank_model: "Reranking Model"
-  telegram_label: "Telegram Bot Token"
-  telegram_help_1: "Optional provider for announcement notifications. Create a bot via"
-  telegram_help_2: "to get the token."
-  test_telegram: "Test Telegram Bot"
-
-  # ===== Admin step =====
-  admin_title: "Admin Configuration"
-  admin_desc: "Set up the super admin account"
-  admin_gh_label: "Admin GitHub Username"
-  admin_gh_help: "Used to log in to the WebUI via GitHub OAuth. Make sure to enter your real GitHub username."
-  admin_tg_label: "Admin Telegram ID"
-  admin_tg_help_1: "Used to bind your Telegram account. Search"
-  admin_tg_help_2: "on Telegram and send any message to get your ID."
-  admin_domain_label: "Application Domain"
-  admin_domain_help: "Used for Webhook and OAuth callbacks. Use localhost for local testing."
-  admin_domain_placeholder: "localhost or your-domain.com"
-  oauth_id_label: "GitHub OAuth Client ID"
-  oauth_id_help_1: "Create an OAuth App in"
-  oauth_id_help_2: "to obtain these credentials."
-  oauth_secret_label: "GitHub OAuth Client Secret"
-  oauth_callback_label: "OAuth Callback URL"
-  oauth_callback_help_1: "Must match the Authorization callback URL configured in your GitHub OAuth App."
-  oauth_callback_help_2: "Click \"Generate Callback URL\" below to fill it automatically."
-  oauth_generate: "Generate Callback URL"
-  oauth_mobile_label: "Mobile Allowed Callback URIs (Optional)"
-  oauth_mobile_help: "Comma-separated whitelist of custom scheme callback URIs for mobile OAuth; when empty, only the default callback URL above is allowed."
-
-  # ===== Navigation & status =====
-  prev_step: "Previous"
-  next_step: "Next"
-  complete: "Complete Setup"
-  completing: "Configuring..."
-  complete_title: "Configuration Complete!"
-  restart_waiting: "The application is restarting, please wait..."
-  restart_timeout: "Restart timed out, please refresh the page manually"
-  refresh_page: "Refresh Page"
-
-  # ===== JS messages =====
-  save_failed: "Failed to save configuration, please retry"
-  request_failed: "Request failed: "
-  waiting_restart: "Waiting for application restart..."
-  restart_progress: "Waiting for application restart... ({attempt}/{max})"
-  restart_timeout_msg: "Restart timed out"
-  complete_failed: "Configuration failed: "
-
-  # ===== Language switcher =====
-  language_zh: "中文"
-  language_en: "English"
+# WebUI 2.0 messages (managed by scripts/sync_webui_translations.py)
+webui_v2:
+  m_00f0360d90df: Rerank provider
+  m_01062ca78304: Skip to content
+  m_010bb9b5b006: Issue analyses
+  m_013651f206ac: Return home
+  m_01401880e784: Redeem a code
+  m_0176dc07f928: Documentation index
+  m_017ed375e30e: Billing navigation
+  m_0185a9b9f0cb: View failed reviews
+  m_020ebe4f8941: Create task
+  m_022dd37ccbd1: Public repository
+  m_02ac11b0cd74: Reason for banning or disabling (optional)
+  m_02f4bb7a6f3b: Reconnecting
+  m_0309fb157426: Backup scope
+  m_0323217bdfe5: When to use
+  m_03a13e8739d4: Next
+  m_03c70af5ace3: Version
+  m_03cbbe7e0ae8: Scan summary
+  m_03d13b60033e: Requested
+  m_03ee4cc5a5ca: Enable this account
+  m_041b3fac7eec: View details for {0}
+  m_049d6b1e6abf: Search users
+  m_04c114789c7e: Start update
+  m_051187720189: Delete repository workspace?
+  m_0515ddc1bf6f: Recently updated
+  m_054f0ab4d577: Approved
+  m_05635e8946e4: Next
+  m_0576b78ace9e: Disable feature
+  m_05a8c743928b: No orders yet
+  m_05deaec3f65b: No suggestions
+  m_05e05db487aa: Update securely
+  m_05e9af30b608: Sign out failed. Please try again.
+  m_062b16e38dfc: Load earlier entries
+  m_06cf635dfde4: Reconnecting; periodic refresh is active
+  m_070c10dbb583: Abandoned
+  m_0722b7472b5a: Use this value
+  m_075708ba35df: Terms
+  m_075d87fbb8fa: Your preferences
+  m_077cdbe3e0a2: Telegram ID (optional)
+  m_07a25915e57e: Current refund status
+  m_07c372a0c509: Resource type
+  m_07d867d04c5d: Enable user
+  m_0809cd8c17b2: Task goal
+  m_0833311dbaab: Description
+  m_084b62b4ca1f: Last activity
+  m_0875453a42ed: Restore this backup?
+  m_0878ef3bda47: All features
+  m_08d238289a05: No credential
+  m_09379fff771c: AI accounts
+  m_09505f8fe7d0: Newest
+  m_095ccc8edbd2: Cache write
+  m_09bd23e00422: Loading accounts…
+  m_0a10311e7f6a: This account changed elsewhere. Close the editor and reload before trying again.
+  m_0a3c806f94ff: This content is restricted or was not captured.
+  m_0a62899e96f6: Cancel task
+  m_0a7afbe10d98: The credential rotates on every restart. Use the latest .setup-token file.
+  m_0b3caf95797e: All configuration
+  m_0b7f46095d8a: Currency
+  m_0b87822f8d09: Close record
+  m_0c01457f04b7: Open your order to view payment status
+  m_0c08782c9307: or
+  m_0c2067b6a2fd: Published
+  m_0c23e6c00763: Test connection
+  m_0c2a784cd0d0: Delete permanently
+  m_0c385a622d2f: More usage details
+  m_0c4dd8406f22: Settings group
+  m_0c8ba1f38680: New analysis task
+  m_0c9115f03b39: Inbox
+  m_0cbafaf9fd46: No operation charges
+  m_0ce851e2f18d: No pricing configured
+  m_0cff440ccbc5: Require verification for all users?
+  m_0d0f5a1a3fa8: Search versions, tags or commits…
+  m_0d142257f463: Update plugins and runtime permissions?
+  m_0d162a5ba194: Privacy
+  m_0d47a52c3a9b: Your account cannot access this page
+  m_0d9c85fc387c: Repository community is disabled
+  m_0dd8ccbb93f8: Live
+  m_0dd9358a739f: Goal (optional)
+  m_0e6cb4d42965: Receive this notification
+  m_0e9d1e9c783f: Host Updater reports no active job, but the previous request outcome remains unconfirmed. After checking the deployment, unlock this page and run preflight again.
+  m_0f1e60f2c9c8: Refresh models
+  m_0f3a32cb59c3: API endpoint
+  m_0fdfe2265827: No update job is active. A fresh preflight is still required before another update can be submitted.
+  m_0fea6d61c705: Unsupported historical currency ({0})
+  m_0ffec27b9ccf: Collection
+  m_101d422a8332: Existing authenticators and passkeys are retained. Users required to enroll must complete security setup first.
+  m_10d2982bb8c0: Version details
+  m_10ea5f4572d0: Review feedback
+  m_10eb4566b20c: Enable
+  m_10fbf926b016: Continue checking this job
+  m_118b5c4a1f82: All issues
+  m_118ead2a700c: Review activity
+  m_11ea11729912: Clear
+  m_11fc3275dc97: Authorize GitHub
+  m_11fda2710549: No delivery history
+  m_11fdc80ef076: Loading…
+  m_12320975b402: Setup cannot continue
+  m_1253ef362da9: Disable repository community?
+  m_1275e2934b50: High
+  m_1298b6d74cf0: Per-model capabilities
+  m_12c92aaec7db: This will change the task execution state.
+  m_12d6c2e3a4fc: Pull request reviews
+  m_132395713990: Round
+  m_13326276d555: No codes yet
+  m_13812da3e3e8: Could not load plugin configuration.
+  m_139ceffeeca7: Related issues
+  m_139e2f691c07: Verified
+  m_13d9fd7c7fcf: Delete worktree {0}
+  m_13e081baf40a: 'Automatic activity today: {0} / {1}'
+  m_14237e65600c: Clear completed records?
+  m_14265cf2a9b1: Preview
+  m_1436694305fd: Create a task from a GitHub issue, or adjust your filters.
+  m_14391a7271c0: AI accounts & models
+  m_144f72ade7c7: Select event
+  m_14500454eb1a: Completed
+  m_1459f80ed958: Add a verification method to continue.
+  m_1475233a78f5: Configure your workspace
+  m_149ff3fe176c: PR quota
+  m_14edc30083f4: Cancel order?
+  m_14f706073e84: Development
+  m_1525fc00b8a8: Open Telegram
+  m_15268584bc5b: Cancel order
+  m_157b8bee9663: Disconnected
+  m_1591efae3da8: Generate new codes
+  m_15ac3f44b070: Mark read
+  m_15eda6aacfac: Pull request opened
+  m_16511d4a045a: Last checked
+  m_1694c4e32731: Project summary
+  m_16a886d3a200: All sources
+  m_16e00f6c700d: Review strategies
+  m_171f81d17d52: Enrollment required
+  m_172b4f7ec37d: Actions
+  m_1746dfba4a5a: Sort by
+  m_1787f8f8f2aa: Super admin
+  m_178f89b5497a: Scan the QR code with your authenticator, then enter the code shown in the app.
+  m_1791a3cced0c: The action did not complete. Refresh the scan status and try again.
+  m_17e41c9592da: Turn incoming feedback into clear priorities and actionable suggestions.
+  m_1822f2d5fa60: Your receiver must return the expected ownership challenge response.
+  m_187c268799c0: Error details
+  m_1894fae6d3ad: Checkout amount (minor units)
+  m_18cf0995f245: Alert threshold (Credits)
+  m_18db84d8266d: All activity
+  m_19091cd509ef: Clear completed records
+  m_19122d49bba0: Choose model
+  m_192ffed7a00f: Legal information
+  m_193de33db975: Completed
+  m_19a9a3754657: Notification view
+  m_1a1acc4e750b: Backups may contain service credentials and account security information. Store them securely. Restoring a running deployment preserves its database and Redis connections.
+  m_1a3fbfdd1cf3: Delete notification preference?
+  m_1a8befd4d2c3: Backup restored
+  m_1a8fbb6d44f7: Plan name
+  m_1aa8a36c7f6e: HTTPS receiver URL
+  m_1abd2278e789: Light
+  m_1ac3075466d7: Email
+  m_1ac454adc15e: Replay this payment event?
+  m_1b03d882eb26: You do not have permission to perform this action.
+  m_1b4392a4511d: Unable to open this page
+  m_1b68a8d2d2f0: Indexes and scans
+  m_1b73774ba1c0: All users
+  m_1baaef267f6b: All entries
+  m_1bb415ea7c70: Announcement management
+  m_1bd6bf8c5c56: This creates a new scan using the current quota and billing policy.
+  m_1bd8519620c0: Clean inactive worktrees
+  m_1bd9fd9af2d7: Saving…
+  m_1c2561ded2b9: repositories
+  m_1c80b00b861c: Continue with GitHub
+  m_1d1733f7f96f: Version pages
+  m_1d38050b5b77: Effective limit
+  m_1d9d43e49daa: Usage completeness
+  m_1e18fc052cec: Verify delivery channel
+  m_1e202de4e83a: Delete this code?
+  m_1e75b6db3719: Selected
+  m_1f0917f65eb9: '{0} approved'
+  m_1f0d89c128e7: Purchase {0}?
+  m_1f46219567ec: Copy failed; please copy manually
+  m_1fb62d6d71f0: About
+  m_1ffb5572bd0a: Apply adjustment
+  m_201dcae027dd: Discover community projects and manage the repositories you share.
+  m_2020004cccba: No feasibility analysis available.
+  m_20339ab89832: Pending
+  m_203715415e7c: Unavailable
+  m_203b976b89d1: Resource ID
+  m_204d29654398: Result
+  m_2056f7c8a65d: Transfer the exact amount using the specified network.
+  m_205cbe72daa4: Past alerts
+  m_209fb815f51b: Candidate
+  m_213511b228a8: Verification failed. Try again or sign in with GitHub again.
+  m_214b4fc1e896: Operations
+  m_2170ac16f339: Verified evidence
+  m_218032a2d599: Connection successful
+  m_218dad37a588: Look up the user authorization App using its Client ID
+  m_21b768da8c3a: 'Yes'
+  m_21ceba27062e: Delivery statistics
+  m_2225353fd2c7: Wallet
+  m_2225f0c5bcbf: No reviews yet
+  m_223b523f67c0: Remove global verification requirement?
+  m_22c9bca04e1a: Notifications (optional)
+  m_22d7fb77b527: Page name or setting keyword…
+  m_22dbc9e940d3: Search activity
+  m_22dd9a3fd874: Find reviews, understand decisions and explore suggested changes.
+  m_239c6083903d: All users, settings and business records will be deleted. Confirm that you are ready to start again from initial setup.
+  m_23ebb1a8859b: Redis connection
+  m_2404a3658e82: Edit code
+  m_244620c0ffb4: Verify the receiver again after replacing its secret.
+  m_246afc51f2b4: Search GitHub users
+  m_2470951cf97e: Working branch
+  m_24ade794645e: your workspace
+  m_24b461417f76: Channels & preferences
+  m_24b55701976b: Refund
+  m_24c467ba381a: Account details
+  m_24d7ce20b8a2: No collections
+  m_24dd8f3779c1: Refund request reason
+  m_24f8e6373d61: Major
+  m_25150bc22a65: Project links
+  m_2519e76e7e19: Usage
+  m_2575a4b82c8c: Publish new version
+  m_25c247e62289: No matching feedback
+  m_25c66e736041: Arguments and result
+  m_25d536e565fc: Publication history
+  m_2618da7a3299: Workspace write
+  m_267c437db66b: Check the active cache and queue connection
+  m_26e855ff98fa: Email address
+  m_26f17e8e6dbb: Verifying…
+  m_26f1f3c42d59: Track full repository checks, reports and findings.
+  m_271dfef9b4e7: '{0} unreported, {1} incomplete'
+  m_2722464f9a27: Stars
+  m_2725a9fee47d: Complete
+  m_2736ba717b5b: Active
+  m_274091b0934e: Connecting
+  m_27667df6f5e2: View all
+  m_27b311a0906c: Approval issues a real refund. An unknown outcome remains pending reconciliation; do not initiate a separate refund.
+  m_27c859260c13: Connection tests use saved deployment settings. Service operations affect this instance.
+  m_27e4cbebb19b: Replay event
+  m_2814bbcc4de5: Read
+  m_28478e383d3a: Code from your email
+  m_287f8e1cb999: Searching…
+  m_288d680147c1: Model usage
+  m_288f9ea8d0ea: Verify and sign in
+  m_28be8b877799: No usage records
+  m_29665382ccbf: Time
+  m_29b3c439176b: Reset database
+  m_29b9e4fc2117: The task will be returned to the pending queue.
+  m_29c966c15789: Thread
+  m_29de021e3acd: Enable
+  m_29f6cc1e59c3: Connecting
+  m_2a14a22961bc: Not supported
+  m_2a315094665b: Delete passkey?
+  m_2a3b488555ae: SKILL.md or ZIP file
+  m_2a7c2262e29e: Receive an alert through your notification preferences when the available balance reaches this amount. Set 0 to disable.
+  m_2a7d20a17ca8: Resume
+  m_2a8da15c4d0e: 'Scan #{0}'
+  m_2aaf213d985b: One-time
+  m_2abca65396c0: Price
+  m_2aca617bae75: Retrieval (optional)
+  m_2addf6811119: General
+  m_2b135a3bf37a: New task updates and account messages will appear here.
+  m_2b48e65117a9: Connection failed. Check the endpoint, credential and default model.
+  m_2b692fb394f9: Validating
+  m_2ba3ab76001b: Workspace deleted
+  m_2bbb3adc24cd: Administration
+  m_2bccc320bc7a: Actor
+  m_2ce5d56493a5: documents
+  m_2d1ba7b6300b: Reconnecting; the update outcome is not yet confirmed
+  m_2d64e2b8f571: The action could not complete. Refresh the task and try again.
+  m_2deec39484ae: Show advanced settings
+  m_2e104e31386b: Send test
+  m_2e25a5c275bc: Search tasks or repositories
+  m_2e29873f2803: Delete this file?
+  m_2e39fdaa62a0: Access denied
+  m_2f5560045bf7: Findings
+  m_2f615cbc3ef8: Keep up with your reviews and pick up where you left off.
+  m_2f8616fa6cb1: GitHub access
+  m_2f8ca1903735: Enter a valid integer ID.
+  m_2f9138a97eab: GitHub SKILL.md URL
+  m_2fa0f5d49fce: Member status
+  m_2faf3625b308: Setup credential
+  m_2fb8fac02d84: Retry task
+  m_2fc29a646c1b: Main navigation
+  m_2feb5a68a885: Billing & usage
+  m_2ff4fa9c93ad: Channel type
+  m_3020bdef65bf: Reauthorize
+  m_3073867631ac: Permanently erase the database
+  m_3096b3a9dcec: Your workspace is ready. Sign in to get started.
+  m_30ac847128e0: Enter a nonnegative amount with at most six decimal places.
+  m_30cdf415a947: Disable user
+  m_318a310f3e14: Order ID
+  m_319c413da254: Quick access
+  m_319d75adfb7a: Try a feature name or a shorter keyword.
+  m_31d5c3a91db5: Latest security event
+  m_31fefb68ebfa: Connect accounts, choose models and tune requests
+  m_32157adcc31e: All reviews
+  m_321c6121e853: Welcome back
+  m_323a14872cfe: Delete plan {0}?
+  m_323a8e850150: Clear selection
+  m_3248def51839: SMTP password
+  m_3265d6f70b6e: No activity yet
+  m_32820725e109: More options
+  m_32b63dd4d802: Add channel
+  m_32f8ff0f7923: Create announcement
+  m_32fa7999a19e: Application configuration
+  m_332ec2a06d0b: No passkeys added
+  m_335bbff128c3: Add guidance or feedback
+  m_33942fde23b3: Credentials are used to connect to the service. Saved secrets are never displayed.
+  m_33aac21fe5e2: Release history
+  m_33d3c0415e44: Delete {0} selected documents?
+  m_33d54c724e11: Internal
+  m_34407ed68cfd: Model call
+  m_3473d55589e2: Setup expired. Please start again.
+  m_34c6e3e1a6ba: Enable channel
+  m_34fdd5f8460c: No usage yet
+  m_350776c06f06: Cache write support
+  m_35214eb32ecf: Minimum severity
+  m_354b126bc2a6: Try another search or clear your filters.
+  m_355229ef7800: Continue to sign in
+  m_356d149c4836: 'Advanced: import or bulk-edit JSON'
+  m_35715a194715: SMTP host
+  m_357c24ce1f82: Approve refund
+  m_35d5bc50aa6b: Unsaved content will be lost when you leave.
+  m_35fd7ff73474: Default model
+  m_3604502a2548: Active
+  m_3634235678e9: Could not load settings
+  m_3647e500ea39: 'Expires '
+  m_36819566b6a9: Could not discover models. Check the saved connection settings.
+  m_374de587416d: Code redeemed
+  m_375205fe123f: One more step to securely continue.
+  m_3755868cd3ac: Restoring…
+  m_37a9a65aff59: Administrator access required
+  m_37beda4eba1a: Suggested labels
+  m_37cd50fab5fb: Priority
+  m_380a1e734ebe: Configured; leave blank to keep
+  m_3833e204b6e3: Reporting
+  m_383c966554f1: Question
+  m_383e66b6f991: Load more conversation
+  m_385111cde8ec: All threads
+  m_38599207e662: Pending deliveries to this channel will be cancelled.
+  m_386e9652a91b: '{0} attempts'
+  m_38a31d01833f: Delegate an issue and follow its plan, changes, and reviews.
+  m_38d57dd614fe: Warning and above
+  m_38ed249e843f: All invocations
+  m_38f86cb19b89: Publish this price version?
+  m_39009718d93a: '{0} items'
+  m_39051e007b00: Enter model identifier
+  m_3921d943d1a0: Reserved
+  m_392d2394f660: Submitted for background processing.
+  m_395fc29b0ff8: Messages
+  m_39971e843a63: GitHub sign-in did not complete. Please authorize again.
+  m_39a70d4ba0c0: Remove user
+  m_39c18788d750: Delete queue record?
+  m_39fa27275064: Setup did not complete
+  m_3a259c803a1b: Leave and remove stars added by this feature?
+  m_3a2d8766587f: Exceeded
+  m_3a62d40c7c9d: You have unsaved changes. Discard them and leave?
+  m_3b04fa6d2099: Update sensitive setting?
+  m_3b110dfdcd8f: Submitting…
+  m_3b7a97b70972: Delivery channels
+  m_3ba7ddfe6e1a: Configure connections and your administrator to get started. Manage AI accounts in Settings.
+  m_3bc63cd8a759: 'For example: My laptop'
+  m_3bcc5678b105: Check the quantities and expiration date.
+  m_3bce14209e5d: Backup validation failed. Check its type, version and connection settings. No restore was applied.
+  m_3bd785e584df: Choose plan
+  m_3bdc65a7a84c: New invocation
+  m_3be87163df5a: Check your connection and retry. Your changes are kept.
+  m_3c18a7fa3eb6: Adjust capabilities and context limits for a specific model. Restore defaults to inherit model metadata.
+  m_3c34850b752f: No events awaiting reconciliation
+  m_3cbdb4952e1a: Creating…
+  m_3cc3c5f77e43: Quota must be a nonnegative integer.
+  m_3d24bc21a7b8: Skipped
+  m_3d28304d7552: Useful links
+  m_3d86f5101586: Configuration saved, but the audit record could not be written.
+  m_3d9c33d3a666: Development builds may contain unstable changes. Deployment checks must pass before an update can run.
+  m_3e2b075e3379: Payment method
+  m_3e4042d56c8e: Repository community is enabled
+  m_3ea4f41ec742: Awaiting reconciliation
+  m_3ebe5067520b: Add protection to your sign-in
+  m_3edd17413755: No tasks yet
+  m_3f4d6cbde5b6: Default
+  m_3fb2517a80c0: Add AI account
+  m_3fd708ab4ba3: Model calls
+  m_403b81ea18d1: Repository not found
+  m_40509f837be5: Reload to use the new version
+  m_40722432f2fe: Health score
+  m_409f05c899aa: Add delivery channel
+  m_40e01c1aabec: No models discovered. You can still enter model IDs manually.
+  m_4113d3eff908: Reset database…
+  m_411e6648c6d6: Installation could not complete. Check your connection and try again.
+  m_417bf08e113c: Export failed. Please try again.
+  m_41808f9b3569: No authorized installations
+  m_418bd0e6e985: No matching projects
+  m_419392a15261: Queued
+  m_419620a47535: Open this page over HTTPS in a browser that supports passkeys.
+  m_41dcb0d31d0c: Processed
+  m_423e2ad11fb5: Open session logs
+  m_42563775a11c: User updated
+  m_425f60a0ad83: 'On'
+  m_426f93fe36a4: This issue is closed and cannot be analyzed again.
+  m_427489d3d208: Search managed repositories
+  m_4280e550a274: Save preference
+  m_429aa3ad6bbc: Delete {0}
+  m_42ab0f73262e: Display name (optional)
+  m_42b377818478: All repositories
+  m_4300d8c2afac: View data table
+  m_4312416ea113: Full analysis
+  m_437c98af7e59: Operation charges
+  m_43906f2fcc39: Feasibility
+  m_43f3b0123087: Unsaved account settings will be lost.
+  m_43fec8fb0578: This changes the deployment update channel. Confirm the selected channel.
+  m_440d6a085c1a: Application domain
+  m_44324e2b540f: Publish
+  m_4451b4465994: Could not update the skill. Refresh and try again.
+  m_44d386341d17: Payment status
+  m_453299d9362d: Grant a plan
+  m_4580ce4fb3ae: Open report
+  m_4586d7e4f985: Daily
+  m_458a1928e92f: Delete “{0}”? Accounts still assigned to a role cannot be deleted.
+  m_45ac3415f56c: Workspaces
+  m_45cf4148c1dc: Selected repositories
+  m_463ebce0e325: Unable to refresh network status. Check your order again shortly.
+  m_4645b7255e43: Entry type
+  m_46540577aa57: Issue analyses
+  m_46d20e8a21a9: Created
+  m_470b613b9ef5: Save configuration and start Sakura AI?
+  m_4746510edad3: Analyze this issue again?
+  m_4782dc2653f1: Terms of service
+  m_4792bb2869fb: Name
+  m_4800d6131c60: Private repository
+  m_4806ba583121: View scan tasks
+  m_48141772f1d3: Untitled
+  m_48ae74c6c6eb: Order amount
+  m_48bc8eabeaca: Planning
+  m_48c7efa3796f: Limit to a specific resource
+  m_491c76ddc9e3: skills
+  m_494bd33554a7: Connect your first AI account
+  m_494ef696f725: This deletes queue records in the selected state. Generated review results are retained.
+  m_498cf31a226b: Reading update status
+  m_498da6e0e885: Cancel scan
+  m_49b802380ede: Context
+  m_49bb5618b651: User
+  m_49c4e81ff7ba: API key
+  m_49ea33ef68a7: No findings match this filter
+  m_4a64441edc92: unsaved changes
+  m_4a6d17c96f57: Triage, priorities and next steps
+  m_4a942fd98407: Save account
+  m_4af05344a3bb: Clear protected content
+  m_4af6a4122086: records
+  m_4b19f90ecc19: 'No'
+  m_4b5d4cce371f: Installing…
+  m_4b79494fb3bd: Average health score
+  m_4bb18c0aca95: Two-step verification is on
+  m_4c1e5e52ad10: System maintenance
+  m_4c3ff3fe4b90: GitHub App slug
+  m_4c52a7acda80: Plugin configuration
+  m_4c665a1a3e4b: Task updates, account messages and announcements.
+  m_4c83a18ee203: The operation did not complete. Check the current state before trying again.
+  m_4c85f26cc297: Publish announcement?
+  m_4c979f6512aa: Connect your authenticator
+  m_4ca273f608f3: Awaiting human input
+  m_4cbd45cdde07: Enhancement
+  m_4cd0d9aeeb35: Connect your GitHub account
+  m_4cdea94fee82: SMTP port
+  m_4cf923f611c8: Fulfilled
+  m_4d04d3ef2eff: Output / million tokens
+  m_4d2f7a9780ac: Send
+  m_4d3c328a6052: Use a verification method set up for your account.
+  m_4d6361706cc2: Reasoning status
+  m_4da2ea455576: Quota benefits
+  m_4e16a93bbb6b: Documentation
+  m_4e304926fcf1: Check the active database connection
+  m_4e39b5938e70: Copy all
+  m_4e45f8c41840: GitHub App is not configured
+  m_4e9786a564da: Pending
+  m_4e9e2cbaa0b6: Continue to payment
+  m_4f1d396e5512: Strategy
+  m_4f38922a1f88: New price version published
+  m_4f4dc3946204: Create and queue
+  m_4f5d279137c7: Turn off authenticator
+  m_4f749d394e48: Database URL
+  m_4fb9e5e9361d: Model pricing
+  m_4fdcc127f6e6: Processing
+  m_4fde234f79ef: Use an app such as Google Authenticator to generate one-time codes.
+  m_4fe9d82e91eb: Feedback generated for your code
+  m_5010daf96f94: Session
+  m_5044e0c63125: View content
+  m_50c015dd97a6: Sign in to
+  m_50f123037259: Privacy policy
+  m_5139fceecbd4: Running
+  m_51688cb42ffa: Clear
+  m_518a9a767778: Status checked; allow preflight
+  m_519d2ec35639: Reset all verification methods
+  m_51c0be93621b: Too many attempts. Please try again later.
+  m_5270b61cd4bf: Test
+  m_5289bec25b3b: Rerank API key
+  m_52eb5ff8bda9: Labels
+  m_5307a254d2b4: Super administrator access required
+  m_5325c1126d08: Choose the notifications you need
+  m_5338567ad8ec: Suggested change
+  m_534ee938d09a: Run preflight
+  m_5354f3927e4c: Next page
+  m_53610b40eae2: Credential configured
+  m_538252cb92f5: Exporting…
+  m_53de84160ef9: Erase and restart
+  m_54189cef33bf: Install from GitHub or upload a SKILL.md / ZIP file.
+  m_5466a7f14cb5: Passkeys require a supported browser and an HTTPS connection.
+  m_54e3d09bc7ee: An issued code retains its purchased offer. Generate a new code to use a different plan.
+  m_54fc6b5824e3: Execution details
+  m_551984996d7c: Remove {0}
+  m_5580e45a6dc4: Ban
+  m_55cb05285539: Channel
+  m_55cebc53bc6a: Enable email (true / false)
+  m_55f9292f30c3: Balance
+  m_56d7e1634873: Orders
+  m_573350868f8c: Event
+  m_573e769b0c42: Embedding dimensions
+  m_57874b6ea163: Search queued repositories
+  m_5797d75b9289: Not connected
+  m_57d2f0601d04: Search settings, features or keywords…
+  m_5825124730d4: Sign-in options
+  m_58aecb12e180: Disable repository display?
+  m_58c64720bb61: Analysis, classification and responses
+  m_58eeb1a6e351: Code
+  m_58f2a6a5b058: Repository community
+  m_5949920beee9: '{0} remaining. Generating new codes invalidates the previous codes.'
+  m_59605e5c3dc9: 'Select code #{0}'
+  m_59690652f991: No workspaces yet
+  m_59beda7112b6: Approve and issue refund?
+  m_59c2355a08f3: Title
+  m_59f42b7c750c: Save quota
+  m_5a23928f3eed: Feature
+  m_5a47187249df: SMTP security mode
+  m_5a73c51a783b: No passkeys added yet.
+  m_5a917d9aef4c: Finish connecting in Telegram
+  m_5ab373f11ede: Findings
+  m_5acc5932fd63: Complete the binding in a private chat using your own Telegram account.
+  m_5af584822dc5: Approved
+  m_5b302f5893c2: Plugins & permissions
+  m_5b404d0244b7: Rejected
+  m_5b5b00425e67: System
+  m_5b94bd61997f: Operation
+  m_5bd06d2573e5: Enabled
+  m_5be66e487b28: Used
+  m_5bf2cdaa6c20: Enable Telegram (true / false)
+  m_5c3309566737: Plans and prices
+  m_5c6d4c5689ca: Unable to update. Try again.
+  m_5c893e919a6e: Confirm this action for this order. Historical financial records will be retained.
+  m_5c8bffdf4de8: Verification code sent. Check your inbox
+  m_5ccbf69b4445: Reasoning support
+  m_5cd757a93d8e: Authorize repositories
+  m_5cddb3352dc1: Inspect repository copies and task worktrees, and clean up files after tasks finish.
+  m_5d1242b2498a: Amount
+  m_5d30dee368e8: Files
+  m_5dc8a31d6515: Disabled
+  m_5dd5a9b915eb: files
+  m_5de533d674ba: results
+  m_5df91f767635: Related pull requests
+  m_5e25d9eca88b: Period
+  m_5e489eb31c1c: Provider
+  m_5ea26816631f: Return home or try again later.
+  m_5ea3aa338840: This deletes the installed files and record for {0}.
+  m_5ea83cc7f824: Check the billing source and model. JSON amounts must be quoted decimal strings.
+  m_5eb0437d4d3e: Save configuration
+  m_5ed4942601cf: Display order
+  m_5efb120c2c0e: Manage {0}
+  m_5efb82c4d6f8: Refresh
+  m_5efd7d233c27: Recent reviews
+  m_5f2841af5735: You will no longer be able to sign in with this key.
+  m_5fff2dd95dc1: Suggested title
+  m_601cd773c0a3: Export CSV
+  m_603e47cbbcf5: Plugins
+  m_6057a9272752: Embedding API key
+  m_608276e92a6c: No scans yet
+  m_609eafb10865: Bug
+  m_60ec8b185805: Last push
+  m_60f5af6e5f74: The action did not complete. Check the values and try again.
+  m_6151e3f7cff0: Review comments
+  m_61666353f5ba: Add an authenticator or passkey to continue to your workspace.
+  m_61a301f4d3ae: Stable
+  m_62cb80d713f7: The saved evidence will be processed using the existing idempotency rules.
+  m_63326f579ee3: No matching issues
+  m_634696b07317: Awaiting payment
+  m_6392b5a4ca1c: No repositories connected
+  m_63a03ead15f1: Choose an account or auxiliary service
+  m_63a725137922: Restore committed, but its audit record could not be saved. Check operational logs.
+  m_63bbce24ec8f: Restart
+  m_63f96e5638b5: Installed at
+  m_641ade1f3c7b: No sign-in method is available. Contact your administrator.
+  m_642a235b25ad: Checkout currency
+  m_64303fe8b52f: Usage
+  m_64410d04b8e4: Ask your administrator to finish configuring the GitHub App.
+  m_6467047d8b0a: rounds
+  m_649b2bfadb8a: Task title
+  m_64c255fe369d: Choose a task from issue analyses and scan findings, then confirm the goal for the Agent.
+  m_64dbc2b89edb: Last 30 days
+  m_651c9d3c9df8: Unbound pricing
+  m_654b31243088: Could not load backup options.
+  m_6579e020f906: GitHub username
+  m_6598a960008b: Loading…
+  m_65aeb0e22ebc: Retries
+  m_65d3eb62f00b: Plugin JSON
+  m_6644407510fa: Skills
+  m_665bf084bfbf: GitHub App private key
+  m_66afb44c6959: In progress
+  m_674b6d2db8fc: Delete all application data and users, then return to initial setup. This cannot be undone.
+  m_67b43e8352c6: Change role
+  m_67e2b26d9ce3: Shared repository management
+  m_68043f88235c: No external channels yet
+  m_6839525b28fb: Unable to load this page
+  m_684549cc0cef: No default model
+  m_686fee1b5706: Require verification globally
+  m_687d91fc8373: Calls
+  m_68c1ce795077: Positive adds Credits; negative deducts Credits.
+  m_6939a2ad1767: Minor
+  m_69508886259c: File content
+  m_695e6de8da1d: Repository scan
+  m_6963be794989: Change the channel, clear the search or refresh the list.
+  m_696f801f328d: Setup steps
+  m_6977b6061875: Retry
+  m_69aea807aa0d: Ban member?
+  m_69df7cb46492: Delete passkey {0}?
+  m_6a73b75c56a5: Connect a provider, then assign models to your workflows below.
+  m_6aae064d8519: Refresh this page after the service returns. A database reset returns to initial setup.
+  m_6ace4f550995: Vector storage
+  m_6af81ae0148f: No entries match these filters
+  m_6bbbd92b5627: Tasks
+  m_6bd3bbc03b00: Verify it's you
+  m_6bffc8750304: Agent workspaces
+  m_6c4e92e855ae: Status
+  m_6ca176d494c4: Failed
+  m_6ca6d8b64f63: Repository
+  m_6cde6c670adc: View published comment
+  m_6cf14bcf7098: Connect Telegram
+  m_6cf9ae06e108: Add preference
+  m_6d02eeb0a6a7: Refund amount (minor units)
+  m_6d55a4082d4c: Versions and release history
+  m_6d7b9597e333: Reject
+  m_6dfaec888f7a: Administrator GitHub username
+  m_6e12a0d13028: No summary available.
+  m_6ed7c1c95e0f: All severities
+  m_6ee0fb7d1b2b: Generate new recovery codes
+  m_6ee84489eb8d: All orders
+  m_6f091658cd04: Star {0}?
+  m_6f2f8e350331: Host Updater
+  m_6f4d5f1c7328: Date
+  m_6f5611800192: SMTP username
+  m_6f9798549837: Search members
+  m_6fe3baac2fe2: Batch name
+  m_70530a78f5fb: Review queue
+  m_70a9668db793: Repository status
+  m_70f297fbb035: The complete deployment outcome is not verified. Check Host Updater and the running version.
+  m_7116eb963cce: Restart Sakura AI?
+  m_712da14e1299: Showing the latest 100 sessions you can access.
+  m_7161bc9b15d6: Select plan {0}
+  m_716fc9ccde94: Plans & pricing
+  m_71cf81dc997a: JSON file, up to
+  m_72030606ccba: Describe what you would like the Agent to adjust…
+  m_7266fee0533a: Discard unsaved changes for this model?
+  m_726b0c0ee548: Details
+  m_72722cf19fce: Retry failed deliveries
+  m_7280e9792fed: Self-reviewing
+  m_728c4324da7a: Billing source
+  m_7292c852ecc7: Checking task status…
+  m_72d59c5ebbaf: Price versions
+  m_72d6956497fc: Settings
+  m_7341ed10a607: Current phase
+  m_7362dd47ed49: Actual model usage
+  m_73c98e4d9e2a: Delete preference {0}
+  m_745a837aee45: Unverified
+  m_74a6a386d7c4: Per-user business execution limit
+  m_7501c36a43be: Relevant code
+  m_75223a4886f9: Join repository community?
+  m_7563a1f9785a: Pull request
+  m_759b479cb1f0: Show more
+  m_75b1416a35ea: Adjust this balance?
+  m_76056378570e: Telegram ID (blank to unbind)
+  m_76178e327d7f: Extract knowledge
+  m_765ef60e13e4: Leave settings?
+  m_77002ea6ee6a: Verify
+  m_771388c1fc61: Loading models…
+  m_7763e1a2e8e6: Balance alert updated
+  m_778bc94ad04a: Check the user ID and amount (Credits allow up to six decimal places).
+  m_77bee6301e1c: Account security
+  m_78298e5f96fd: Repository name
+  m_784f42d52adb: Update progress
+  m_78592c655582: Restart application
+  m_78865b3e6994: Issue index
+  m_78ba7907d4ef: All decisions
+  m_7944d36ea16b: Maintenance
+  m_79db5ab8907a: Clear search
+  m_79f048036fb6: Available versions
+  m_7a9dea9c2f9d: Plugins & runtime permissions
+  m_7ad3f05ca994: Credit transactions
+  m_7af529b02a7f: No matching settings
+  m_7b6a1c9d4ca8: Worktrees cleaned
+  m_7bd9b5a8bab2: Search repositories…
+  m_7bef21343a36: Search community projects
+  m_7c3c0ba74f68: Create order
+  m_7c7db4304e8c: Continue payment
+  m_7c822f53ae9e: Plugin configuration saved
+  m_7c8f78500c7e: Turn off
+  m_7d120f1c3817: authorized repositories
+  m_7d29f1df8e4e: Iterations
+  m_7d3903f51e0f: Could not complete the connection test. Try again later.
+  m_7d6d123fc944: e.g. Team primary account
+  m_7d7a701a1c9b: Could not save. Check the endpoint, protocol, model and billing configuration.
+  m_7d8f6ff6d8ef: Continue
+  m_7dad0bc8578e: No announcements
+  m_7db93b761c14: Super administrator access required
+  m_7e4e168279ba: Scan settings
+  m_7e61a885a65e: Refund request
+  m_7e886613664f: Manage billing
+  m_7eff4efac768: Enable {0}
+  m_7f0c6bb8bc3b: Generate codes
+  m_7f5d15fe637d: Discard changes
+  m_7f822d632a45: Leave and remove stars
+  m_7fae07ec6a68: Overview
+  m_7fcec164a7f4: Needs feedback
+  m_7fe4322b5725: System settings
+  m_7feec3c1d91f: Search users…
+  m_801410fafe94: Content (Markdown)
+  m_8073cbccceb0: New tasks will use the saved tools, hooks and permission configuration.
+  m_8074ed055d37: Messages
+  m_809542dc43c8: Could not save. Check service IDs, addresses, permissions and credential references; environment credentials must use SAKURA_MCP_*.
+  m_809fa044a64b: Submit reconciliation evidence
+  m_80b1cce01127: Binding link created
+  m_80e1fdb9c2bf: You are all caught up
+  m_810699cc9113: Save selection
+  m_8125de9f2065: Recent quota usage
+  m_812c103556ab: The plugin configuration changed on the server. Reload before editing to avoid overwriting changes.
+  m_813a23f51b04: Unavailable channel
+  m_8142fafa4bcc: All review records
+  m_8152dfa0a513: Member
+  m_8188d17229d9: enabled
+  m_81d10bfb0206: Release notes
+  m_8202d6aadaed: Available balance
+  m_8215932376c4: FX rate
+  m_823e99577ac9: Input / million tokens
+  m_8246013af6e7: Submission could not be confirmed. Refresh your records before trying again.
+  m_825acb0868c9: Repository scans
+  m_829566cc8913: Delete collection?
+  m_8301a91dca1c: Reset authenticator
+  m_83230ac72984: Enter your setup credential to continue.
+  m_833257af5b7d: Generated codes
+  m_8332636bc98e: This permanently deletes the task and its records.
+  m_83416b2bb6c1: Model
+  m_834fd32d6398: Purchases are currently unavailable
+  m_83554ef6b87d: Could not confirm the reset outcome. Check service status before trying again.
+  m_8369b221ac61: Version view
+  m_836ae5716d11: Cache read / million tokens (optional)
+  m_83e0b025008a: 'Type the following confirmation:'
+  m_84799702ecf5: Code files
+  m_849822ed75b1: Test notification queued
+  m_854e8701f20d: Scan statistics are unavailable. The list remains available independently.
+  m_8552d1d5fe7d: All files
+  m_85b4b7eed2d6: Pending reconciliation
+  m_85fd3a9a67d8: Activity
+  m_8627635af1a1: Set up Sakura AI
+  m_86328ff6d7c2: This repository may no longer be included in your GitHub App installation.
+  m_86393d4ce477: Severity
+  m_8648fe228267: All roles
+  m_864c0ca42797: Descending
+  m_867c99fbb0b8: Reason
+  m_86a0d29c5798: Delete task
+  m_86a0f15d04a8: View {0} repositories
+  m_86b3a2290396: PR, Issue, Agent and Repo Scan share this limit. Queued and running executions count until the task ends. Leave blank for no plan limit.
+  m_86b5f2790b9e: The update request outcome is not confirmed. Checking Host Updater; do not submit it again.
+  m_86d6cde52e73: Export backup
+  m_86fc17f5ceb8: Progress
+  m_86fe4b67ae6f: Models updated
+  m_8727bc13f0e1: Could not delete the workspace. Check that its tasks have finished.
+  m_87936ade9a32: Could not confirm the restore outcome. Refresh and inspect current settings before retrying.
+  m_87bd696d4277: Quota updated
+  m_87e6d28d183a: Destination
+  m_87ec7884ad93: Could not check for updates. Please try again.
+  m_880dfdedd8eb: Image digest
+  m_885a77c73324: Role
+  m_88632e66cfa1: Add account
+  m_887904c730e5: The index will be updated in the background using the current configuration. This may take a few minutes.
+  m_888d31c344dc: Expires at
+  m_889c15b3269c: This starts a new scan execution with quota and billing admission.
+  m_88de49b9f8be: Notification preferences
+  m_88e1e7b9bdf4: Sign-in OAuth Client Secret
+  m_89008ab5317f: Reviews will appear here when your GitHub App receives a pull request.
+  m_891db4eff48c: Choose a valid JSON backup exported by Sakura AI.
+  m_8958a5748a0c: Use for new version
+  m_895edfb232f3: Discard unsaved changes?
+  m_8987b3644c19: PR reviews per day
+  m_899a6dea9518: Expired
+  m_89c004bb6ef7: Skill updated
+  m_8a10f8cee6d5: Reading the setup state failed. Try again.
+  m_8a18227155fd: Delete all passkeys
+  m_8a1a655b2e86: '{0} recovery codes and {1} passkeys.'
+  m_8a1fcd8561e6: Redemption code
+  m_8a975cab6608: Community projects
+  m_8aa728c443fe: Tool call
+  m_8ace5496a9d8: Preparing repository
+  m_8b3f64a6ec24: Retry
+  m_8b5b2861739e: Filter transactions
+  m_8b80eaea95db: Use a passkey
+  m_8b9e64bcf412: Iterations appear here once execution begins.
+  m_8bb07eeba880: Updated
+  m_8c22f5114895: Quick find
+  m_8c5a7ff78f63: All tags
+  m_8c790c2611b6: Delete queue record {0}
+  m_8c88512d8335: Processing
+  m_8c90642e7651: Cancelled
+  m_8cb174cb04b8: Skill files
+  m_8cea4d9fa4cf: Issue quota
+  m_8d0ff5c7a749: Authorize to view the GitHub App installations and repositories available to you.
+  m_8d463b5728cd: Credits per settlement currency unit
+  m_8d5bb76cc554: Authenticator
+  m_8d8c535b9227: Embedding endpoint
+  m_8dcb633ca982: All repositories
+  m_8e6db71bdf64: Pick up where you left off with your reviews, issues and Agent tasks.
+  m_8eaf4ef3f83f: This change takes effect immediately for this user.
+  m_8ecf894b5201: Review details
+  m_8f480380bd5a: My shared repositories
+  m_8f5d7d9d582b: Redis URL
+  m_8fa3c728f12a: Cache read support
+  m_8fcc0c4d8cc1: Execution
+  m_8ff2a3e14649: Could not start a scan. Check repository access, cooldowns and scan settings.
+  m_902452e587c0: Delete
+  m_902ec401475f: All
+  m_904f86d32648: Candidate score
+  m_909af76c789f: Context operations
+  m_90a0a392915b: Settled
+  m_90b3c7a2d17b: Cleanup did not complete. Refresh the list and check task status.
+  m_90f185bed07e: Agent tasks per month
+  m_90fdb1411e7c: Authenticator or recovery code
+  m_9112cb6860ad: Enable repository community?
+  m_91850fcf7f4b: Suggestion
+  m_91939cc320cb: The code is invalid or already used. Enter a new code.
+  m_9198e935fcee: Leave repository community?
+  m_921160999ed6: Retry this scan?
+  m_922aa9e6d222: Search members…
+  m_925538222947: The requester will see this decision.
+  m_926e26a15b07: Administrator Telegram ID (optional)
+  m_92925c1224bf: decimal places
+  m_92a5cd1a9f8b: Language
+  m_92c9ba4a2d3c: Loaded {0} configuration entries.
+  m_936810909e34: This category does not exist or your account cannot access it.
+  m_936ef0edb262: Replace signing secret (leave blank to keep)
+  m_93742227be67: OAuth callback URL
+  m_93935476e49c: Rerank model
+  m_94688a3a4cec: Hide from order list
+  m_9471013d85b2: Task conversation
+  m_94c671b11191: Previous
+  m_94d9995a724c: Announcement
+  m_952ad1ecee71: Unable to complete this action. Please try again.
+  m_9535e3cd8543: Notification channel
+  m_954dcb880819: Join community
+  m_955ffb255ead: Workspaces are created when an Agent starts working on a repository.
+  m_95716ad61fc6: Save account details
+  m_958b04391f91: Rate limits and legacy quota benefits
+  m_959ba136eba7: View details
+  m_95a3dede4668: Choose an issue and describe the goal. The task will use your current configuration.
+  m_95a67140b782: Search versions
+  m_95f1b2a49fe1: Activity type
+  m_960cd604e0d4: Agent skills
+  m_9649150fcb47: File
+  m_96c1a46a03c6: Reload setting?
+  m_96c6ee79ee6e: Start a new full scan of this repository.
+  m_96cbd19e3765: This creates a new analysis task using the current quota and billing policy.
+  m_96e8551e6ac4: No matching users
+  m_96f7c3548af9: Application, authentication and service configuration
+  m_97450793e2bc: Implementation
+  m_979c39a688a5: JSON is incomplete. Correct it before saving.
+  m_97b40f6249ca: In progress
+  m_9855e963248b: Critical only
+  m_9857aabae342: Download backup
+  m_986421599659: Reviews
+  m_9869e722767d: Duration in days
+  m_987cf24bb210: Worktrees · {0}
+  m_98d4f497ae0a: Created {0} · Updated {1} · Removed {2} · Unchanged {3}
+  m_997a12bf5a9a: Current quota benefits
+  m_998286e93513: Runtime permissions
+  m_9989753b65f3: Provider currency
+  m_99d989e71465: Your balance is below the alert threshold
+  m_99efa9d0c3de: Scans use the current AI configuration, quotas and charging policy.
+  m_99fb3e894170: This deletes all local copies and worktrees for {0}. The remote repository is unaffected.
+  m_9a11ab757c04: Sign in with your device fingerprint, face recognition, or security key.
+  m_9a2e6bad7bad: Check the source URL or skill package format.
+  m_9a3dbc0f25d4: PR reviews per month
+  m_9a46ea7816ef: Priority {0}
+  m_9a4984fec533: Choose a plan for your usage.
+  m_9a634dad2a65: Search repositories
+  m_9a8916c2c50c: Preflight passed
+  m_9ad62a468cb1: Feedback was not submitted. Check the task status and try again.
+  m_9b475aed382b: Other images
+  m_9b4ac8e5a707: Close navigation
+  m_9b7299260186: Manage indexes and follow review activity across your connected repositories.
+  m_9b817f1a6b37: Save and publish
+  m_9b868c23996a: Database connection
+  m_9bbdf408962e: This change is recorded in the financial ledger. Confirm the user and amount.
+  m_9be9eec92be1: Repository memory
+  m_9c04cd0b41a2: The application is preparing the sign-in page.
+  m_9c28c9767633: Consolidate reflections
+  m_9c37abdaf571: Enter an issue URL or reference.
+  m_9c41abc4700c: Pricing configuration (quote decimal amounts)
+  m_9c4dbf86047f: Cache read
+  m_9c6b6c636247: Discovering…
+  m_9c738307eaea: Updated
+  m_9c9e29487861: Backup generated. Check your browser downloads.
+  m_9caf7c199c17: No matching versions
+  m_9ccc99b874a6: Discover saved account models
+  m_9cccc493b7fc: Edit delivery channel
+  m_9ce7aa45351c: '{0} items applied; {1} items not applied.'
+  m_9d46dcc9294e: Event
+  m_9dd73765260b: Add user
+  m_9ded9ebaff6f: Cancelled
+  m_9e2d9d273b5e: Security events
+  m_9e41fb168d33: Credits adjustment
+  m_9e7e76765e30: Start eligible repository scans?
+  m_9e9051a09aa4: Start scans
+  m_9e940281a66e: Operation did not complete. Check the settings and operational logs before retrying.
+  m_9ea3c47cec32: Indexing
+  m_9ee63a595610: Markup multiplier
+  m_9ef3ff8d89d4: Results and feedback by file
+  m_9f05ac92e9cb: Connections
+  m_9f3741e2a68a: findings
+  m_9f41cb5755c3: Number of codes
+  m_9f49c76cda6b: Connected, refresh
+  m_9f4e38c875e1: Weekly
+  m_9f75a5301ab6: Some recovery codes cannot be migrated. Regenerate codes for affected accounts.
+  m_9f75f3907d4d: The announcement will be published and delivered according to user preferences.
+  m_9f81a10385a7: Loading settings
+  m_9fa37bbd482e: Submission preview
+  m_9fd74418a53a: Review note
+  m_9ff92dd84e64: Comment
+  m_a01d96e16b7a: No matching reviews
+  m_a04f5000f7d6: Application restarting
+  m_a0603e6d31ab: Copied
+  m_a09e5ff43932: Use reported usage semantics
+  m_a0eb56e54ce8: Publish model pricing
+  m_a12072d8117e: Refunds
+  m_a129259c0ea5: Reasoning tokens
+  m_a14e3d816416: Manage MCP services, lifecycle hooks and tool permissions. Saved header credentials stay hidden; re-enter them after changing the service address.
+  m_a191dbc2216d: Choose a payment method
+  m_a25f5c52cd93: Existing orders and purchased benefits will be retained.
+  m_a26c047b8dea: Redeem
+  m_a290d5147baf: This removes local worktrees not used by active tasks, including uncommitted files.
+  m_a2d3e6ea626d: Authenticator disabled
+  m_a33b2db3c941: This changes the account verification methods and records a security audit event.
+  m_a344d59dfba9: Operation ID
+  m_a368773302f4: Context update
+  m_a36b8ce26adf: Users & security
+  m_a3c6290e2312: Issue analysis
+  m_a3c62fc054b8: Exhausted
+  m_a3e3416f7de8: Mark all read
+  m_a3f34ea9d99c: Balance
+  m_a406baec40f8: Notes
+  m_a442cdbad058: settings
+  m_a4616f886214: PR reviews
+  m_a4d1179d3d59: Reserved Credits
+  m_a53cd7e87214: Choose a configuration backup. Existing deployment connection settings are preserved.
+  m_a543b977fca0: Sender address
+  m_a59fd504e163: Confirm creation
+  m_a5d002294b72: The action did not complete. Refresh the queue and try again.
+  m_a6598d012d65: Signing secret
+  m_a65ef6d11a21: Organization
+  m_a6a59ac138aa: Save plan
+  m_a704adad1edb: Arguments
+  m_a717906cbfa6: Call kind
+  m_a75042ac2561: Clear failed records?
+  m_a76e1280f4f7: Total
+  m_a7bd7c2acfd6: Save your recovery codes
+  m_a7f5c0e6f13c: Analysis submitted
+  m_a7f8e61799e8: Could not load these model settings. Check the model ID.
+  m_a7fcc561364b: No matching candidates
+  m_a81b58b245d5: Compacted history
+  m_a82fed991f69: Account name
+  m_a83515106e98: Locked
+  m_a86575877bb7: All scans
+  m_a8726f601875: Changed
+  m_a895fc626257: Install Agent skill
+  m_a89e25b646cf: Analysis summary
+  m_a8a9fe034a79: This removes indexed content in {0}.
+  m_a8b198e0e8a3: Potential duplicate of
+  m_a927cea4e134: Rerank endpoint
+  m_a94a1384d44a: Refresh summary
+  m_a951fafd38e4: Passkey added
+  m_a955f5d2bac3: Install
+  m_a96851c120ff: Admin
+  m_a97fdf59b7a5: Restore default?
+  m_a9a443789654: I have saved these codes
+  m_a9d2cd2fb649: Remove global requirement
+  m_aa00b8bc8d6a: You're all set
+  m_aa474e41ac50: Expires
+  m_aa73053ed7f0: View orders
+  m_aaa5f1b70da3: Redemption codes
+  m_aad81a4f78bc: Delete AI account?
+  m_ab0356a68ebf: Subscription
+  m_ab037fd09a6e: Credits granted
+  m_ab1e668d0407: Pending pricing
+  m_ab6256bbf179: Use a different account
+  m_ab91c1bf0713: Personal settings
+  m_ab9bc2fd38b2: Recovery codes
+  m_abbd63820a65: Sign-in OAuth Client ID
+  m_ac2360cb2370: Search repository or number…
+  m_ac64340e6b7a: The file exceeds the size limit.
+  m_ac9552fa58a3: Device name
+  m_accb2ac206a7: Could not load earlier entries. Try again.
+  m_ad0592800b96: Codes
+  m_ad40710a4457: Agent task
+  m_ad5cb83a0376: Choose currency
+  m_adae835b35cf: The target will be checked again before Host Updater applies it. The connection may briefly be interrupted.
+  m_adafa3255753: Refresh repository documentation used for retrieval.
+  m_adc04e3440c3: Queue updated
+  m_addce7efe157: Submitted {0} repository scans
+  m_ae522b5b46c8: No matching skills
+  m_ae5519560e68: Delete skill?
+  m_ae82259d8d71: Select all visible rows
+  m_af1c7eeb45e1: Issued plan
+  m_af9769309e51: Agent management
+  m_afa508a8dde5: Remove file
+  m_afe2f4d4b4a3: Leave blank to keep the saved key
+  m_b006836bd854: Activity appears here when tasks start running.
+  m_b02e574438ca: Ascending
+  m_b03a2481cbc8: Source deployments can check versions. Apply updates using the source deployment workflow.
+  m_b0945602bd1d: Search all settings
+  m_b09513d63a09: Triggered by
+  m_b0b6963ec1b0: Two-step verification
+  m_b102991b6ca0: Suggested assignees
+  m_b131ac1e184b: Search title, repository or author
+  m_b13bac2c7bb8: Skipped
+  m_b19e8572b94b: Switch model?
+  m_b2239eb15dbf: Full access
+  m_b248fc2d6f93: Publication starts delivery to eligible subscribers.
+  m_b256ce517707: Transactions
+  m_b25a24f8f8e8: 'Concurrent task limit: {0}'
+  m_b26f47024382: Uncommitted local changes will also be removed.
+  m_b28ae5b7c12b: All tasks
+  m_b2a7673242a1: Verification code
+  m_b2f2956f387b: Create user
+  m_b32f4b968d74: Clear failed records
+  m_b39ad495a579: days
+  m_b3c1d962097d: Rejected
+  m_b3d72e8f930a: New thread
+  m_b3d805c2d4a4: Source
+  m_b3e606568f88: From
+  m_b41429271638: Payment events requiring reconciliation
+  m_b415dfefb400: Supported
+  m_b44ce9c36f3b: Inbox notifications are on by default. Verify an external channel, then choose the events you want to receive.
+  m_b514bf896866: Apply “{1}” to {0} selected items?
+  m_b53efee332c8: Sign in with your fingerprint, face or device PIN.
+  m_b580f9cc9924: Repositories
+  m_b5879e7f5b62: Search pages or settings
+  m_b58dd024f4f0: Invocation
+  m_b58fa1271338: Enabled
+  m_b644c72d62eb: Reload
+  m_b653be6075e1: Manage access
+  m_b66312de82fd: Action required
+  m_b6679b4b6015: Showing the first 80 results. Refine your search for more.
+  m_b66c6b1983b4: Reviewing
+  m_b6a08d758238: Users with financial records will be disabled while their records are retained. Other users will be deleted.
+  m_b6c48a7addcb: Clear collection?
+  m_b72f992913e5: Protocol
+  m_b78650777d9a: Verify the amounts, currencies and payment source. This may complete a payment or refund.
+  m_b78727c01cca: Order history
+  m_b7a969e429e8: Low balance alert
+  m_b7eedc82b89f: No linked task
+  m_b82e96f12e30: Source revision
+  m_b8bc5e95d108: No plans available
+  m_b8eaccdde98f: Close unavailable job record?
+  m_b98693a362d0: Agent tasks
+  m_b9b0d48a7bfe: Could not create this task. Check issue access and configuration.
+  m_b9e540e269ef: Price per unit
+  m_b9f7e39d9894: Save to repository?
+  m_ba0916a9ac4b: Updates
+  m_ba340104a257: Start
+  m_ba489ffa895e: First deployment
+  m_ba74d3bd5baa: Your feedback
+  m_ba85595a3266: This instance will briefly stop serving requests. Save your changes first.
+  m_baadb96f42f1: Working…
+  m_babe142e148a: Unnamed version
+  m_bad85bee2685: Close
+  m_bb0ac7ce40bb: Appearance, language and your experience
+  m_bb3c6aa16182: Refactor
+  m_bb592def8e88: Could not load settings.
+  m_bb7bddf3312f: Submit evidence
+  m_bbc0d2bbb472: Update requirements are not met
+  m_bbd7ff70a013: To
+  m_bc19ed365dd7: Check again
+  m_bc662c08e369: No reason provided
+  m_bca3d4a94a8c: Paid
+  m_bcf71ecce0b3: Used redemption codes cannot be deleted. Applied and unapplied items are reported separately.
+  m_bcf85d1ac434: Deployment status checked?
+  m_bd103c2be075: Connected
+  m_bd270c72228e: Pushing
+  m_be1877c8a04f: Label definitions, recommendations and repository scans
+  m_be8886f09463: Refresh status
+  m_beee9b52d339: No audit records
+  m_bf014482c474: Monthly
+  m_bfe4773ceecc: Input / output tokens
+  m_c055e632b1b6: Expiry (with timezone; blank for no expiry)
+  m_c07de6e60255: Recorded token usage
+  m_c0820929048e: Moderation note
+  m_c08a56d6be8b: Settlement currency
+  m_c140b96d11df: Start deployment update?
+  m_c155b062d6e8: Backup type
+  m_c169b5b3867e: Change the global repository community setting.
+  m_c183c458b48f: Search releases…
+  m_c1b393d16a47: My passkey
+  m_c1b91ab0d3f2: Inspect pending work, retry failures and manage queue history.
+  m_c1b9eb617313: Back
+  m_c21301ae1c17: Edit
+  m_c23140a52186: All statuses
+  m_c3273b243bb4: Try again
+  m_c34821f521b5: Edit AI account
+  m_c353cb7c161c: Choose how to continue
+  m_c36afb3403e2: Diagnostics
+  m_c39688cc15ff: This content cannot be read right now.
+  m_c3bae2867635: Export configuration or restore a backup
+  m_c3bc65946d8c: Choose a backup file
+  m_c3d06e89eb38: Describe the goal; leave blank to use the default.
+  m_c461cafecb64: Suggested milestone
+  m_c46240a2c01a: Administration navigation
+  m_c46383b3b381: Error and above
+  m_c4aaf8e3f8f3: Task status is temporarily unavailable
+  m_c4c126084872: Require enrollment
+  m_c50149813655: Sync GitHub repositories
+  m_c5805d4949d6: Notification preference
+  m_c5a946f69369: Model list (one per line)
+  m_c5d94b7c3c2b: Load
+  m_c63a4a289efa: Overall feedback
+  m_c645951da6b3: Unable to complete this action. Try again later.
+  m_c67d82626c17: Reload the plugin and permission configuration saved on the server.
+  m_c68dbd98c8e2: Users
+  m_c6aea3fc9d28: Enter an account name and check the credential format.
+  m_c7359f084879: Cache write / million tokens (optional)
+  m_c747a7596c5d: Critical
+  m_c79302e0431f: Plan
+  m_c7bf287c23e6: Application port
+  m_c804c0d4931a: All types
+  m_c80bf265972c: View record
+  m_c8361792477e: Local file
+  m_c850e6a7acc6: Restore the categories included in the backup. User backups follow the existing merge rules.
+  m_c8639fe40d48: Usage unit
+  m_c8682d297c0b: Embedding model
+  m_c87b2c1b30ce: Reject refund request?
+  m_c8acb2838639: Search all settings
+  m_c93a3445e827: Your wallet, charges and existing orders remain available.
+  m_c96ae7e1ed87: Total reviews
+  m_c97680a03660: Usage and files
+  m_ca508dd3844d: Order
+  m_ca7018465b00: Update target
+  m_ca97a036b892: Passkeys
+  m_cb31737a72c9: Historical balance alerts
+  m_cb55478c491e: Language, appearance and notifications
+  m_cb71de60ba3c: Skill installed
+  m_cb853c74bdc4: Release
+  m_cb92596fc839: Delivery history
+  m_cb98fc888316: Important
+  m_cba8e2c35e66: Release notes
+  m_cbeace414302: Receive notifications through email, Telegram, or a webhook.
+  m_cbebe3e491dd: Refund currency
+  m_cc0908198ab7: Embedding provider
+  m_cc265c36f69b: Started
+  m_ccb69047a545: All categories
+  m_ccbdac1b20f3: Discard plugin changes?
+  m_ccdae3b22acc: Save the current configuration or prepare for a migration.
+  m_cd12ceb01d1b: Retry queued task?
+  m_cd1c72871657: Each preference links an event to one destination. Sensitive notifications use verified private destinations only.
+  m_cd4dd922b140: Discovery failed; saved models remain available
+  m_cd5a39b55907: Action submitted
+  m_cdbe94f00dd9: This updates the repository community state.
+  m_ce38d9f6be09: Branch and execution options
+  m_ce6cb799a805: Target
+  m_ce7f09c7301c: PR reviews
+  m_cea225db1aa7: View protected content
+  m_ceccd72fb60d: All queue records
+  m_ced4a6c0425b: Install the GitHub App for your account or organization, then refresh this page.
+  m_cf1f93877d34: Check database connection
+  m_cf6f93797fbb: Toggle enabled
+  m_cf738610b335: Not provided
+  m_cf9a8aee5803: View order
+  m_cfa67756244a: Remaining legacy benefits
+  m_cff6ba5e1b83: Update channel
+  m_d01340fcd7f7: Date
+  m_d02bf106bc32: Try another search.
+  m_d0747c01a92f: New task
+  m_d08487b96896: Repositories appear here once they are authorized through your GitHub App.
+  m_d089d5221d8c: Quota
+  m_d09a27a1c6a4: Sender name
+  m_d0a64dfae5cc: Confirm this announcement action.
+  m_d0b1943d5772: Unread only
+  m_d0e946a21212: Page not found
+  m_d1516c39157e: Consumption
+  m_d172e103335f: Confirm update target
+  m_d18c499c2c2c: Announcements
+  m_d1cebd81f67c: '{0} selected'
+  m_d1cee25af31a: Manage announcements
+  m_d1e4ba802bd6: Request refund
+  m_d1e5cf467ea4: Action
+  m_d1ec1f4841c8: Leave community
+  m_d1ee2c87dd8d: Follow model calls, tool execution, and task conversations.
+  m_d221dcc0a573: Editing
+  m_d22e33e20bee: Your changes have not been saved.
+  m_d24789b0643b: Reviews and feedback
+  m_d2be13afd3f4: Review strategies, context and output rules
+  m_d2de8275a18b: User ID
+  m_d314cc991966: Settled Credits
+  m_d332f9374510: '{0} reviews need attention'
+  m_d33a88af425f: No plans yet
+  m_d380333e180f: Add passkey
+  m_d3a470679f41: Search by owner or repository name
+  m_d3bd838e45c4: Default
+  m_d44aa977abf2: Low
+  m_d465584b46b0: Cancel this scan?
+  m_d46dbe6e0da7: Future calls use the new version. Existing calls and historical bills keep their frozen prices.
+  m_d47442d32ce3: Detailed content was not captured
+  m_d49cb96248e0: Read only
+  m_d4aba2cbafaa: Restore backup
+  m_d4bc942e1088: Mark all read
+  m_d4bed40854a6: Unban member?
+  m_d4c7df05c5fe: Connected to GitHub
+  m_d4d9fc7072ff: Restore from backup
+  m_d4ffd45302c5: Delete selected
+  m_d5725bbf4ad4: Review summary
+  m_d573d023e310: Resume from checkpoint
+  m_d611074485e1: Issue analyses per month
+  m_d6142dbcc032: Choose the repository to manage.
+  m_d68736a683b6: No matching repositories
+  m_d6e45500970e: No transactions
+  m_d738574e0527: Tools
+  m_d764b4d2641c: Your balance, spending and order history in one place.
+  m_d7a49d54e4ee: Refund reference ID
+  m_d7c96052b379: unknown units
+  m_d7d3cf7c3db7: Account / model
+  m_d7e29043cc2c: Maximum uses
+  m_d80deadf38e0: Refresh the code index to locate relevant implementations.
+  m_d8331898204c: Security
+  m_d837f52f7ffa: Requirements
+  m_d84d47082e7c: Score
+  m_d8c0e383d3c2: Review results
+  m_d8eda41b6541: Save
+  m_d9097c3f93bb: Task execution, tools and search
+  m_d923bfb0d34e: Unban
+  m_d93d72dcb832: Migration
+  m_d95212cab7d2: Base branch
+  m_d96a3f2dce64: Changes requested
+  m_d9773b808f51: Install reusable workflows and tool instructions for your Agents.
+  m_d99d8e5add59: Notification pages
+  m_d9c65043d62d: Latest version on the current channel
+  m_d9cb0f16083f: Confirm
+  m_d9f4c553096a: General settings
+  m_da3ff04c60d4: Set up authenticator
+  m_da7a8215ac37: Iterating
+  m_dabecf4652b4: Update diagnostic logs
+  m_db0a4c75d56f: Network status
+  m_db62bee76c63: Open navigation
+  m_db76a849ed60: Remove delivery channel?
+  m_dbba1b5b86fc: AI selection criteria (optional)
+  m_dbd3b643d8a8: Approved
+  m_dc005b28cc43: Deployment and running version verified
+  m_dc0f3c59e59b: Plans
+  m_dc3d6b006e07: The file exceeds the upload limit.
+  m_dc7421919aaf: The passkey request was cancelled or timed out.
+  m_dc7b48736136: Settings categories
+  m_dc9805e6ec26: Public
+  m_dca8c3930eff: Star community
+  m_dce63ce1a2da: Cancel
+  m_dcf3abd2d14c: Low balance
+  m_dd7c4a1b6c74: Order updated
+  m_dda2ccb423f1: Candidate tasks
+  m_ddf41461379d: Check your connection and try again. If this continues, check your account permissions.
+  m_de1510069bb9: Find the credential in the .setup-token file inside the configuration directory.
+  m_de4eef18ce09: Analyze again
+  m_de5e2ffdbb74: Review
+  m_de7483414e04: Grant
+  m_deb952deb7c8: Members
+  m_debbf078e7e5: GitHub App access
+  m_dedadf342ad8: The default notification rules will apply to this event.
+  m_df859a7d97fa: The system will save configuration, create the administrator and restart the application.
+  m_df87b28e3cd7: Check again
+  m_dfa6b16b199a: View pricing
+  m_e032d507a97e: No worktrees
+  m_e042ea14dbf6: PRs today
+  m_e04ea2ceccd7: Purchase
+  m_e07956d140ab: Check currency precision, Credits and integer limits.
+  m_e082bac9568c: Status details
+  m_e0d539286270: Scan history
+  m_e12fab4b4c95: Waiting for the Agent to start.
+  m_e17cdb6bf2d6: Action type
+  m_e18c9dff6573: Enter API key
+  m_e1c0144f7b69: Current version
+  m_e1d05ee56b79: Select
+  m_e2212f458dc8: Refunded
+  m_e22b63a7b496: Account security
+  m_e22bd72f0b4b: Operation completed
+  m_e2bffcfe5ea6: Type
+  m_e2d3d402c2c1: Execution rounds
+  m_e359157e73bd: Maximum upload size
+  m_e389a3905d50: Allowed tools
+  m_e3f5ec711cfa: Region
+  m_e3f9a4f371e2: Medium
+  m_e42dd5e1f731: Some settings require an application restart.
+  m_e438e92a7d48: Finish setup
+  m_e4498fee5623: Preview content
+  m_e4626cc6ee11: Personal account
+  m_e471a9c85363: Delete worktree?
+  m_e476bcbc3f5b: Call details
+  m_e49072a14690: Cannot scan? Enter the setup key manually
+  m_e499afaeb3c4: Daily review counts for the last 30 days. Detailed data is available in the table below.
+  m_e4c169a04955: Verify
+  m_e4cdac946be7: Edit, publish and manage announcement delivery.
+  m_e5846d3da70d: Audit logs
+  m_e59c73274325: Sign out
+  m_e5b47096a07b: 'Last used: '
+  m_e5f2d3e5d657: No historical alerts
+  m_e601df7c1680: All priorities
+  m_e6490a452d3b: Updates are unavailable here. Check the Host Updater connection, version and deployment configuration.
+  m_e65435abb67c: Search authorized repositories
+  m_e68aac42562f: Super administrator
+  m_e6f268f8488d: Check the address, verification code, or channel status and try again.
+  m_e70a7e5814ec: Previous page
+  m_e75a2c760a48: Differences
+  m_e7e09690953c: New plan
+  m_e8133076baf0: Source details
+  m_e81d1bacf19a: Validation output
+  m_e8258905c572: Decision rationale
+  m_e861c71d8b10: This task is not accepting feedback in its current state.
+  m_e9d5acf28b04: Private
+  m_e9e5c315db2e: Could not load accounts or provider catalog.
+  m_e9ec9ade1488: Enable repository display?
+  m_e9fd2a349aa1: Look up
+  m_ea1a16cbe24a: Install skill
+  m_ea2ed36ae715: Discard account changes?
+  m_eaae875b61be: Jump to latest
+  m_eac34c8e1818: Stop the current scan execution.
+  m_eb0a02631bba: Notification center
+  m_eb39d25f5c79: System
+  m_eb9005291d5d: Save shared repositories?
+  m_eb943af0cd67: Documents
+  m_ebb0eb8bd427: Order created
+  m_ebc686aeede4: Update failed or rolled back
+  m_ec6dab1e9b4e: Image tag
+  m_ec79ea0b6bf5: External review
+  m_ecb4c5328992: Authenticator app
+  m_ecf94c7f2810: Task
+  m_ed00e50f61cb: Adjustment
+  m_ed0eda77ad62: New Agent task
+  m_ed5cb81212de: Tool calls · {0}
+  m_ed734e0c04b7: 'Off'
+  m_ed907a61fb1c: View transfer details
+  m_eda40f0e4ea3: Similarities
+  m_ede289c3c3f2: Selecting…
+  m_ee34ddf1ca4b: Commented
+  m_ee52bb3f989a: Withdraw
+  m_ee560dd61f3f: Repository (optional)
+  m_eeabc92e4fd8: Search results
+  m_eef7c38e34f9: Browse and maintain reflections, knowledge and repository instructions in .sakura.
+  m_ef1195d46d5b: Details
+  m_efc016afbf49: Grant this plan?
+  m_efcab8534ad5: Reported usage meter
+  m_f07cfbf0dd72: Plan
+  m_f0844827ffa2: Manage the accounts and repositories Sakura AI can access.
+  m_f0e8068d8670: Database reset confirmation
+  m_f0f3427759b9: The preflight or update request did not complete. Check the target and Host Updater status.
+  m_f0fa89b30224: Loading
+  m_f111b3aabf7b: Show all
+  m_f114589dc985: Submit reconciliation evidence?
+  m_f1259a613419: Output tokens
+  m_f1531b1eaeb6: Could not preview this issue. Check the reference and access.
+  m_f17b418bd665: Could not delete. Remove role bindings and check billing configuration first.
+  m_f18c1911d114: New price from version {0}
+  m_f1db6ad31828: The server preserves codes linked to redemption history.
+  m_f2934f35a54f: Historical orders and purchased benefits are retained. Referenced plans cannot be permanently deleted.
+  m_f2977891e300: GitHub authorization
+  m_f2f30981c396: No refund requests
+  m_f3171248b548: Title (optional)
+  m_f31db8e475fb: Choose repository
+  m_f3952207f6d6: Application timezone (blank uses system)
+  m_f3bfa9ee2012: Edit plan
+  m_f3d3eb5ef99a: Saving…
+  m_f3da338521ab: Issue analyses per day
+  m_f4838009bb37: Input tokens
+  m_f48ede8cbacb: Updated
+  m_f4d509b48cb8: Connect GitHub
+  m_f4e28a6a12a3: Refund policy
+  m_f538dce8806c: No matching queue records
+  m_f574ead78d39: Edit announcement
+  m_f57aca2e721c: This release has no notes.
+  m_f5a260029925: Enable feature
+  m_f6307f445889: Model ID
+  m_f65f6e1e6009: Amounts and IDs must be positive integers.
+  m_f6684186983a: Apply
+  m_f68f1c3a1eb2: Settings unavailable
+  m_f728949e790e: Read announcement
+  m_f733ce5bcab7: Code index
+  m_f759f8a7faf8: Clean inactive worktrees?
+  m_f799516cc93e: Iteration
+  m_f7a559d636f2: Dark
+  m_f7c0e74153a9: Version and deployment
+  m_f7c365cbb58d: Authenticator setup QR code
+  m_f7c4b52417fd: Search skills, use cases, or tools
+  m_f7edee094424: Clean queue history
+  m_f839b6b1f76a: Refresh semantic issue search to identify related discussions.
+  m_f8786025e920: Webhook secret
+  m_f88346e0bf84: Payment
+  m_f8b14cca218e: Remove enrollment requirement
+  m_f8b7fdc74a0e: Analyzing
+  m_f8c158ce0fe7: Scan progress
+  m_f8d3061b1be2: Read notes
+  m_f8da7b70ea93: Disable {0}
+  m_f8f467e66879: These codes are shown only once. Save them somewhere safe. Each code can be used once.
+  m_f90563d06210: '{0} waiting'
+  m_f9092eb5690e: Setup complete
+  m_f917a29c1f6b: The task status could not be confirmed. Check before trying again.
+  m_f93e5d0d5476: Start analysis
+  m_f94c71d5992b: Balance adjustment
+  m_f9815978b5f1: Load issue & preview
+  m_f9fe2520677c: Task submitted
+  m_fa4ca64ecee2: Sort order
+  m_fa548f96fdbe: Manage users, billing configuration and audit history.
+  m_fa8cc4910248: Briefly interrupt service to apply settings that require a restart
+  m_faa5b37a0615: Use multiple providers, accounts and ordered fallback models.
+  m_fad9d8279690: Secure your account
+  m_faf42acc16ab: Pagination
+  m_fbc31281df67: 'For example: email me when an Agent task needs attention.'
+  m_fc6871eeffad: Install from
+  m_fc8e644fc752: Administration
+  m_fca5b6d1f87e: Customized
+  m_fcc5f1bdeee7: Changed lines
+  m_fced7be4bc2a: Verify receiver
+  m_fd32702a490a: Find candidates
+  m_fd560b7e2a76: Advanced JSON editor
+  m_fd583de610b9: Cancel
+  m_fd78d0dc9a94: Usage & billing
+  m_fdb532c774f5: Enter prices and conversion parameters explicitly. Publishing creates a new version and preserves historical pricing.
+  m_fde32be91e77: Save as a candidate
+  m_fe6f9d7d35d1: Create Agent task
+  m_fe8b12cb211d: Reasoning / million tokens (optional)
+  m_fea12df825b4: Select a memory file
+  m_feb20f545078: Discard changes?
+  m_fef4e2eb8600: Administrator
+  m_ff03d84fe261: Disable
+  m_ff24fd17b90c: This skill needs attention. Check its installed files.
+  m_ff8af615a4da: Completed
+  m_ff8b36aff98e: Send verification code
+  m_ff9b95684541: Filter operations
+  m_ffb89b7a1ac7: This is a cached catalog. Refresh it successfully before selecting an update target.

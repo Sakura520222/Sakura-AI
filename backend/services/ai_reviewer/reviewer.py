@@ -218,9 +218,7 @@ class AIReviewer:
         settings = get_settings()
         self.tool_handler.apply_web_tool_settings(settings)
         api_client = getattr(self, "api_client", None)
-        refresh_compressor = getattr(
-            api_client, "refresh_runtime_config", None
-        )
+        refresh_compressor = getattr(api_client, "refresh_runtime_config", None)
         if callable(refresh_compressor):
             refresh_compressor(settings)
 
@@ -389,7 +387,7 @@ class AIReviewer:
             return result
 
         except Exception as e:
-            logger.error("AI审查时出错: {}", str(e), exc_info=True)
+            logger.opt(exception=True).error("AI审查时出错: {}", str(e))
             raise
 
     async def _run_tool_loop(
@@ -888,7 +886,7 @@ class AIReviewer:
                 diff_tool.clear()
 
         except Exception as e:
-            logger.error("AI审查（带工具）时出错: {}", str(e), exc_info=True)
+            logger.opt(exception=True).error("AI审查（带工具）时出错: {}", str(e))
             raise
 
     async def review_file(

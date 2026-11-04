@@ -46,3 +46,21 @@ class UTCDateTime(TypeDecorator[datetime]):
             # the storage boundary and never leak a naive value to the domain.
             value = value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
+
+
+class UTCMicrosecondDateTime(UTCDateTime):
+    """UTC deadlines requiring sub-second precision on MySQL/MariaDB.
+
+    Provider start budgets must not be rounded up to a future whole second
+    or lose a configured sub-second interval. Existing business timestamps
+    retain their schema and continue using UTCDateTime.
+    """
+
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name in {"mysql", "mariadb"}:
+            from sqlalchemy.dialects.mysql import DATETIME
+
+            return dialect.type_descriptor(DATETIME(fsp=6))
+        return super().load_dialect_impl(dialect)

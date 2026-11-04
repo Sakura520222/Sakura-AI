@@ -11,6 +11,12 @@ import pytest
 from backend.models.agent_team_models import AgentTeamTaskStatus
 from backend.workers import agent_team_worker as worker_module
 from backend.workers.agent_team_worker import AgentTeamWorker
+from tests.worker_capacity_support import install_unit_worker_capacity
+
+
+@pytest.fixture(autouse=True)
+def isolated_capacity_boundary(monkeypatch):
+    install_unit_worker_capacity(monkeypatch)
 
 
 class _BlockingDependencyService:
@@ -136,7 +142,9 @@ async def test_process_task_cancels_during_dependency_admission_without_failure(
     monkeypatch.setattr(worker_module, "load_skills_context", load_skills)
     monkeypatch.setattr(AgentTeamWorker, "_load_task", load_task)
     monkeypatch.setattr(AgentTeamWorker, "_update_task", update_task)
-    monkeypatch.setattr(AgentTeamWorker, "_create_agent_execution_runner", create_runner)
+    monkeypatch.setattr(
+        AgentTeamWorker, "_create_agent_execution_runner", create_runner
+    )
     monkeypatch.setattr(
         AgentTeamWorker,
         "_expire_pending_prompts_if_terminal",
@@ -157,8 +165,7 @@ async def test_process_task_cancels_during_dependency_admission_without_failure(
         for update in updates
     )
     assert not any(
-        update.get("status") == AgentTeamTaskStatus.FAILED.value
-        for update in updates
+        update.get("status") == AgentTeamTaskStatus.FAILED.value for update in updates
     )
 
 
@@ -193,4 +200,18 @@ def test_all_worker_admission_calls_forward_cancel_event(method_name: str):
         and isinstance(keyword.value, ast.Name)
         and keyword.value.id == "cancel_event"
         for keyword in calls[0].keywords
+    )
+
+
+@pytest.fixture(autouse=True)
+def worker_control_audit_store(monkeypatch):
+    """Worker orchestration uses fake tasks; persistence has separate SQLite tests."""
+    from unittest.mock import AsyncMock
+
+    from backend.services.agent_team.conversation_checkpoint import (
+        ConversationCheckpointService,
+    )
+
+    monkeypatch.setattr(
+        ConversationCheckpointService, "record_control_event", AsyncMock()
     )

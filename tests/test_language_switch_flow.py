@@ -1,7 +1,7 @@
 """语言切换端到端流程测试。"""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -164,59 +164,27 @@ def test_make_translation_func_en():
     """en 翻译函数应返回英文文本。"""
     t = make_translation_func("en")
     assert t("settings.title") == "Settings"
-    assert t("nav.dashboard") == "Dashboard"
     assert t("nonexistent.key") == "nonexistent.key"  # 回退到 key 本身
 
 
-def test_render_template_injects_correct_lang():
-    """render_template 应注入正确的 lang 和 _ 翻译函数。"""
-    from backend.webui.deps import get_templates, render_template
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["zh-CN", "en"])
+async def test_spa_bootstrap_projects_saved_language(language):
+    """SPA 引导接口传递个人语言，不再依赖服务端模板上下文。"""
+    from fastapi import Response
 
-    # 用 MagicMock 替换 TemplateResponse 以拦截调用
-    captured = {}
+    from backend.api.v1.webui import bootstrap
 
-    def mock_template_response(request, template_name, context):
-        captured.update(context)
-        return MagicMock()
+    response = Response()
+    config = SimpleNamespace(language=language, items_per_page=50, theme="dark")
+    result = await bootstrap(
+        response,
+        user={"user_id": 42, "sub": "alice", "role": "user"},
+        db=DbStub(config),
+    )
 
-    with patch.object(
-        get_templates(), "TemplateResponse", side_effect=mock_template_response
-    ):
-        request = RequestStub()
-        user_prefs = {"language": "en", "items_per_page": 20}
-        render_template("test.html", request, user_prefs=user_prefs)
-
-    assert captured["lang"] == "en"
-    assert captured["user_prefs"] == {"language": "en", "items_per_page": 20}
-    # 翻译函数应绑定 en
-    assert captured["_"]("settings.title") == "Settings"
-    assert "supported_languages" in captured
-
-
-def test_render_template_with_user_prefs_in_context():
-    """当 user_prefs 通过 **context 传入时，应正确绑定到 user_prefs 参数。"""
-    from backend.webui.deps import get_templates, render_template
-
-    captured = {}
-
-    def mock_template_response(request, template_name, context):
-        captured.update(context)
-        return MagicMock()
-
-    with patch.object(
-        get_templates(), "TemplateResponse", side_effect=mock_template_response
-    ):
-        request = RequestStub()
-        # 模拟 _render_settings_page 的调用方式：user_prefs 放在 **context 中
-        context = {
-            "user_prefs": {"language": "en", "items_per_page": 50},
-            "language": "en",
-            "items_per_page": 50,
-        }
-        render_template("settings.html", request, **context)
-
-    assert captured["lang"] == "en"
-    assert captured["user_prefs"] == {"language": "en", "items_per_page": 50}
-    assert captured["language"] == "en"
-    assert captured["items_per_page"] == 50
-    assert captured["_"]("settings.title") == "Settings"
+    assert result.preferences.language == language
+    assert result.preferences.items_per_page == 50
+    assert result.preferences.theme == "dark"
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["Vary"] == "Cookie, Authorization"

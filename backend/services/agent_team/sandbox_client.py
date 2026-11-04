@@ -22,6 +22,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr
 
 from backend.core.config import get_settings
+from backend.services.agent_team.capability_policy import execution_network_policy
 from backend.services.agent_team.execution import (
     ExecutionError,
     ExecutionProfile,
@@ -30,6 +31,9 @@ from backend.services.agent_team.execution import (
     execution_workspace_key,
 )
 from backend.services.agent_team.network_policy import (
+    NetworkCapability,
+    NetworkCapabilityDenied,
+    execution_network_capability,
     get_agent_team_network_policy_state,
     network_mode_for_policy,
 )
@@ -555,9 +559,20 @@ class SandboxExecutionRunner:
         # installation must never infer a network mode from a request or a
         # local default.
         self._egress_capability: str | None = None
+        self._runner_image_digest: str | None = None
+
+    @property
+    def execution_workspace(self) -> str:
+        # sandboxd v2 mounts the admitted task workspace here. Host paths are
+        # deliberately not part of the runner container's namespace.
+        return "/workspace"
 
     def supports_profile(self, profile: ExecutionProfile) -> bool:
-        return profile in {ExecutionProfile.AGENT, ExecutionProfile.DEPENDENCY}
+        return profile in {
+            ExecutionProfile.AGENT,
+            ExecutionProfile.DEPENDENCY,
+            ExecutionProfile.READ_ONLY,
+        }
 
     @property
     def egress_capability(self) -> str | None:
@@ -668,11 +683,19 @@ class SandboxExecutionRunner:
         if egress_capability not in {"none", "egress"}:
             raise SandboxProtocolError("sandboxd egress capability is invalid")
         self._egress_capability = egress_capability
+        self._runner_image_digest = digest
         return health
 
     async def execute(self, request: ExecutionRequest) -> ExecutionResult:
         request_id = uuid.uuid4().hex
-        audit_digest = self.config.expected_runner_image_digest or "unbound"
+        audit_digest = (
+            self._runner_image_digest
+            or self.config.expected_runner_image_digest
+            or "unbound"
+        )
+        audit_capability = execution_network_capability(
+            request.profile, request.network_capability
+        ).value
 
         if not self.supports_profile(request.profile):
             _audit_execution(
@@ -684,6 +707,7 @@ class SandboxExecutionRunner:
                 revision="unknown",
                 digest=audit_digest,
                 result="denied_unsupported_profile",
+                capability=audit_capability,
             )
             raise SandboxPolicyError(
                 f"sandbox runner does not support profile {request.profile.value}"
@@ -698,8 +722,11 @@ class SandboxExecutionRunner:
                 revision="unknown",
                 digest=audit_digest,
                 result="denied_workspace_mismatch",
+                capability=audit_capability,
             )
-            raise SandboxPolicyError("request workspace does not match the runner workspace")
+            raise SandboxPolicyError(
+                "request workspace does not match the runner workspace"
+            )
         if request.env:
             _audit_execution(
                 task=request.workspace_key,
@@ -710,13 +737,58 @@ class SandboxExecutionRunner:
                 revision="unknown",
                 digest=audit_digest,
                 result="denied_environment",
+                capability=audit_capability,
             )
-            raise SandboxPolicyError("sandbox requests cannot inject environment variables")
+            raise SandboxPolicyError(
+                "sandbox requests cannot inject environment variables"
+            )
+
+        if request.profile is ExecutionProfile.READ_ONLY:
+            # Older v2 daemons do not implement this stricter domain. Verify
+            # current daemon readiness/capability before any execution; never
+            # substitute the writable Agent profile for compatibility.
+            health = await self.ensure_ready()
+            if ExecutionProfile.READ_ONLY.value not in health.profiles:
+                raise SandboxPolicyError(
+                    "sandboxd does not advertise read_only execution"
+                )
 
         try:
             policy_state = await get_agent_team_network_policy_state()
-            network_policy = policy_state.policy
-            network_mode = network_mode_for_policy(network_policy)
+            network_policy = await execution_network_policy(policy_state.policy)
+            network_mode = network_mode_for_policy(
+                network_policy,
+                profile=request.profile,
+                capability=request.network_capability,
+            )
+            if request.profile is ExecutionProfile.READ_ONLY:
+                network_mode = "none"
+        except asyncio.CancelledError:
+            _audit_execution(
+                task=request.workspace_key,
+                request_id=request_id,
+                profile=request.profile.value,
+                policy="unavailable",
+                mode="none",
+                revision="unknown",
+                digest=audit_digest,
+                result="error_CancelledError",
+                capability=audit_capability,
+            )
+            raise
+        except NetworkCapabilityDenied as exc:
+            _audit_execution(
+                task=request.workspace_key,
+                request_id=request_id,
+                profile=request.profile.value,
+                policy=network_policy.value,
+                mode="none",
+                revision=policy_state.revision,
+                digest=audit_digest,
+                result="denied_network_capability",
+                capability=audit_capability,
+            )
+            raise SandboxPolicyError(str(exc)) from exc
         except Exception as exc:
             # Do not include the exception text: database/driver errors can
             # echo connection details, and the audit contract must never
@@ -733,6 +805,7 @@ class SandboxExecutionRunner:
                 revision="unknown",
                 digest=audit_digest,
                 result="denied_policy_unavailable",
+                capability=audit_capability,
             )
             raise SandboxPolicyError(
                 "Agent network policy could not be read; execution was denied"
@@ -747,6 +820,7 @@ class SandboxExecutionRunner:
             revision=policy_state.revision,
             digest=audit_digest,
             result="admitted",
+            capability=audit_capability,
         )
 
         timeout = min(float(request.timeout_seconds), self.config.timeout_seconds)
@@ -815,6 +889,7 @@ class SandboxExecutionRunner:
                             revision=policy_state.revision,
                             digest=audit_digest,
                             result="cancelled",
+                            capability=audit_capability,
                         )
                         return ExecutionResult(
                             command=request.command or " ".join(request.argv or ()),
@@ -860,12 +935,15 @@ class SandboxExecutionRunner:
                 revision=policy_state.revision,
                 digest=audit_digest,
                 result=(
-                    "completed_timeout"
+                    "cancelled"
+                    if result.cancelled
+                    else "completed_timeout"
                     if result.timed_out
                     else "completed_nonzero"
                     if result.exit_code not in (None, 0)
                     else "completed"
                 ),
+                capability=audit_capability,
             )
             return result
         except BaseException as exc:
@@ -878,6 +956,7 @@ class SandboxExecutionRunner:
                 revision=policy_state.revision,
                 digest=audit_digest,
                 result=f"error_{type(exc).__name__}",
+                capability=audit_capability,
             )
             raise
 
@@ -1148,6 +1227,7 @@ def _audit_execution(
     revision: str,
     digest: str,
     result: str,
+    capability: str,
 ) -> None:
     """Emit the bounded execution audit projection.
 
@@ -1166,6 +1246,12 @@ def _audit_execution(
         revision=str(revision),
         digest=str(digest),
         result=str(result),
+        capability=str(capability),
+        action=(
+            "dependency_resolution"
+            if capability == NetworkCapability.DEPENDENCY_EGRESS.value
+            else "agent_command"
+        ),
     ).info("agent sandbox execution")
 
 

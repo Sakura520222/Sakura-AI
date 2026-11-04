@@ -7,7 +7,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backend.services.payment.gateway_base import WebhookEventType
+from backend.services.payment.gateway_base import (
+    PaymentWebhookVerificationError,
+    WebhookEventType,
+)
 from backend.services.payment.stripe_gateway import StripeGateway
 
 
@@ -134,12 +137,11 @@ class TestStripeGatewayVerifyWebhook:
         )
         mock_stripe.error = real_stripe.error
 
-        result = gateway.verify_webhook(
-            payload=b"test",
-            headers={"stripe-signature": "invalid"},
-        )
-
-        assert result.event_type == WebhookEventType.UNKNOWN
+        with pytest.raises(PaymentWebhookVerificationError):
+            gateway.verify_webhook(
+                payload=b"test",
+                headers={"stripe-signature": "invalid"},
+            )
 
     @patch("backend.services.payment.stripe_gateway.stripe")
     def test_verify_webhook_unknown_event_type(self, mock_stripe, gateway):
@@ -163,6 +165,7 @@ class TestStripeGatewayRefund:
         mock_session = MagicMock()
         mock_session.id = "cs_test_123"
         mock_session.payment_intent = "pi_test_123"
+        mock_session.currency = "cny"
         mock_stripe.checkout.Session.retrieve.return_value = mock_session
 
         mock_refund = MagicMock()
@@ -187,6 +190,7 @@ class TestStripeGatewayRefund:
         mock_session = MagicMock()
         mock_session.id = "cs_test_123"
         mock_session.payment_intent = "pi_test_123"
+        mock_session.currency = "cny"
         mock_stripe.checkout.Session.retrieve.return_value = mock_session
 
         mock_refund = MagicMock()
@@ -232,6 +236,7 @@ class TestStripeGatewayGetPaymentStatus:
         mock_session.id = "cs_test_123"
         mock_session.payment_status = "paid"
         mock_session.payment_intent = "pi_test_123"
+        mock_session.currency = "cny"
         mock_session.amount_total = 1000
         mock_session.currency = "cny"
         mock_stripe.checkout.Session.retrieve.return_value = mock_session
@@ -242,3 +247,82 @@ class TestStripeGatewayGetPaymentStatus:
         assert result.status == "paid"
         assert result.amount_cents == 1000
         assert result.currency == "cny"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("currency", "canonical", "wire"),
+    (("ISK", 5, 500), ("UGX", 5, 500), ("MGA", 500, 5)),
+)
+@patch("backend.services.payment.stripe_gateway.stripe")
+async def test_stripe_protocol_amounts_are_normalized_at_boundary(
+    mock_stripe, gateway, currency, canonical, wire
+):
+    from types import SimpleNamespace
+
+    mock_stripe.checkout.Session.create.return_value = SimpleNamespace(
+        id="cs_units", url="https://example.test/checkout", payment_status="unpaid"
+    )
+    created = await gateway.create_payment(
+        order_no="ORD_UNITS",
+        amount_cents=canonical,
+        currency=currency,
+        plan_name="Exact test money",
+        user_id=1,
+        success_url="https://example.test/success",
+        cancel_url="https://example.test/cancel",
+    )
+    assert created.success
+    assert (
+        mock_stripe.checkout.Session.create.call_args.kwargs["line_items"][0][
+            "price_data"
+        ]["unit_amount"]
+        == wire
+    )
+    session = SimpleNamespace(
+        id="cs_units",
+        metadata={"order_no": "ORD_UNITS"},
+        amount_total=wire,
+        currency=currency.lower(),
+        payment_status="paid",
+        payment_intent="pi_units",
+    )
+    mock_stripe.Webhook.construct_event.return_value = SimpleNamespace(
+        type="checkout.session.completed", data=SimpleNamespace(object=session)
+    )
+    event = gateway.verify_webhook(b"signed", {"stripe-signature": "fixture"})
+    assert event.event_type == WebhookEventType.PAYMENT_COMPLETED
+    assert event.amount_cents == canonical
+    mock_stripe.checkout.Session.retrieve.return_value = session
+    mock_stripe.Refund.create.return_value = SimpleNamespace(
+        id="re_units", amount=wire, status="succeeded"
+    )
+    refunded = await gateway.refund(
+        "cs_units", amount_cents=canonical, idempotency_key="refund-units"
+    )
+    assert refunded.success
+    assert refunded.amount_cents == canonical
+    assert mock_stripe.Refund.create.call_args.kwargs["amount"] == wire
+    assert (await gateway.get_payment_status("cs_units")).amount_cents == canonical
+
+
+@patch("backend.services.payment.stripe_gateway.stripe")
+def test_stripe_completed_unpaid_session_does_not_fulfill(mock_stripe, gateway):
+    from types import SimpleNamespace
+
+    mock_stripe.Webhook.construct_event.return_value = SimpleNamespace(
+        type="checkout.session.completed",
+        data=SimpleNamespace(
+            object=SimpleNamespace(
+                id="cs_deferred",
+                metadata={"order_no": "ORD_DEFERRED"},
+                amount_total=1000,
+                currency="cny",
+                payment_status="unpaid",
+            )
+        ),
+    )
+    assert (
+        gateway.verify_webhook(b"signed", {"stripe-signature": "fixture"}).event_type
+        == WebhookEventType.UNKNOWN
+    )

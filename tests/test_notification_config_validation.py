@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -71,8 +70,15 @@ async def test_invalid_notification_batch_has_no_db_side_effects(key, value):
 @pytest.mark.asyncio
 async def test_valid_notification_and_telegram_changes_persist_with_restart_flag():
     service = SystemConfigService()
-    existing_telegram_enabled = SimpleNamespace(key_value="true")
-    db = _Session([SimpleNamespace(key_value="587"), existing_telegram_enabled, None])
+    from backend.models.database import AppConfig
+    from tests.config_sqlite_session import SQLiteConfigSession
+
+    db = SQLiteConfigSession(
+        [
+            AppConfig(key_name="smtp_port", key_value="587"),
+            AppConfig(key_name="telegram_enabled", key_value="true"),
+        ]
+    )
 
     changed, needs_restart = await service.save_configs(
         db,
@@ -87,7 +93,10 @@ async def test_valid_notification_and_telegram_changes_persist_with_restart_flag
     assert changed["smtp_port"]["raw_new"] == "465"
     assert changed["telegram_enabled"]["raw_new"] == "false"
     assert changed["telegram_bot_token"]["raw_new"] == "new-token"
-    assert existing_telegram_enabled.key_value == "false"
+    assert (
+        next(row for row in db.rows if row.key_name == "telegram_enabled").key_value
+        == "false"
+    )
     assert [row.key_value for row in db.added] == ["new-token"]
     assert db.commits == 1
 
@@ -95,14 +104,10 @@ async def test_valid_notification_and_telegram_changes_persist_with_restart_flag
 @pytest.mark.asyncio
 async def test_telegram_restart_required_changes_are_not_hot_applied():
     service = SystemConfigService()
-    assert {"telegram_enabled", "telegram_bot_token"}.issubset(
-        RESTART_REQUIRED_KEYS
-    )
+    assert {"telegram_enabled", "telegram_bot_token"}.issubset(RESTART_REQUIRED_KEYS)
 
     with (
-        patch(
-            "backend.services.system_config_service.update_settings_field"
-        ) as update,
+        patch("backend.services.system_config_service.update_settings_field") as update,
         patch(
             "backend.services.system_config_service.invalidate_dynamic_config_cache"
         ) as invalidate,
@@ -124,7 +129,10 @@ async def test_telegram_restart_required_changes_are_not_hot_applied():
 @pytest.mark.asyncio
 async def test_unchanged_telegram_setting_does_not_require_restart():
     service = SystemConfigService()
-    db = _Session([SimpleNamespace(key_value="true")])
+    from backend.models.database import AppConfig
+    from tests.config_sqlite_session import SQLiteConfigSession
+
+    db = SQLiteConfigSession([AppConfig(key_name="telegram_enabled", key_value="true")])
 
     changed, needs_restart = await service.save_configs(
         db,
@@ -142,22 +150,21 @@ def test_unknown_system_update_key_is_not_accepted():
 
 
 def test_system_config_template_has_numeric_constraints_for_notification_fields():
-    template = (
-        Path(__file__).parents[1]
-        / "backend"
-        / "webui"
-        / "templates"
-        / "system_config.html"
-    )
-    text = template.read_text(encoding="utf-8")
-    expected = {
-        "smtp_port": ('min="1" max="65535" step="1"',),
-        "notification_max_concurrency": ('min="1" max="100" step="1"',),
-        "notification_retry_max_attempts": ('min="1" max="20" step="1"',),
-        "notification_retry_initial_delay_seconds": ('min="0" step="any"',),
-        "notification_retry_backoff_factor": ('min="1" step="any"',),
-        "notification_rate_limit_seconds": ('min="0" step="any"',),
-    }
-    for key, fragments in expected.items():
-        assert f"item.key == '{key}'" in text
-        assert all(fragment in text for fragment in fragments)
+    from backend.services.config_metadata import field_catalog
+
+    fields = field_catalog()
+    for key, lower, upper in [
+        ("smtp_port", 1, 65535),
+        ("notification_max_concurrency", 1, 100),
+        ("notification_retry_max_attempts", 1, 20),
+    ]:
+        item = fields["global/" + key]
+        assert item.type == "integer"
+        assert item.constraints["ge"] == lower and item.constraints["le"] == upper
+    for key, lower in [
+        ("notification_retry_initial_delay_seconds", 0),
+        ("notification_retry_backoff_factor", 1),
+        ("notification_rate_limit_seconds", 0),
+    ]:
+        item = fields["global/" + key]
+        assert item.type == "number" and item.constraints["ge"] == lower

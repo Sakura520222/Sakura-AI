@@ -1,5 +1,6 @@
 """PR-Issue 关联分析器"""
 
+import asyncio
 import re
 from typing import Any
 
@@ -7,6 +8,10 @@ from loguru import logger
 
 from backend.core.config import get_strategy_config
 from backend.core.github_app import GitHubAppClient
+from backend.services.pr_body import (
+    replace_sakura_generated_section,
+    strip_sakura_generated_sections,
+)
 
 
 class PRIssueLinker:
@@ -31,7 +36,12 @@ class PRIssueLinker:
         if not pr_body:
             return []
         return list(
-            {int(m.group(1)) for m in self._reference_pattern.finditer(pr_body)}
+            {
+                int(m.group(1))
+                for m in self._reference_pattern.finditer(
+                    strip_sakura_generated_sections(pr_body)
+                )
+            }
         )
 
     async def fetch_issue_content(
@@ -41,7 +51,9 @@ class PRIssueLinker:
         issues = []
         for num in issue_numbers:
             try:
-                issue = self.github_app.get_issue(repo_owner, repo_name, num)
+                issue = await asyncio.to_thread(
+                    self.github_app.get_issue, repo_owner, repo_name, num
+                )
                 if issue:
                     issues.append(
                         {
@@ -93,58 +105,14 @@ class PRIssueLinker:
     def build_updated_pr_body(
         self, original_body: str, related_issues: list[dict[str, Any]]
     ) -> str:
-        """构建包含语义关联 issues 的 PR body
-
-        使用 HTML 注释标记界定区域，支持幂等更新。
-        参考 PRSummaryService 和 PRDependencyGraphService 的模式。
-
-        Args:
-            original_body: PR 原始 body
-            related_issues: 语义关联的 issue 列表，含 number 字段
-
-        Returns:
-            更新后的 PR body
-        """
-        pattern = self._issue_links_pattern()
-
+        """Replace the entire machine-owned set, including successful emptiness."""
         if not related_issues:
-            # 移除已有标记区域
-            if self.ISSUE_LINKS_START in original_body:
-                return re.sub(pattern, "", original_body, flags=re.DOTALL).rstrip()
-            return original_body
-
-        # 提取标记区域中已有的 issue 编号，实现增量合并
-        existing_numbers: set[int] = set()
-        if self.ISSUE_LINKS_START in original_body:
-            match = re.search(pattern, original_body, flags=re.DOTALL)
-            if match:
-                existing_numbers = {
-                    int(m.group(1))
-                    for m in re.finditer(r"Resolves\s+#(\d+)", match.group(0))
-                }
-
-        # 合并已有编号与新传入的 issues（去重）
-        merged_issues: list[dict[str, Any]] = list(related_issues)
-        new_numbers = {i["number"] for i in related_issues}
-        for num in existing_numbers - new_numbers:
-            merged_issues.append({"number": num})
-
-        # 构建 "Resolves #xxx" 引用列表
+            return replace_sakura_generated_section(original_body, "issue-links", "")
         lines = [self.ISSUE_LINKS_START, ""]
-        for issue in merged_issues:
-            lines.append(f"Resolves #{issue['number']}")
+        for issue in related_issues:
+            prefix = "Closes" if issue.get("relation") == "closes" else "Related to"
+            lines.append(f"{prefix} #{issue['number']}")
         lines.extend(["", self.ISSUE_LINKS_END])
-
-        new_block = "\n".join(lines)
-
-        # 替换已有标记区域或追加
-        if self.ISSUE_LINKS_START in original_body:
-            return re.sub(pattern, new_block, original_body, flags=re.DOTALL)
-        else:
-            return f"{original_body.rstrip()}\n\n{new_block}"
-
-    def _issue_links_pattern(self) -> str:
-        """语义关联区域的正则匹配模式"""
-        return (
-            f"{re.escape(self.ISSUE_LINKS_START)}.*?{re.escape(self.ISSUE_LINKS_END)}"
+        return replace_sakura_generated_section(
+            original_body, "issue-links", "\n".join(lines)
         )

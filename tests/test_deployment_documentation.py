@@ -10,11 +10,15 @@ def test_recommended_readme_deployment_bootstraps_host_updater() -> None:
     readme_en = (ROOT / "README_EN.md").read_text(encoding="utf-8")
 
     for text in (readme_zh, readme_en):
-        assert "/opt/sakura-ai" in text
         assert "bash -s -- --prod" in text
         assert "raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh" in text
-        assert "SAKURA_INSTALL_ROOT" in text
-        assert "sudo ./start.sh --prod" in text
+        assert "Host Updater" in text
+        assert "https://sakura520222.github.io/Sakura-AI/DEPLOYMENT.html" in text
+
+    guide = (ROOT / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8")
+    assert "/opt/sakura-ai" in guide
+    assert "SAKURA_INSTALL_ROOT" in guide
+    assert "sudo ./start.sh --prod" in guide
 
 
 def test_deployment_guide_documents_manual_update_and_trusted_root_path() -> None:
@@ -33,7 +37,8 @@ def test_updater_sync_documents_health_as_a_manual_prerequisite() -> None:
     readme_en = (ROOT / "README_EN.md").read_text(encoding="utf-8")
     guide = (ROOT / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8")
 
-    assert "它本身不会强制检查应用健康状态" in readme_zh
-    assert "mandatory manual prerequisite" in readme_en
+    for text in (readme_zh, readme_en):
+        assert "https://sakura520222.github.io/Sakura-AI/DEPLOYMENT.html" in text
     assert "它本身**不提供应用健康门禁**" in guide
+    assert "管理员重新安装 updater binary 前必须手动完成的检查" in guide
     assert "无需查询 `/health`" in guide

@@ -1,73 +1,38 @@
-"""Setup Wizard 路由
+"""Setup Wizard legacy 数据路由（/setup/api/*）
 
-首次部署时的配置引导界面，免认证访问。
-完成后自动关闭，重定向到正常 WebUI。
+SPA 迁移后本模块仅保留路径含 ``/api/`` 的数据端点（backend/main.py 按路径
+过滤挂载）；HTML 页面路由已由 React SPA 与 /api/v1/setup 端点取代。
+``inspect_config_backup`` 与 ``complete_setup`` 亦被 backend/api/v1/setup.py 复用。
 """
 
+from collections.abc import Mapping
+
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 from loguru import logger
 
 from backend.api.v1.deps import limiter
 from backend.core.bootstrap import (
-    _COOKIE_NAME,
     clear_bootstrap_cache,
     get_current_step,
     get_missing_fields,
-    get_setup_token,
     is_bootstrap_mode,
-    validate_setup_token,
     write_connection_config,
 )
 from backend.core.config import get_settings
+from backend.core.setup_database import (
+    DatabaseSetupError,
+    check_database,
+    has_setup_database_token,
+    setup_database_status,
+)
 from backend.core.setup_service import setup_service
 from backend.services.config_backup_service import (
     ConfigBackupError,
     parse_config_backup,
 )
-from backend.webui.deps import get_templates, render_template
-from backend.webui.i18n import (
-    DEFAULT_LANGUAGE,
-    SUPPORTED_LANGUAGES,
-    i18n,
-    resolve_language,
-    set_language_cookie,
-)
 
 router = APIRouter(prefix="/setup", tags=["Setup Wizard"])
-templates = get_templates()
-
-
-def _set_setup_verified_cookie(response: RedirectResponse, token: str) -> None:
-    """写入仅可通过 HTTPS 传输的 Setup 验证 Cookie。"""
-    response.set_cookie(
-        key=_COOKIE_NAME,
-        value=token,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        path="/setup",
-    )
-
-
-def _lang_switch_response(lang: str) -> RedirectResponse:
-    """构造语言切换响应：设置 Cookie 并去掉 ?lang= 参数，避免重复切换。"""
-    response = RedirectResponse(url="/setup", status_code=302)
-    set_language_cookie(response, lang)
-    return response
-
-
-def _js_i18n_dict(lang: str) -> dict:
-    """构造注入模板的 JS 翻译字典（仅 setup.* 键，含默认语言回退）。"""
-    result: dict[str, str] = {}
-    for target in dict.fromkeys([lang, DEFAULT_LANGUAGE]):
-        if target not in SUPPORTED_LANGUAGES:
-            continue
-        for key, value in i18n.get_all_translations(target).items():
-            if key.startswith("setup."):
-                result.setdefault(key, value)
-    return result
-
 
 _AI_CONFIG_MIGRATION = {
     "success": False,
@@ -84,113 +49,22 @@ def _legacy_ai_migration_response() -> JSONResponse:
     return JSONResponse(_AI_CONFIG_MIGRATION, status_code=410)
 
 
-def _check_bootstrap():
-    """检查是否处于 bootstrap 模式，已完成后拒绝访问"""
-    if not is_bootstrap_mode():
-        # 直接跳转登录页，避免与根路径路由产生重定向循环
-        return RedirectResponse(url="/auth/login", status_code=302)
-    return None
+def _config_validation_message(values: object) -> str:
+    """构造不含异常细节的配置校验失败提示，并定位首个失败字段。
 
-
-def _has_valid_cookie(request: Request) -> bool:
-    """检查请求中是否已携带有效的 setup_verified Cookie。"""
-    token = get_setup_token()
-    if token is None:
-        return False
-    cookie_value = request.cookies.get(_COOKIE_NAME)
-    return cookie_value is not None and validate_setup_token(cookie_value)
-
-
-@router.get("/verify")
-async def verify_page(request: Request):
-    """Token 输入页"""
-    if not is_bootstrap_mode():
-        return RedirectResponse(url="/auth/login", status_code=302)
-    if _has_valid_cookie(request):
-        # 语言切换请求：跳转到 /setup 保持语言参数
-        if request.query_params.get("lang"):
-            return _lang_switch_response(request.query_params["lang"])
-        return RedirectResponse(url="/setup", status_code=302)
-    lang = resolve_language(request)
-    if request.query_params.get("lang"):
-        # 设置语言 Cookie 并保持在验证页
-        response = render_template(
-            "setup_verify.html",
-            request,
-            user_prefs={"language": lang},
-            error=None,
-        )
-        set_language_cookie(response, lang)
-        return response
-    return render_template(
-        "setup_verify.html",
-        request,
-        user_prefs={"language": lang},
-        error=None,
-    )
-
-
-@router.post("/verify")
-@limiter.limit("5/minute")
-async def verify_token(request: Request):
-    """验证 Token，通过后设置 Cookie 并重定向到 Setup Wizard"""
-    if not is_bootstrap_mode():
-        return RedirectResponse(url="/auth/login", status_code=302)
-
-    form = await request.form()
-    token = (form.get("token") or "").strip()
-
-    if validate_setup_token(token):
-        response = RedirectResponse(url="/setup", status_code=302)
-        verified_token = get_setup_token()
-        if verified_token is None:
-            return RedirectResponse(url="/setup/verify", status_code=302)
-        _set_setup_verified_cookie(response, verified_token)
-        return response
-
-    lang = resolve_language(request)
-    return render_template(
-        "setup_verify.html",
-        request,
-        user_prefs={"language": lang},
-        error=i18n.t("setup.verify_invalid", lang=lang),
-    )
-
-
-@router.get("")
-@router.get("/")
-async def setup_page(request: Request):
-    """Setup Wizard 主页面"""
-    redirect = _check_bootstrap()
-    if redirect:
-        return redirect
-
-    # 语言切换请求：设置 Cookie 后重定向（去掉 ?lang= 参数）
-    qlang = request.query_params.get("lang")
-    if qlang in SUPPORTED_LANGUAGES:
-        return _lang_switch_response(qlang)
-
-    lang = resolve_language(request)
-    current_step = await get_current_step()
-    missing = await get_missing_fields()
-
-    # 预填值：compose 部署时环境变量已固定 DATABASE_URL/REDIS_URL，
-    # 使 Setup Wizard 数据库步骤免手动输入；纯本地开发（无环境变量）时为空/默认值，行为不变。
-    settings = get_settings()
-    prefill_values = {
-        "database_url": (settings.database_url or "").strip(),
-        "redis_url": (settings.redis_url or "").strip(),
-    }
-
-    return render_template(
-        "setup_wizard.html",
-        request,
-        user_prefs={"language": lang},
-        current_step=current_step,
-        missing_fields=missing,
-        prefill_values=prefill_values,
-        js_i18n=_js_i18n_dict(lang),
-    )
+    ValueError 消息不直接回传客户端；对请求值逐键复用同一纯校验路径，
+    找出失败字段名帮助用户定位需要修正的配置项，异常细节留在服务端日志。
+    """
+    if isinstance(values, Mapping):
+        for env_key, env_value in values.items():
+            # 与批量校验一致：非字符串键与 None 值会被校验路径跳过。
+            if not isinstance(env_key, str) or env_value is None:
+                continue
+            try:
+                setup_service.validate_config_values({env_key: env_value})
+            except ValueError:
+                return f"配置校验失败: {env_key}"
+    return "配置校验失败"
 
 
 @router.get("/api/state")
@@ -247,6 +121,19 @@ async def get_ai_providers(request: Request):
     return _legacy_ai_migration_response()
 
 
+@router.post("/api/database-preflight")
+@limiter.limit("10/minute")
+async def database_preflight(request: Request):
+    if not is_bootstrap_mode() or not has_setup_database_token(request):
+        return JSONResponse(
+            {"success": False, "message": "Setup authorization required"},
+            status_code=403,
+        )
+    body = await request.json()
+    result = await check_database(body.get("url", ""))
+    return JSONResponse(result, status_code=setup_database_status(result))
+
+
 @router.post("/api/ai-models")
 async def get_ai_models(request: Request):
     """旧供应商模型 API 的迁移响应。"""
@@ -294,12 +181,15 @@ async def inspect_config_backup(request: Request):
             }
         )
     except ConfigBackupError as exc:
+        # 异常消息可能插值备份文件内容（配置键名等），不回传客户端；
+        # 具体原因记录在服务端日志，与下方未知异常分支同一处理策略。
+        logger.warning("Setup 备份校验失败: {}", exc)
         return JSONResponse(
-            {"success": False, "message": f"备份文件无效: {exc}"},
+            {"success": False, "message": "备份文件无效"},
             status_code=400,
         )
     except Exception as exc:
-        logger.error("Setup 备份校验失败: {}", exc, exc_info=True)
+        logger.opt(exception=True).error("Setup 备份校验失败: {}", exc)
         return JSONResponse(
             {"success": False, "message": "备份文件校验失败"},
             status_code=400,
@@ -336,7 +226,7 @@ async def save_step(request: Request):
             # 先验证数据库连接可用
             test_result = await setup_service.test_database_connection(database_url)
             if not test_result["success"]:
-                return JSONResponse(test_result)
+                return JSONResponse(test_result, status_code=400)
 
             # 初始化 DB 引擎并创建表
             await setup_service.init_database(database_url)
@@ -357,15 +247,25 @@ async def save_step(request: Request):
             await setup_service.save_configs_to_db(values)
 
         clear_bootstrap_cache()
-        return JSONResponse({"success": True, "message": "配置已保存"})
+        result = {"success": True, "message": "配置已保存"}
+        if database_url:
+            result.update(
+                stage="initialized", connected=True, schema_ready=True, initialized=True
+            )
+        return JSONResponse(result)
+    except DatabaseSetupError as exc:
+        return JSONResponse(exc.report, status_code=setup_database_status(exc.report))
     except ValueError as exc:
+        logger.warning("Setup 配置校验失败: {}", exc)
         return JSONResponse(
-            {"success": False, "message": str(exc)}, status_code=400
+            {"success": False, "message": _config_validation_message(values)},
+            status_code=400,
         )
     except Exception:
         logger.exception("保存配置失败")
         return JSONResponse(
-            {"success": False, "message": "保存失败，请检查输入或服务日志"}
+            {"success": False, "message": "保存失败，请检查输入或服务日志"},
+            status_code=500,
         )
 
 
@@ -394,8 +294,10 @@ async def complete_setup(request: Request):
             # 完成时重新校验浏览器保留的原始内容，不能依赖预检结果。
             backup_sections = parse_config_backup(backup_content.encode("utf-8"))
         except ConfigBackupError as exc:
+            # 同 inspect_config_backup：异常消息不回传客户端，细节留在服务端日志。
+            logger.warning("Setup 备份校验失败: {}", exc)
             return JSONResponse(
-                {"success": False, "message": f"备份文件无效: {exc}"},
+                {"success": False, "message": "备份文件无效"},
                 status_code=400,
             )
 
@@ -414,4 +316,9 @@ async def complete_setup(request: Request):
 
         asyncio.create_task(_delayed_restart())
 
-    return JSONResponse(result)
+    return JSONResponse(
+        result,
+        status_code=setup_database_status(result)
+        if result.get("stage")
+        else (200 if result["success"] else 400),
+    )

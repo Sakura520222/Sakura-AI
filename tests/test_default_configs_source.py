@@ -8,7 +8,7 @@ web_search_* 限制键上的分叉。
 
 import pytest
 
-from backend.core.config import DYNAMIC_CONFIG_GROUPS, get_settings
+from backend.core.config import DYNAMIC_CONFIG_GROUPS, Settings
 from backend.models import database as database_module
 
 
@@ -34,7 +34,7 @@ def test_static_builder_only_yields_app_version():
 
 def test_seed_rows_cover_every_dynamic_group_key():
     """每个 DYNAMIC 组键都必须有且仅有一行种子，且值来自 Settings。"""
-    settings = get_settings()
+    settings = Settings.model_construct()
     seed_map = _seed_map()
     dynamic_keys = {
         key for group in DYNAMIC_CONFIG_GROUPS.values() for key in group["keys"]

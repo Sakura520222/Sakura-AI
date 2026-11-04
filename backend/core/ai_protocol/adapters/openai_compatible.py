@@ -38,6 +38,7 @@ from backend.core.ai_protocol.models import (
     safe_provider_event_metadata,
     usage_from_mapping,
 )
+from backend.core.log_context import provider_log_fields, traced_operation
 
 # OpenAI 停止原因 → 归一化 / OpenAI stop reasons → normalized
 _OPENAI_STOP_MAP: dict[str, StopReason] = {
@@ -226,6 +227,8 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
             body["tool_choice"] = self._serialize_tool_choice(request.tool_choice)
         if request.stream:
             body["stream"] = True
+            if request.include_stream_usage:
+                body["stream_options"] = {"include_usage": True}
         # thinking / effort 等通过 extra body 透传给支持的兼容端点（少数厂商支持）。
         # Chat Completions 的 wire 字段是 reasoning_effort，而不是内部字段名 effort。
         if request.thinking is not None:
@@ -253,9 +256,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
                 image_entry: dict[str, Any] = {"url": url}
                 if image.detail:
                     image_entry["detail"] = image.detail
-                content_parts.append(
-                    {"type": "image_url", "image_url": image_entry}
-                )
+                content_parts.append({"type": "image_url", "image_url": image_entry})
             msg["content"] = content_parts
         elif message.content is not None:
             msg["content"] = message.content
@@ -374,6 +375,10 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
         self._raise_for_status(resp, endpoint)
         return resp
 
+    def reported_error_usage(self, body: Any) -> UnifiedUsage | None:
+        raw = body.get("usage") if isinstance(body, dict) else None
+        return self._parse_usage(raw) if isinstance(raw, dict) else None
+
     def _raise_for_status(
         self, resp: httpx.Response, endpoint: ResolvedEndpoint
     ) -> None:
@@ -389,6 +394,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
             message,
             status_code=resp.status_code,
             provider=endpoint.base_url,
+            usage=self.reported_error_usage(body),
         )
 
     def translate_error(
@@ -431,6 +437,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
     # ------------------------------------------------------------------
     # chat / stream
     # ------------------------------------------------------------------
+    @traced_operation(provider_log_fields, events=True)
     async def chat(
         self,
         client: httpx.AsyncClient,
@@ -468,9 +475,11 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
                 "OpenAI 兼容端点返回空响应",
                 provider=endpoint.base_url,
                 model=request.model,
+                usage=response.usage,
             )
         return response
 
+    @traced_operation(provider_log_fields, events=True)
     async def stream(
         self,
         client: httpx.AsyncClient,
@@ -483,12 +492,22 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
         url = self.resolve_chat_url(endpoint)
         body = self.serialize_request(request)
         body["stream"] = True
+        if request.include_stream_usage:
+            body["stream_options"] = {"include_usage": True}
         headers = self.build_headers(credential, endpoint)
         headers["Accept"] = "text/event-stream"
         try:
             async with client.stream(
                 "POST", url, json=body, headers=headers, timeout=timeout
             ) as resp:
+                if (
+                    not 200 <= resp.status_code < 300
+                    or "text/event-stream"
+                    not in resp.headers.get("content-type", "").lower()
+                ):
+                    # httpx streaming responses must be read before JSON error
+                    # parsing can retain authoritative returned Usage.
+                    await resp.aread()
                 self.ensure_sse_response(
                     resp,
                     endpoint,

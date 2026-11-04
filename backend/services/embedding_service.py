@@ -6,6 +6,7 @@
 - Ollama: 本地模型
 """
 
+import math
 import threading
 from typing import Any
 from uuid import uuid4
@@ -15,7 +16,9 @@ from loguru import logger
 from openai import AsyncOpenAI
 
 from backend.core.config import get_settings
+from backend.core.log_sanitizer import sanitize_exception_text, sensitive_log_scope
 from backend.services.activity_observability.contracts import InvocationContext
+from backend.services.ai_usage_service import ProviderUsageMeter, is_billing_failure
 
 # 嵌入文本最大字符数（防御性兜底，确保不超过 BGE-M3 的 8192 token 限制）
 # 中文约 1 token ≈ 1.5 字符，8000 字符 ≈ 5300 tokens，留足余量
@@ -184,53 +187,68 @@ class EmbeddingService:
                     f"正在处理批次 {batch_num}/{total_batches}: {len(batch)} 个文本"
                 )
 
-                if observer is not None and context is not None:
-                    response, _ = await observer.send_embedding(
-                        lambda batch=batch: self.client.embeddings.create(
-                            model=settings.embedding_model,
-                            input=batch,
-                        ),
+                with sensitive_log_scope(
+                    getattr(self.client, "api_key", None),
+                    getattr(settings, "embedding_api_key", None),
+                ):
+                    async with ProviderUsageMeter(
+                        provider_id=self.provider,
+                        model_id=settings.embedding_model,
+                        protocol_family="openai-compatible",
+                        call_kind="embedding",
+                        role="embedding",
                         logical_call_id=logical_call_id or str(uuid4()),
-                        requested={
-                            "provider_id": self.provider,
-                            "model_id": settings.embedding_model,
-                            "protocol_family": "openai-compatible",
-                            "endpoint_url": settings.embedding_base_url,
-                        },
-                        effective={
-                            "provider_id": self.provider,
-                            "model_id": settings.embedding_model,
-                            "protocol_family": "openai-compatible",
-                            "endpoint_url": settings.embedding_base_url,
-                        },
-                    )
-                else:
-                    response = await self.client.embeddings.create(
-                        model=settings.embedding_model,
-                        input=batch,
-                    )
+                        input_only=True,
+                    ) as usage_meter:
+                        if observer is not None and context is not None:
+                            response, _ = await observer.send_embedding(
+                                lambda batch=batch: self.client.embeddings.create(
+                                    model=settings.embedding_model,
+                                    input=batch,
+                                ),
+                                logical_call_id=logical_call_id or str(uuid4()),
+                                requested={
+                                    "provider_id": self.provider,
+                                    "model_id": settings.embedding_model,
+                                    "protocol_family": "openai-compatible",
+                                    "endpoint_url": settings.embedding_base_url,
+                                },
+                                effective={
+                                    "provider_id": self.provider,
+                                    "model_id": settings.embedding_model,
+                                    "protocol_family": "openai-compatible",
+                                    "endpoint_url": settings.embedding_base_url,
+                                },
+                            )
+                        else:
+                            response = await self.client.embeddings.create(
+                                model=settings.embedding_model,
+                                input=batch,
+                            )
 
-                from backend.services.ai_usage_service import (
-                    build_usage_record_key,
-                    record_ai_usage_best_effort,
-                )
-
-                await record_ai_usage_best_effort(
-                    record_key=build_usage_record_key(
-                        "embedding",
-                        f"{logical_call_id or uuid4()}:{batch_num}",
-                    ),
-                    call_kind="embedding",
-                    role="embedding",
-                    provider_id=self.provider,
-                    model_id=settings.embedding_model,
-                    protocol_family="openai-compatible",
-                    usage=getattr(response, "usage", None),
-                    input_only=True,
-                )
-
-                # 提取嵌入向量
-                batch_embeddings = [item.embedding for item in response.data]
+                        usage_meter.usage = getattr(response, "usage", None)
+                        data = getattr(response, "data", None)
+                        if not isinstance(data, list) or len(data) != len(batch):
+                            raise ValueError("Malformed embedding batch count")
+                        batch_embeddings = []
+                        dimensions = len(all_embeddings[0]) if all_embeddings else None
+                        for item in data:
+                            vector = getattr(item, "embedding", None)
+                            if (
+                                not isinstance(vector, list)
+                                or not vector
+                                or any(
+                                    type(value) not in (float, int)
+                                    or not math.isfinite(value)
+                                    for value in vector
+                                )
+                                or (
+                                    dimensions is not None and len(vector) != dimensions
+                                )
+                            ):
+                                raise ValueError("Malformed embedding vector")
+                            dimensions = len(vector)
+                            batch_embeddings.append(vector)
                 all_embeddings.extend(batch_embeddings)
 
             logger.debug("✅ 成功生成 {} 个嵌入向量", len(all_embeddings))
@@ -349,6 +367,8 @@ class RerankerService:
         docs: list[dict[str, any]],
         top_k: int | None = None,
         score_threshold: float | None = None,
+        *,
+        strict: bool = False,
     ) -> list[dict[str, any]]:
         """对检索结果重新排序
 
@@ -357,6 +377,8 @@ class RerankerService:
             docs: 待重排序的文档列表
             top_k: 返回前 K 个结果（默认使用配置值）
             score_threshold: 相似度阈值（默认使用配置值）
+            strict: 配置的提供商失败、不可用或返回无效结果时抛出异常；
+                    显式禁用提供商仍返回原结果。默认保留 RAG 的回退行为。
 
         Returns:
             重排序后的文档列表，如果所有文档都低于阈值，返回空列表
@@ -367,23 +389,35 @@ class RerankerService:
         self._refresh_client()
         settings = get_settings()
         # 使用配置的默认值
-        top_k = top_k or settings.rerank_top_k
-        score_threshold = score_threshold or settings.rerank_score_threshold
+        top_k = settings.rerank_top_k if top_k is None else top_k
+        score_threshold = (
+            settings.rerank_score_threshold
+            if score_threshold is None
+            else score_threshold
+        )
 
         # 如果重排序服务未启用，直接返回原结果
         if self.client is None:
+            if strict and self.provider != "none":
+                raise RuntimeError("Configured reranker unavailable")
             logger.debug("重排序服务未启用，返回原始结果")
             return docs[:top_k]
 
         try:
             if self.provider == "siliconflow":
                 return await self._rerank_via_siliconflow(
-                    query, docs, top_k, score_threshold
+                    query, docs, top_k, score_threshold, strict=strict
                 )
             else:
+                if strict:
+                    raise RuntimeError("Configured reranker unsupported")
                 return docs[:top_k]
 
         except Exception as e:
+            if is_billing_failure(e):
+                raise
+            if strict:
+                raise
             logger.warning("⚠️  重排序失败: {}，返回原始结果", e)
             return docs[:top_k]
 
@@ -393,74 +427,102 @@ class RerankerService:
         docs: list[dict[str, any]],
         top_k: int,
         score_threshold: float,
+        *,
+        strict: bool = False,
     ) -> list[dict[str, any]]:
         """通过 SiliconFlow Rerank API 重排序"""
         try:
+            if strict:
+                if type(top_k) is not int or top_k <= 0:
+                    raise ValueError("Invalid strict reranker top_k")
+                # Invalid policy must not turn valid provider results into an
+                # authoritative empty set or incur a request before failing.
+                if (
+                    type(score_threshold) not in (float, int)
+                    or not 0 <= score_threshold <= 1
+                    or not math.isfinite(score_threshold)
+                ):
+                    raise ValueError("Invalid strict reranker score_threshold")
             settings = get_settings()
             # 提取文档内容
             texts = [doc["content"] for doc in docs]
+            top_n = min(top_k, len(texts))
 
             # 调用 Rerank API
             logical_call_id = str(uuid4())
-            response = await self.client.post(
-                "",
-                json={
-                    "model": settings.rerank_model,
-                    "query": query,
-                    "documents": texts,
-                    "top_k": min(top_k, len(texts)),
-                },
-            )
-
-            response.raise_for_status()
-            results = response.json()
-
-            from backend.services.ai_usage_service import (
-                build_usage_record_key,
-                record_ai_usage_best_effort,
-            )
-
-            await record_ai_usage_best_effort(
-                record_key=build_usage_record_key("rerank", logical_call_id),
-                call_kind="rerank",
-                role="rerank",
-                provider_id=self.provider,
-                model_id=settings.rerank_model,
-                protocol_family="siliconflow-rerank",
-                usage=results,
-                input_only=True,
-            )
-
-            # 解析结果
-            if "results" not in results:
-                logger.warning("Rerank API 返回格式异常")
-                return docs[:top_k]
-
-            # 过滤低于阈值的文档
-            filtered_results = [
-                r
-                for r in results["results"]
-                if r.get("relevance_score", 0) >= score_threshold
-            ]
-
-            if not filtered_results:
-                logger.debug("所有文档都低于阈值 {}，返回空列表", score_threshold)
-                return []
-
-            # 根据返回的索引重新排序
-            reranked_docs = [docs[r["index"]] for r in filtered_results[:top_k]]
-
-            logger.debug(
-                f"✅ 重排序完成: {len(docs)} -> {len(reranked_docs)} "
-                f"(阈值: {score_threshold})"
-            )
-            return reranked_docs
+            authorization = getattr(self.client, "headers", {}).get("Authorization", "")
+            with sensitive_log_scope(
+                getattr(settings, "rerank_api_key", None),
+                authorization,
+                authorization.removeprefix("Bearer "),
+            ):
+                async with ProviderUsageMeter(
+                    provider_id=self.provider,
+                    model_id=settings.rerank_model,
+                    protocol_family="siliconflow-rerank",
+                    call_kind="rerank",
+                    role="rerank",
+                    logical_call_id=logical_call_id,
+                    input_only=True,
+                ) as usage_meter:
+                    response = await self.client.post(
+                        "",
+                        json={
+                            "model": settings.rerank_model,
+                            "query": query,
+                            "documents": texts,
+                            "top_n": top_n,
+                        },
+                    )
+                    response.raise_for_status()
+                    results = response.json()
+                    # Keep real Usage even when the ranking is inadmissible.
+                    # Validation belongs inside the attempt's failure boundary.
+                    usage_meter.usage = results
+                    if not isinstance(results, dict) or not isinstance(
+                        results.get("results"), list
+                    ):
+                        raise ValueError("Malformed reranker response")
+                    if strict and len(results["results"]) != top_n:
+                        raise ValueError("Malformed reranker result count")
+                    seen = set()
+                    for result in results["results"]:
+                        if (
+                            not isinstance(result, dict)
+                            or type(result.get("index")) is not int
+                            or not 0 <= result["index"] < len(docs)
+                            or result["index"] in seen
+                            or type(result.get("relevance_score")) not in (float, int)
+                            or not math.isfinite(result["relevance_score"])
+                        ):
+                            raise ValueError("Malformed reranker result")
+                        seen.add(result["index"])
+                    filtered_results = [
+                        r
+                        for r in results["results"]
+                        if r["relevance_score"] >= score_threshold
+                    ]
+                    reranked_docs = [docs[r["index"]] for r in filtered_results[:top_k]]
+                    logger.bind(
+                        input_count=len(docs), result_count=len(reranked_docs)
+                    ).debug("Rerank response validated")
+                    return reranked_docs
 
         except httpx.HTTPError as e:
-            logger.warning("SiliconFlow Rerank API 请求失败: {}", e)
+            if strict:
+                raise
+            logger.opt(exception=True).warning(
+                "SiliconFlow Rerank API 请求失败: {}", sanitize_exception_text(e)
+            )
             return docs[:top_k]
         except Exception as e:
-            logger.warning("SiliconFlow 重排序失败: {}", e)
+            if is_billing_failure(e):
+                raise
+            if strict:
+                raise
+            logger.opt(exception=True).warning(
+                "SiliconFlow 重排序失败: {}", sanitize_exception_text(e)
+            )
             return docs[:top_k]
 
     async def close(self):

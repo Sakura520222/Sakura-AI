@@ -448,9 +448,7 @@ async def test_telegram_announcement_uses_current_endpoint_and_keeps_legacy_mirr
 
 
 @pytest.mark.asyncio
-async def test_disabled_endpoint_releases_claim_for_immediate_retry(
-    sqlite_database, monkeypatch
-):
+async def test_disabled_endpoint_cancels_pending_delivery(sqlite_database, monkeypatch):
     session, engine = sqlite_database
     endpoint = NotificationEndpoint(
         id=1,
@@ -486,7 +484,8 @@ async def test_disabled_endpoint_releases_claim_for_immediate_retry(
     assert provider.calls == 0
     with Session(engine) as other:
         current = other.get(NotificationDelivery, 1)
-        assert current.status == DeliveryStatus.PENDING.value
+        assert current.status == DeliveryStatus.CANCELLED.value
+        assert current.error_category == "ineligible"
         assert current.claim_token is None
         assert current.claim_until is None
 

@@ -14,6 +14,17 @@ DOCKER_PUBLISH_PATH = ROOT / ".github" / "workflows" / "docker-publish.yml"
 WORKFLOWS_DIR = ROOT / ".github" / "workflows"
 SANDBOX_PUBLISH_PATH = WORKFLOWS_DIR / "sandbox-publish.yml"
 GITFLOW_SYNC_PATH = WORKFLOWS_DIR / "gitflow-sync-main-to-develop.yml"
+WEBUI_BUILD_PATH = WORKFLOWS_DIR / "webui-build.yml"
+# Release-creation allowlist: release-on-pr-merge.yml stays the single owner
+# of the versioned Release (exactly one `gh release create` / `gh release
+# edit`). webui-build.yml is the one allowed extra creator -- it owns only
+# the immutable prebuilt-WebUI bundle release (webui-builds-v<version>),
+# whose guard is asserted structurally by
+# test_webui_bundle_release_is_immutable_and_single_purpose.
+ALLOWED_RELEASE_CREATORS = {
+    "release-on-pr-merge.yml",
+    "webui-build.yml",
+}
 BUILD_IMAGE = (
     "python:3.14-slim-bookworm@"
     "sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52"
@@ -177,9 +188,10 @@ def test_release_workflow_keeps_single_owner_and_source_asset_cleanup_contract()
     assert text.count("gh release edit") == 1
     for workflow_path in WORKFLOWS_DIR.glob("*.yml"):
         workflow_text = workflow_path.read_text(encoding="utf-8")
-        if workflow_path.name != "release-on-pr-merge.yml":
-            assert "gh release create" not in workflow_text
-            assert "gh release edit" not in workflow_text
+        if workflow_path.name in ALLOWED_RELEASE_CREATORS:
+            continue
+        assert "gh release create" not in workflow_text
+        assert "gh release edit" not in workflow_text
     assert ".assets[].name" not in text
     check_assets = next(
         step
@@ -209,14 +221,76 @@ def test_release_workflow_keeps_single_owner_and_source_asset_cleanup_contract()
     assert "runs-on" not in updater
     assert "steps" not in updater
 
-    assert stable["needs"] == "generate-release"
-    assert stable["if"] == "needs.generate-release.result == 'success'"
+    # The allowed second release writer must stay driven by the release
+    # pipeline itself: pinned to the immutable tag with a matching
+    # release_tag so webui-build.yml never invents its own version.
+    # webui-build's input is `source_revision` (immutable SHA/tag contract);
+    # updater-build/docker-publish/sandbox-publish keep their own `source_ref`.
+    webui = jobs["publish-webui-assets"]
+    assert webui["needs"] == "generate-release"
+    assert webui["if"] == "needs.generate-release.result == 'success'"
+    assert webui["uses"] == "./.github/workflows/webui-build.yml"
+    assert webui["with"] == {
+        "source_revision": "refs/tags/v${{ needs.generate-release.outputs.version }}",
+        "release_tag": "v${{ needs.generate-release.outputs.version }}",
+    }
+    assert "runs-on" not in webui
+    assert "steps" not in webui
+
+    assert stable["needs"] == ["generate-release", "publish-webui-assets"]
+    assert stable["if"] == (
+        "needs.generate-release.result == 'success'"
+        " && needs.publish-webui-assets.result == 'success'"
+    )
     assert stable["with"]["source_ref"] == (
         "refs/tags/v${{ needs.generate-release.outputs.version }}"
     )
     assert stable["with"]["channel"] == "stable"
     assert stable["with"]["version"] == "${{ needs.generate-release.outputs.version }}"
+    assert stable["with"]["webui_artifact"] == (
+        "${{ needs.publish-webui-assets.outputs.artifact_name }}"
+    )
     assert release["concurrency"]["cancel-in-progress"] is False
+
+
+def test_webui_bundle_release_is_immutable_and_single_purpose():
+    """webui-build.yml 是唯一被允许的额外 Release 创建者：只为不可变预构建
+    bundle（webui-builds-v<version>）创建 Release，所有上传经 publish_file()
+    字节比对守卫，绝不覆盖已发布字节，也绝不创建/编辑版本化 Release。"""
+    workflow, text = _load(WEBUI_BUILD_PATH)
+    publish = workflow["jobs"]["publish"]
+    assert publish["needs"] == "build"
+    assert publish["permissions"]["contents"] == "write"
+    assert publish["concurrency"] == {
+        "group": "webui-release-assets",
+        "cancel-in-progress": False,
+    }
+    publish_text = _job_run_text(publish)
+
+    # Exactly one creation: the immutable bundle tag keyed by the built
+    # version, targeting the built revision, and never claiming "latest".
+    assert text.count("gh release create") == 1
+    assert 'gh release create "$build_tag"' in publish_text
+    assert 'build_tag="webui-builds-v$VERSION"' in publish_text
+    assert '--target "$REVISION"' in publish_text
+    assert "--prerelease" in publish_text
+    assert "--latest=false" in publish_text
+    assert "gh release edit" not in text
+    assert 'gh release create "$RELEASE_TAG"' not in publish_text
+
+    # Tag/version consistency: versioned-Release assets are only published
+    # when the release tag matches the built version exactly, and the
+    # commit-keyed bundle assets carry the full source revision.
+    assert '[[ "$RELEASE_TAG" == "v$VERSION" ]] || exit 1' in publish_text
+    assert "sakura-ai-webui-$REVISION.zip" in publish_text
+
+    # Every upload goes through publish_file(): same-name remote assets are
+    # downloaded and compared first; differing bytes abort instead of being
+    # replaced. No upload path may bypass the guard.
+    assert publish_text.count("gh release upload") == 1
+    assert 'gh release upload "$tag" "$file"' in publish_text
+    assert "Refusing to overwrite a different WebUI artifact" in publish_text
+    assert 'publish_file "$RELEASE_TAG"' in publish_text
 
 
 def test_source_archive_uses_unified_config_section_contract():
@@ -236,7 +310,7 @@ def test_source_archive_uses_unified_config_section_contract():
     # the release workflow must validate the new source of built-in defaults.
     assert "config/strategies.yaml" not in text
     assert "config/labels.yaml" not in text
-    assert 'backend/core/config_section_defaults.py' in structure_text
+    assert "backend/core/config_section_defaults.py" in structure_text
 
     # connection.json is deployment-time state and is intentionally ignored.
     # The source archive still carries the runtime directory for Setup/Compose.
@@ -288,27 +362,44 @@ def test_development_web_and_sandbox_tags_share_the_full_revision_identity():
     assert 'primary="dev-${utc_created}-v${VERSION}-${actual}"' in sandbox_text
     assert 'immutable="sha-${actual:0:40}"' in sandbox_text
     assert 'echo "revision=$actual"' in sandbox_text
-    assert "org.opencontainers.image.revision=${{ steps.tags.outputs.revision }}" in sandbox_text
-    assert "org.opencontainers.image.version=${{ steps.tags.outputs.version }}" in sandbox_text
+    assert (
+        "org.opencontainers.image.revision=${{ steps.tags.outputs.revision }}"
+        in sandbox_text
+    )
+    assert (
+        "org.opencontainers.image.version=${{ steps.tags.outputs.version }}"
+        in sandbox_text
+    )
     assert "com.sakura-ai.build.channel=${{ inputs.channel }}" in sandbox_text
-    assert 'com.sakura-ai.component="web"' in (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
-    assert 'com.sakura-ai.component="agent-runner"' in (ROOT / "docker" / "Dockerfile.agent-sandbox").read_text(encoding="utf-8")
+    assert 'com.sakura-ai.component="web"' in (
+        ROOT / "docker" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert 'com.sakura-ai.component="agent-runner"' in (
+        ROOT / "docker" / "Dockerfile.agent-sandbox"
+    ).read_text(encoding="utf-8")
     assert "org.opencontainers.image.revision=${{ github.sha }}" not in sandbox_text
     assert "name=${{ env.SANDBOXD_REPOSITORY }},push-by-digest=true" in sandbox_text
     assert "name=${{ env.RUNNER_REPOSITORY }},push-by-digest=true" in sandbox_text
     edge, _ = _load(ROOT / ".github/workflows/docker-edge.yml")
-    assert set(edge["jobs"]["publish-deployment"]["needs"]) == {"publish-edge", "publish-sandbox-edge"}
+    assert set(edge["jobs"]["publish-deployment"]["needs"]) == {
+        "publish-edge",
+        "publish-sandbox-edge",
+    }
 
 
 def test_gitflow_failure_notification_uses_validated_environment_branches():
     workflow, _ = _load(GITFLOW_SYNC_PATH)
-    branches = next(step for step in workflow["jobs"]["sync-main-to-develop"]["steps"] if step.get("id") == "branches")
+    branches = next(
+        step
+        for step in workflow["jobs"]["sync-main-to-develop"]["steps"]
+        if step.get("id") == "branches"
+    )
     branch_run = branches["run"]
     assert "INPUT_SOURCE_BRANCH" in branches["env"]
     assert "INPUT_TARGET_BRANCH" in branches["env"]
     assert "git check-ref-format --branch" in branch_run
-    assert "validate_branch \"$source\"" in branch_run
-    assert "validate_branch \"$target\"" in branch_run
+    assert 'validate_branch "$source"' in branch_run
+    assert 'validate_branch "$target"' in branch_run
 
     notify = next(
         step
@@ -336,14 +427,20 @@ def test_gitflow_token_fallback_publishes_complete_deployment():
     sandbox = jobs["publish-synchronized-development-sandbox"]
 
     assert web["uses"] == "./.github/workflows/docker-publish.yml"
-    assert web["with"]["source_ref"] == "${{ needs.sync-main-to-develop.outputs.revision }}"
+    assert (
+        web["with"]["source_ref"]
+        == "${{ needs.sync-main-to-develop.outputs.revision }}"
+    )
     assert web["with"]["channel"] == "development"
     assert sandbox["uses"] == "./.github/workflows/sandbox-publish.yml"
     assert sandbox["needs"] == [
         "sync-main-to-develop",
         "publish-synchronized-development",
     ]
-    assert sandbox["with"]["source_ref"] == "${{ needs.sync-main-to-develop.outputs.revision }}"
+    assert (
+        sandbox["with"]["source_ref"]
+        == "${{ needs.sync-main-to-develop.outputs.revision }}"
+    )
     assert sandbox["with"]["channel"] == "development"
     condition = sandbox["if"]
     assert "needs.sync-main-to-develop.outputs.changed == 'true'" in condition
@@ -357,24 +454,45 @@ def test_gitflow_token_fallback_publishes_complete_deployment():
         "publish-synchronized-development-sandbox",
     ]
     assert deployment["runs-on"] == "ubuntu-24.04"
-    assert deployment["concurrency"] == {"group": "docker-development", "cancel-in-progress": False}
+    assert deployment["concurrency"] == {
+        "group": "docker-development",
+        "cancel-in-progress": False,
+    }
     assert "scripts/publish_development_deployment.py" in text
-    assert "DEPLOYMENT_TAG: ${{ needs.publish-synchronized-development.outputs.immutable_tag }}" in text
-    assert "WEB_DIGEST: ${{ needs.publish-synchronized-development.outputs.digest }}" in text
-    assert "SANDBOXD_DIGEST: ${{ needs.publish-synchronized-development-sandbox.outputs.sandboxd_digest }}" in text
-    assert "RUNNER_DIGEST: ${{ needs.publish-synchronized-development-sandbox.outputs.runner_digest }}" in text
+    assert (
+        "DEPLOYMENT_TAG: ${{ needs.publish-synchronized-development.outputs.immutable_tag }}"
+        in text
+    )
+    assert (
+        "WEB_DIGEST: ${{ needs.publish-synchronized-development.outputs.digest }}"
+        in text
+    )
+    assert (
+        "SANDBOXD_DIGEST: ${{ needs.publish-synchronized-development-sandbox.outputs.sandboxd_digest }}"
+        in text
+    )
+    assert (
+        "RUNNER_DIGEST: ${{ needs.publish-synchronized-development-sandbox.outputs.runner_digest }}"
+        in text
+    )
     assert "advanced: ${{ steps.deployment.outputs.advanced }}" in text
     assert 'echo "advanced=false" >> "$GITHUB_OUTPUT"' in text
     assert 'echo "advanced=true" >> "$GITHUB_OUTPUT"' in text
-    assert "needs.publish-synchronized-development-deployment.outputs.advanced == 'true'" in mirror["if"]
+    assert (
+        "needs.publish-synchronized-development-deployment.outputs.advanced == 'true'"
+        in mirror["if"]
+    )
     assert mirror["needs"] == [
         "publish-synchronized-development",
         "publish-synchronized-development-deployment",
     ]
     assert mirror["permissions"] == {}
     assert mirror["continue-on-error"] is True
-    assert "DEPLOYMENT_DIGEST: ${{ needs.publish-synchronized-development-deployment.outputs.digest }}" in text
-    assert "crane tag \"docker.io/sakura520222/sakura-ai:${DEPLOYMENT_TAG}\" edge" in text
+    assert (
+        "DEPLOYMENT_DIGEST: ${{ needs.publish-synchronized-development-deployment.outputs.digest }}"
+        in text
+    )
+    assert 'crane tag "docker.io/sakura520222/sakura-ai:${DEPLOYMENT_TAG}" edge' in text
     assert web["with"]["sync_dockerhub"] is False
 
 
@@ -384,6 +502,7 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
 
     assert manifest["needs"] == [
         "generate-release",
+        "publish-webui-assets",
         "publish-updater-assets",
         "publish-stable-image",
         "publish-stable-sandbox",
@@ -391,9 +510,11 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
     condition = manifest["if"].strip()
     assert condition.startswith("always()")
     assert "needs.generate-release.result == 'success'" in condition
+    assert "needs.publish-webui-assets.result == 'success'" in condition
     assert "needs.publish-updater-assets.result == 'success'" in condition
     assert "needs.publish-stable-image.result == 'success'" in condition
     assert "needs.publish-stable-image.result == 'skipped'" not in condition
+    assert "needs.publish-stable-sandbox.result == 'success'" in condition
 
     checkout = next(
         step
@@ -420,7 +541,10 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
     assert "docker manifest inspect" in run_text
     assert "update-manifest.json" in run_text
     assert 'gh release upload "$TAG_NAME" update-manifest.json --clobber' in run_text
-    assert 'gh release upload "$TAG_NAME" agent-sandbox-manifest.json --clobber' in run_text
+    assert (
+        'gh release upload "$TAG_NAME" agent-sandbox-manifest.json --clobber'
+        in run_text
+    )
     assert "gh release create" not in run_text
     assert "gh release edit" not in run_text
     assert "${{ inputs.version }}" not in text
@@ -435,7 +559,7 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
     assert '"updater":{"protocol_version"' in run_text
     assert '"asset_linux_amd64"' in run_text
     assert '"asset_linux_arm64"' in run_text
-    assert 'cat > agent-sandbox-manifest.json' in run_text
+    assert "cat > agent-sandbox-manifest.json" in run_text
     assert '"manifest":"agent-sandbox"' in run_text
     assert '"sandboxd_image"' in run_text
     assert '"runner_image"' in run_text

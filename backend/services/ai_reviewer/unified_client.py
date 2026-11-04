@@ -44,8 +44,20 @@ from backend.core.ai_protocol.request_policy import (
     filter_reasoning_params,
     resolve_effective_request_policy,
 )
+from backend.core.log_context import (
+    model_log_fields,
+    traced_operation,
+    update_log_context,
+)
+from backend.core.log_sanitizer import sanitize_exception_text
 from backend.services.activity_observability.contracts import (
     EffectiveReasoningSnapshot,
+)
+from backend.services.ai_reviewer.compression.errors import UsagePersistenceError
+from backend.services.ai_usage_service import (
+    ProviderUsageMeter,
+    is_billing_failure,
+    metered_stream,
 )
 
 
@@ -421,11 +433,9 @@ class UnifiedAIClient:
     ) -> None:
         recorder = self._usage_recorder
         if recorder is None:
-            from backend.services.ai_usage_service import (
-                record_unified_ai_usage_best_effort,
-            )
-
-            recorder = record_unified_ai_usage_best_effort
+            # The transport boundary meters every real request, including
+            # unsuccessful attempts. This hook remains for injected observers.
+            return
         try:
             await recorder(
                 logical_call_id=logical_call_id,
@@ -468,6 +478,7 @@ class UnifiedAIClient:
     # ------------------------------------------------------------------
     # 核心：带故障转移的调用 / Core: fallback-aware call
     # ------------------------------------------------------------------
+    @traced_operation(model_log_fields)
     async def call_with_retry(
         self,
         chain_or_candidates: Any,
@@ -506,7 +517,11 @@ class UnifiedAIClient:
             else self._logical_call_factory
         )
         if active_observer is not None:
-            active_observer.context = active_context
+            bind = getattr(active_observer, "for_context", None)
+            if bind is not None:
+                active_observer = bind(active_context)
+            else:
+                active_observer.context = active_context
         call_state = _CallState(
             observer=active_observer,
             logical_call_factory=active_logical_call_factory,
@@ -547,6 +562,7 @@ class UnifiedAIClient:
 
         attempt_chain: list[AttemptRecord] = []
         logical_call_id = str(call_state.logical_call_factory())
+        update_log_context(logical_call_id=logical_call_id)
         logical_call_started = time.monotonic()
         last_error: AIError | None = None
 
@@ -612,12 +628,13 @@ class UnifiedAIClient:
                     }
                     if unified_tools:
                         compressor_kwargs["tools"] = unified_tools
-                    did_compress, candidate_messages = (
-                        await self._compressor.maybe_compress(
-                            candidate,
-                            unified_messages,
-                            **compressor_kwargs,
-                        )
+                    (
+                        did_compress,
+                        candidate_messages,
+                    ) = await self._compressor.maybe_compress(
+                        candidate,
+                        unified_messages,
+                        **compressor_kwargs,
                     )
                     winner_did_compress = did_compress
                     request_messages = (
@@ -640,10 +657,17 @@ class UnifiedAIClient:
                             except Exception as exc:
                                 logger.warning(
                                     "主动压缩可观测性记录失败（不影响审查）: {}",
-                                    exc,
+                                    sanitize_exception_text(exc),
                                 )
+                except UsagePersistenceError:
+                    raise
                 except Exception as exc:
-                    logger.warning("主动压缩预检失败，按原消息继续: {}", exc)
+                    if is_billing_failure(exc):
+                        raise
+                    logger.warning(
+                        "主动压缩预检失败，按原消息继续: {}",
+                        sanitize_exception_text(exc),
+                    )
             policy = resolve_effective_request_policy(
                 candidate,
                 request_messages,
@@ -777,7 +801,9 @@ class UnifiedAIClient:
                         category=exc.category.value,
                         elapsed=time.monotonic() - start,
                         retry=0,
-                        fallback_reason=str(exc)[:200],
+                        fallback_reason=sanitize_exception_text(
+                            exc, secrets=(candidate.credential,)
+                        )[:200],
                     )
                 )
                 logger.warning(
@@ -786,7 +812,7 @@ class UnifiedAIClient:
                     len(selected),
                     served_by,
                     exc.category.value,
-                    exc,
+                    sanitize_exception_text(exc, secrets=(candidate.credential,)),
                 )
 
                 # 认证、权限和模型不存在：当前候选不重试，直接故障转移。
@@ -881,6 +907,7 @@ class UnifiedAIClient:
             attempts=[a.__dict__ for a in attempt_chain],
         )
 
+    @traced_operation(model_log_fields)
     async def stream_with_retry(
         self,
         chain_or_candidates: Any,
@@ -913,7 +940,11 @@ class UnifiedAIClient:
             else self._logical_call_factory
         )
         if active_observer is not None:
-            active_observer.context = active_context
+            bind = getattr(active_observer, "for_context", None)
+            if bind is not None:
+                active_observer = bind(active_context)
+            else:
+                active_observer.context = active_context
         unified_messages = (
             messages
             if (messages and isinstance(messages[0], UnifiedMessage))
@@ -939,6 +970,7 @@ class UnifiedAIClient:
                     break
 
         logical_call_id = str(active_logical_call_factory())
+        update_log_context(logical_call_id=logical_call_id)
         logical_call_started = time.monotonic()
         # ``total_timeout`` is a logical-call budget.  Non-positive values have
         # historically meant that the streaming path has no total deadline;
@@ -987,26 +1019,32 @@ class UnifiedAIClient:
                         clamp_to_context=False,
                         stream=True,
                     )
-                    _compressed, candidate_messages = (
-                        await self._compressor.maybe_compress(
-                            candidate,
-                            unified_messages,
-                            tracker=None,
-                            effective_max_output_tokens=max(
-                                1, preflight_policy.max_output_tokens
-                            ),
-                            safety_reserve_tokens=(
-                                preflight_policy.safety_reserve_tokens
-                            ),
-                        )
+                    (
+                        _compressed,
+                        candidate_messages,
+                    ) = await self._compressor.maybe_compress(
+                        candidate,
+                        unified_messages,
+                        tracker=None,
+                        effective_max_output_tokens=max(
+                            1, preflight_policy.max_output_tokens
+                        ),
+                        safety_reserve_tokens=(preflight_policy.safety_reserve_tokens),
                     )
                     request_messages = (
                         candidate_messages
                         if candidate.model.capabilities.vision
                         else strip_message_images(candidate_messages)
                     )
+                except UsagePersistenceError:
+                    raise
                 except Exception as exc:
-                    logger.warning("流式主动压缩预检失败，按原消息继续: {}", exc)
+                    if is_billing_failure(exc):
+                        raise
+                    logger.warning(
+                        "流式主动压缩预检失败，按原消息继续: {}",
+                        sanitize_exception_text(exc),
+                    )
             policy = resolve_effective_request_policy(
                 candidate,
                 request_messages,
@@ -1044,6 +1082,7 @@ class UnifiedAIClient:
                 thinking=policy.thinking,
                 effort=policy.effort,
                 stream=True,
+                include_stream_usage=getattr(candidate.model.capabilities, "stream_usage", True),
             )
             reasoning_snapshot = _effective_reasoning_snapshot(
                 candidate,
@@ -1124,6 +1163,12 @@ class UnifiedAIClient:
                             requested=requested_candidate,
                             reasoning_snapshot=reasoning_snapshot,
                         )
+                    events = metered_stream(
+                        events,
+                        candidate=candidate,
+                        role=role,
+                        logical_call_id=logical_call_id,
+                    )
                     self._mark_logical_attempt(logical_call_id)
                     try:
                         async with asyncio.timeout(iteration_timeout):
@@ -1339,44 +1384,57 @@ class UnifiedAIClient:
                     model=candidate.model.model_id,
                 )
             try:
-                self._mark_logical_attempt(logical_call_id)
-                if call_state.observer is not None:
-                    attempt_kind = (
-                        "retry"
-                        if attempt
-                        else (
-                            initial_attempt_kind
-                            or ("fallback" if fallback_from is not None else "primary")
+                async with ProviderUsageMeter.for_candidate(
+                    candidate,
+                    call_kind="chat",
+                    role=role,
+                    logical_call_id=logical_call_id,
+                ) as usage_meter:
+                    self._mark_logical_attempt(logical_call_id)
+                    if call_state.observer is not None:
+                        attempt_kind = (
+                            "retry"
+                            if attempt
+                            else (
+                                initial_attempt_kind
+                                or (
+                                    "fallback"
+                                    if fallback_from is not None
+                                    else "primary"
+                                )
+                            )
                         )
-                    )
-                    (
-                        response,
-                        call_state.last_attempt_id,
-                    ) = await call_state.observer.send_chat(
-                        adapter,
-                        self.http_client,
-                        candidate,
-                        request,
-                        timeout=timeout,
-                        logical_call_id=logical_call_id
-                        or str(call_state.logical_call_factory()),
-                        attempt_kind=attempt_kind,
-                        purpose=role,
-                        retry_of=(
-                            call_state.last_attempt_id if attempt else initial_retry_of
-                        ),
-                        fallback_from=fallback_from,
-                        requested=requested_candidate or candidate,
-                        reasoning_snapshot=reasoning_snapshot,
-                    )
-                else:
-                    response = await adapter.chat(
-                        self.http_client,
-                        candidate.endpoint,
-                        candidate.credential,
-                        request,
-                        timeout=timeout,
-                    )
+                        (
+                            response,
+                            call_state.last_attempt_id,
+                        ) = await call_state.observer.send_chat(
+                            adapter,
+                            self.http_client,
+                            candidate,
+                            request,
+                            timeout=timeout,
+                            logical_call_id=logical_call_id
+                            or str(call_state.logical_call_factory()),
+                            attempt_kind=attempt_kind,
+                            purpose=role,
+                            retry_of=(
+                                call_state.last_attempt_id
+                                if attempt
+                                else initial_retry_of
+                            ),
+                            fallback_from=fallback_from,
+                            requested=requested_candidate or candidate,
+                            reasoning_snapshot=reasoning_snapshot,
+                        )
+                    else:
+                        response = await adapter.chat(
+                            self.http_client,
+                            candidate.endpoint,
+                            candidate.credential,
+                            request,
+                            timeout=timeout,
+                        )
+                    usage_meter.usage = response.usage
                 return response
             except AIError as exc:
                 last_exc = exc
@@ -1398,7 +1456,9 @@ class UnifiedAIClient:
                     logger.warning(
                         "AI 调用失败 [{}]: {}，{:.1f}s 后重试 ({}/{}) role={} model={}",
                         exc.category.value,
-                        str(exc)[:160],
+                        sanitize_exception_text(exc, secrets=(candidate.credential,))[
+                            :160
+                        ],
                         delay,
                         attempt + 1,
                         cfg.max_retries + 1,
@@ -1563,8 +1623,10 @@ class UnifiedAIClient:
                 messages=messages,
                 **compressor_kwargs,
             )
+        except UsagePersistenceError:
+            raise
         except Exception as exc:
-            logger.warning("压缩恢复失败: {}", exc)
+            logger.warning("压缩恢复失败: {}", sanitize_exception_text(exc))
             return None
         if compressed is None:
             return None
@@ -1579,7 +1641,10 @@ class UnifiedAIClient:
                         trigger_reason="provider_overflow",
                     )
                 except Exception as exc:
-                    logger.warning("压缩上下文持久化失败，跳过压缩重试: {}", exc)
+                    logger.warning(
+                        "压缩上下文持久化失败，跳过压缩重试: {}",
+                        sanitize_exception_text(exc),
+                    )
                     return None
 
         compressed_request = UnifiedRequest(

@@ -1,6 +1,7 @@
 """API v1 Setup Wizard 端点（免认证，仅在 bootstrap 模式下可用）"""
 
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
 
@@ -11,9 +12,69 @@ from backend.core.bootstrap import (
     get_missing_fields,
     is_bootstrap_mode,
 )
+from backend.core.setup_database import (
+    DatabaseSetupError,
+    check_database,
+    has_setup_database_token,
+    setup_database_status,
+)
 from backend.core.setup_service import setup_service
 
 router = APIRouter(prefix="/setup", tags=["Setup"])
+
+
+@router.post("/browser/verify")
+@limiter.limit("5/minute")
+async def verify_browser_setup(request: Request):
+    if not is_bootstrap_mode() or not has_setup_database_token(request):
+        return error_response("Setup authorization required", status_code=403)
+    return JSONResponse({"success": True}, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/browser")
+async def browser_setup_state(request: Request):
+    from backend.core.config import get_settings
+
+    if not is_bootstrap_mode():
+        return {"state": "completed"}
+    if not has_setup_database_token(request):
+        return error_response("Setup authorization required", status_code=403)
+    settings = get_settings()
+    return {
+        "state": "in_progress",
+        "missing_fields": await get_missing_fields(),
+        "configured": {
+            key: bool(getattr(settings, key.lower(), None))
+            for key in (
+                "DATABASE_URL",
+                "REDIS_URL",
+                "GITHUB_APP_ID",
+                "GITHUB_PRIVATE_KEY",
+                "GITHUB_OAUTH_CLIENT_ID",
+                "GITHUB_OAUTH_CLIENT_SECRET",
+                "GITHUB_OAUTH_REDIRECT_URI",
+            )
+        },
+    }
+
+
+@router.post("/browser/backup")
+async def browser_setup_backup(request: Request):
+    from backend.webui.routes.setup import inspect_config_backup
+
+    if not is_bootstrap_mode() or not has_setup_database_token(request):
+        return error_response("Setup authorization required", status_code=403)
+    return await inspect_config_backup(request)
+
+
+@router.post("/browser/complete")
+@limiter.limit("3/minute")
+async def browser_setup_complete(request: Request):
+    from backend.webui.routes.setup import complete_setup as complete_browser
+
+    if not is_bootstrap_mode() or not has_setup_database_token(request):
+        return error_response("Setup authorization required", status_code=403)
+    return await complete_browser(request)
 
 
 class TestConnectionRequest(BaseModel):
@@ -37,6 +98,32 @@ class SaveStepRequest(BaseModel):
     """保存配置步骤请求"""
 
     values: dict[str, str]
+
+
+class DatabasePreflightRequest(BaseModel):
+    database_url: str
+
+
+def _database_response(result):
+    if result["success"]:
+        return success_response(data=result)
+    return JSONResponse(
+        {
+            "success": False,
+            "error": result["message"],
+            "code": result.get("code", "database_connection_failed"),
+            "data": result,
+        },
+        status_code=setup_database_status(result),
+    )
+
+
+@router.post("/database-preflight")
+@limiter.limit("10/minute")
+async def database_preflight(request: Request, body: DatabasePreflightRequest):
+    if not is_bootstrap_mode() or not has_setup_database_token(request):
+        return error_response("Setup authorization required", status_code=403)
+    return _database_response(await check_database(body.database_url))
 
 
 class CompleteSetupRequest(BaseModel):
@@ -141,6 +228,8 @@ async def test_connection(request: Request, body: TestConnectionRequest):
     else:
         return error_response(f"不支持的测试类型: {body.type}", status_code=400)
 
+    if not result["success"]:
+        return error_response(result["message"], status_code=400)
     return success_response(data=result)
 
 
@@ -178,12 +267,26 @@ async def save_step(body: SaveStepRequest):
             await setup_service.init_database(db_url)
 
         saved = await setup_service.save_configs_to_db(values)
+        result = {"saved_count": saved}
+        if "DATABASE_URL" in values:
+            result.update(
+                stage="initialized", connected=True, schema_ready=True, initialized=True
+            )
         return success_response(
-            data={"saved_count": saved},
+            data=result,
             message=f"已保存 {saved} 项配置",
         )
+    except DatabaseSetupError as exc:
+        return _database_response(exc.report)
     except ValueError as exc:
-        return error_response(str(exc), status_code=400)
+        # Validation messages are fixed literals from the shared Setup
+        # validators; read args[0] directly so exception stringification never
+        # reaches the response. / 校验消息来自共享 Setup 校验器的固定文案，
+        # 直接读 args[0]，避免异常对象字符串化进入响应。
+        return error_response(
+            exc.args[0] if exc.args and isinstance(exc.args[0], str) else "配置校验失败",
+            status_code=400,
+        )
     except Exception:
         logger.exception("Setup 配置保存失败 / setup save failed")
         return error_response("配置保存失败，请稍后重试", status_code=500)
@@ -208,4 +311,6 @@ async def complete_setup(request: Request, body: CompleteSetupRequest):
         asyncio.get_running_loop().call_later(2, setup_service.trigger_restart)
         return success_response(data=result, message=result["message"])
     else:
+        if result.get("stage"):
+            return _database_response(result)
         return error_response(result["message"], status_code=400)

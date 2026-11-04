@@ -110,7 +110,9 @@ async def scan_stats(
         data={
             "total": sum(by_status.values()),
             "by_status": by_status,
-            "avg_health_score": float(round(avg_score, 1)) if avg_score else None,
+            "avg_health_score": float(round(avg_score, 1))
+            if avg_score is not None
+            else None,
         }
     )
 
@@ -154,6 +156,10 @@ async def get_scan(
         "minor_count": scan.minor_count,
         "suggestion_count": scan.suggestion_count,
         "overall_health_score": scan.overall_health_score,
+        "summary": scan.summary,
+        "scan_rounds": scan.scan_rounds,
+        "prompt_tokens": scan.prompt_tokens,
+        "completion_tokens": scan.completion_tokens,
         "report_issue_number": scan.report_issue_number,
         "report_issue_url": scan.report_issue_url,
         "created_at": format_rfc3339(scan.created_at) if scan.created_at else None,
@@ -172,6 +178,7 @@ async def get_scan(
                 "title": f.title,
                 "description": f.description,
                 "suggestion": f.suggestion,
+                "code_snippet": f.code_snippet,
                 "confidence": f.confidence,
             }
             for f in findings
@@ -244,7 +251,12 @@ async def retry_scan(
     """重试失败的扫描"""
     from backend.workers.scan_worker import ScanWorker
 
-    result = await db.execute(select(RepoScan).where(RepoScan.id == scan_id))
+    result = await db.execute(
+        select(RepoScan)
+        .where(RepoScan.id == scan_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     scan = result.scalar_one_or_none()
     if not scan:
         return error_response("扫描记录不存在", status_code=404)
@@ -254,6 +266,13 @@ async def retry_scan(
     # 重置状态并重新执行
     scan.status = "pending"
     scan.error_message = None
+    # An explicit authenticated retry is a new execution. Preserve the old
+    # operation, provider costs and financial evidence under its original ID.
+    scan.trigger_type = "manual"
+    scan.triggered_by = f"api:{user['user_id']}"
+    from backend.services.billing_context import admit_scan_billing
+
+    await admit_scan_billing(db, scan)
     await db.commit()
 
     try:

@@ -31,6 +31,7 @@ from backend.core.ai_protocol.models import (
     safe_provider_event_metadata,
     usage_from_mapping,
 )
+from backend.core.log_context import provider_log_fields, traced_operation
 
 _RESPONSES_STATUS_MAP: dict[str, StopReason] = {
     "completed": StopReason.END_TURN,
@@ -245,6 +246,7 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
     def _parse_responses_usage(raw: Any) -> UnifiedUsage:
         return usage_from_mapping(raw)
 
+    @traced_operation(provider_log_fields, events=True)
     async def chat(
         self,
         client: httpx.AsyncClient,
@@ -280,6 +282,7 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
                 "OpenAI Responses 端点报告请求失败",
                 provider=endpoint.base_url,
                 model=request.model,
+                usage=usage_from_mapping(payload.get("usage")),
             )
         response = self.parse_response(payload, raw=resp)
         if not response.content and not response.tool_calls:
@@ -288,9 +291,11 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
                 "OpenAI Responses 端点返回空响应",
                 provider=endpoint.base_url,
                 model=request.model,
+                usage=response.usage,
             )
         return response
 
+    @traced_operation(provider_log_fields, events=True)
     async def stream(
         self,
         client: httpx.AsyncClient,
@@ -309,6 +314,12 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
             async with client.stream(
                 "POST", url, json=body, headers=headers, timeout=timeout
             ) as resp:
+                if (
+                    not 200 <= resp.status_code < 300
+                    or "text/event-stream"
+                    not in resp.headers.get("content-type", "").lower()
+                ):
+                    await resp.aread()
                 self.ensure_sse_response(
                     resp,
                     endpoint,
@@ -324,6 +335,7 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
                                 event.error or "OpenAI Responses 流报告请求失败",
                                 provider=endpoint.base_url,
                                 model=request.model,
+                                usage=event.usage,
                             )
                         yield event
         except httpx.HTTPError as exc:
@@ -414,6 +426,11 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
         if event_type in {"response.failed", "error"}:
             return UnifiedStreamEvent(
                 type="error",
+                usage=OpenAIResponsesAdapter._parse_responses_usage(
+                    (chunk.get("response") or {}).get("usage")
+                    if isinstance(chunk.get("response"), dict)
+                    else chunk.get("usage")
+                ),
                 error="OpenAI Responses 流报告请求失败",
                 provider_event_metadata=metadata,
             )

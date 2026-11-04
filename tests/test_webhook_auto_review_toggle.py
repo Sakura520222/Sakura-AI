@@ -8,6 +8,9 @@ import pytest
 from backend.api import webhook
 from backend.core.config import get_settings
 from backend.models.agent_team_models import AgentTeamTaskStatus
+from tests.test_billing_usage_attribution import sql_runtime as runtime_fixture
+
+sql_runtime = runtime_fixture
 
 
 class _FakeWorker:
@@ -38,7 +41,10 @@ class _FakeTelegramService:
     async def get_user_by_github_username(self, github_username):
         return _FakeUser()
 
-    async def check_and_consume_quota(self, github_username, repo_name, pr_number):
+    async def check_and_consume_quota(
+        self, github_username, repo_name, pr_number, *, operation_id=None
+    ):
+        assert isinstance(operation_id, str) and operation_id
         return True, "ok"
 
     async def get_repo_subscribers(self, repo_full_name):
@@ -401,7 +407,7 @@ async def test_mark_external_reviewing_refreshes_waiting_direct_task_head(monkey
 
 
 @pytest.mark.asyncio
-async def test_closed_action_cancels_active_review_task(monkeypatch):
+async def test_closed_action_cancels_active_review_task(monkeypatch, sql_runtime):
     cancelled_keys = []
 
     class _FakeCancelWorker:
@@ -412,6 +418,8 @@ async def test_closed_action_cancels_active_review_task(monkeypatch):
     monkeypatch.setattr(
         "backend.workers.review_worker.get_worker", lambda: _FakeCancelWorker()
     )
+    factory, _, _ = sql_runtime
+    monkeypatch.setattr(webhook, "get_async_session", factory)
 
     payload = {
         "action": "closed",

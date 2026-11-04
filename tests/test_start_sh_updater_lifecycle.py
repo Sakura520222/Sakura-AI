@@ -17,12 +17,16 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from tests.platform_support import posix_bash
+
 ROOT = Path(__file__).parents[1]
 
 
 def _bash(script: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["bash"],
+        [posix_bash()],
         cwd=ROOT,
         env={**os.environ, "TERM": "dumb"},
         input=script.replace("\r\n", "\n").encode("utf-8"),
@@ -260,5 +264,44 @@ updater_backend() {
 ensure_updater_running --startup-timeout 300
 grep -q '^ACQ_INSTALL:--startup-timeout 300' "$LOG"
 ''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("package_version", [None, "3.0.0"])
+@pytest.mark.parametrize("health_version", [None, "4.0.0"])
+def test_updater_bootstrap_uses_pinned_development_version(
+    package_version: str | None, health_version: str | None
+):
+    """开发镜像安装不依赖源码或运行中 Web。 / Bootstrap is not runtime identity."""
+    result = _bash(
+        r'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+UPDATER_DEPLOYMENT_ENV_FILE="$T/deployment.env"
+UPDATER_BACKEND_VERSION_FILE="$T/backend_init.py"
+cat > "$UPDATER_DEPLOYMENT_ENV_FILE" <<'EOF'
+SAKURA_DEPLOY_MODE=image
+SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:dev-20261006033908-v3.2.5-651cd486e5ae6f9306291b6ac491f51dee444dfe@sha256:e1f6c9f189ca50ef456e52617df9a76d08102c2af18d2f447dab57fabe0ff0eb
+EOF
+'''
+        + (
+            f'printf \'__version__ = "{package_version}"\\n\' > "$UPDATER_BACKEND_VERSION_FILE"\n'
+            if package_version is not None
+            else ""
+        )
+        + (
+            'updater_health_payload() { printf \'{"version":"'
+            + health_version
+            + '"}\\n\'; }\n'
+            if health_version is not None
+            else "updater_health_payload() { return 1; }\n"
+        )
+        + r'''
+[[ "$(resolve_updater_app_version)" == "3.2.5" ]]
+'''
     )
     assert result.returncode == 0, result.stdout + result.stderr

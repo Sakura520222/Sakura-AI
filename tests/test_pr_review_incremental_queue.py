@@ -122,7 +122,14 @@ class _MemoryDb:
     @staticmethod
     def _matches(row, params, mapping):
         for param_name, attr_name in mapping.items():
-            if param_name in params and getattr(row, attr_name) != params[param_name]:
+            if param_name not in params:
+                continue
+            expected = params[param_name]
+            actual = getattr(row, attr_name)
+            if isinstance(expected, (list, tuple)):
+                if actual not in expected:
+                    return False
+            elif actual != expected:
                 return False
         return True
 

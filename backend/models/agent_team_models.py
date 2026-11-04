@@ -1,6 +1,7 @@
 """Agent 专家团队模式数据模型"""
 
 import enum
+from uuid import uuid4
 
 from sqlalchemy import (
     BigInteger,
@@ -69,6 +70,12 @@ class AgentTeamTask(Base):
     __tablename__ = "agent_team_tasks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    billing_operation_id = Column(
+        String(128), nullable=True, index=True, default=lambda: str(uuid4())
+    )
+    webhook_delivery_id = Column(String(191), nullable=True, unique=True)
+    billing_user_id = Column(Integer, nullable=True, index=True)
+    billing_platform_reason = Column(String(128), nullable=True)
     source_type = Column(String(50), nullable=False, index=True)
     source_id = Column(Integer, nullable=True, index=True)
     source_issue_number = Column(BigInteger, nullable=True, index=True)
@@ -94,6 +101,9 @@ class AgentTeamTask(Base):
     base_branch = Column(String(255), nullable=True)
     base_commit_sha = Column(String(64), nullable=True)
     resume_count = Column(Integer, default=0, nullable=False)
+    # A full retry is a new execution even if it fails before any iteration.
+    # Zero preserves the identity of tasks imported from older deployments.
+    execution_round = Column(Integer, default=0, server_default="0", nullable=False)
     failed_phase = Column(String(50), nullable=True)
     failed_role = Column(String(50), nullable=True)
     rate_limit_reset_at = Column(UTCDateTime, nullable=True)
@@ -234,6 +244,58 @@ class AgentTeamSession(Base):
     tool_calls = relationship(
         "AgentTeamToolCall", back_populates="session", cascade="all, delete-orphan"
     )
+
+
+class AgentTeamUsage(Base):
+    """Runtime receipt; its insert and task accounting commit atomically.
+
+    Nullable counters preserve absent provider usage. Historical task/session
+    totals are never inferred or backfilled from result or message content.
+    """
+
+    __tablename__ = "agent_team_usage"
+
+    request_id = Column(String(36), primary_key=True)
+    session_id = Column(
+        Integer,
+        ForeignKey("agent_team_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    prompt_tokens = Column(Integer, nullable=True)
+    completion_tokens = Column(Integer, nullable=True)
+    created_at = Column(UTCDateTime, default=utc_now, nullable=False)
+
+
+class AgentTeamSubagent(Base):
+    """Runtime-owned delegation identity; child messages use the normal ledger.
+
+    A separate table adds no new meaning to existing session columns. The
+    unique spawn ledger link survives a crash between creation and the parent
+    tool result, so replay cannot create a second child.
+    """
+
+    __tablename__ = "agent_team_subagents"
+
+    session_id = Column(
+        Integer,
+        ForeignKey("agent_team_sessions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    parent_session_id = Column(
+        Integer,
+        ForeignKey("agent_team_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    spawn_tool_call_id = Column(
+        Integer,
+        ForeignKey("agent_team_tool_calls.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    instruction = Column(LONGTEXT, nullable=False)
+    restriction_payload = Column(LONGTEXT, nullable=False)
 
 
 class AgentTeamMessage(Base):

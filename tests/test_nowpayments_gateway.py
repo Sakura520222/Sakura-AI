@@ -11,7 +11,10 @@ from unittest.mock import patch
 
 import pytest
 
-from backend.services.payment.gateway_base import WebhookEventType
+from backend.services.payment.gateway_base import (
+    PaymentWebhookVerificationError,
+    WebhookEventType,
+)
 from backend.services.payment.nowpayments_gateway import NowPaymentsGateway
 
 API_KEY = "test-api-key"
@@ -53,7 +56,8 @@ class TestCurrencyConversion:
             result = gateway._to_minor_units(None, "USD")
 
         assert result == 0
-        mock_logger.warning.assert_called_once_with(
+        mock_logger.opt.assert_called_once_with(exception=True)
+        mock_logger.opt.return_value.warning.assert_called_once_with(
             "Invalid amount '{}' for currency '{}', defaulting to 0",
             None,
             "USD",
@@ -66,7 +70,8 @@ class TestCurrencyConversion:
             result = gateway._to_minor_units("not-a-number", "USD")
 
         assert result == 0
-        mock_logger.warning.assert_called_once_with(
+        mock_logger.opt.assert_called_once_with(exception=True)
+        mock_logger.opt.return_value.warning.assert_called_once_with(
             "Invalid amount '{}' for currency '{}', defaulting to 0",
             "not-a-number",
             "USD",
@@ -227,6 +232,7 @@ class TestVerifyWebhook:
             "payment_status": "expired",
             "order_id": "ORDER-002",
             "price_amount": 5.0,
+            "price_currency": "usd",
         }
         body = json.dumps(data).encode("utf-8")
         sig = _make_ipn_signature(data, IPN_SECRET)
@@ -313,18 +319,16 @@ class TestVerifyWebhook:
         body = json.dumps(data).encode("utf-8")
         headers = {"x-nowpayments-sig": "invalid_signature"}
 
-        event = gateway.verify_webhook(body, headers)
-
-        assert event.event_type == WebhookEventType.UNKNOWN
+        with pytest.raises(PaymentWebhookVerificationError):
+            gateway.verify_webhook(body, headers)
 
     def test_no_signature(self, gateway):
         """缺少签名头"""
         data = {"payment_id": 5077125057, "payment_status": "finished"}
         body = json.dumps(data).encode("utf-8")
 
-        event = gateway.verify_webhook(body, {})
-
-        assert event.event_type == WebhookEventType.UNKNOWN
+        with pytest.raises(PaymentWebhookVerificationError):
+            gateway.verify_webhook(body, {})
 
 
 class TestRefund:
@@ -398,3 +402,10 @@ class TestGetPaymentStatus:
 
         assert result.success is False
         assert "Not found" in result.error_message
+
+
+def test_nowpayments_major_amounts_follow_canonical_minor_units():
+    assert NowPaymentsGateway._from_minor_units(500, "MGA") == 5.0
+    assert NowPaymentsGateway._from_minor_units(1234, "BHD") == 1.234
+    assert NowPaymentsGateway._to_minor_units("5", "MGA") == 500
+    assert NowPaymentsGateway._to_minor_units("1.234", "BHD") == 1234

@@ -1,0 +1,145 @@
+.agent-links {
+  display: flex;
+  gap: 22px;
+  margin: -6px 0 24px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid var(--border);
+}
+.agent-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 19px;
+  font-size: 13px;
+}
+.agent-task-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 22px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.agent-task-strip > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+}
+.agent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0 24px;
+}
+.agent-error {
+  background: color-mix(in srgb, var(--danger) 6%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border));
+  color: var(--danger);
+  padding: 15px 18px;
+  border-radius: 8px;
+  margin-bottom: 22px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-form {
+  display: grid;
+  gap: 16px;
+}
+.agent-form > label {
+  display: grid;
+  gap: 7px;
+  font-weight: 550;
+}
+.agent-form .wf-disclosure {
+  margin: 0;
+}
+.agent-pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  max-height: 350px;
+  overflow-y: auto;
+  padding: 14px;
+  border-radius: 8px;
+  background: var(--surface-alt);
+}
+.agent-iteration {
+  padding: 16px 0;
+}
+.agent-file {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding: 11px 0;
+}
+.agent-file p {
+  width: 100%;
+  margin: 0;
+  color: var(--muted);
+}
+.agent-conversation {
+  max-height: 620px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.agent-message {
+  padding: 19px 0;
+  border-bottom: 1px solid var(--border);
+}
+.agent-message:first-child {
+  padding-top: 5px;
+}
+.agent-message:last-child {
+  border-bottom: 0;
+}
+.agent-message header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.agent-message header strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+.agent-message > p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-tool {
+  padding: 13px 0;
+  border-bottom: 1px solid var(--border);
+}
+.agent-tool > strong {
+  margin-right: 15px;
+}
+.agent-tool details {
+  margin-top: 10px;
+  color: var(--muted);
+}
+.agent-prompt {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 18px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.agent-prompt > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+}
+.agent-prompt button {
+  margin-left: auto;
+}

@@ -536,67 +536,82 @@ coverage limitations in the summary without inventing findings.
         "max_linked_issues_in_prompt": 5,
         # Issue 分析系统提示词（英文 focus，强化型契约由代码注入）
         "system_prompt": """\
-Analyze the GitHub issue against the repository code base. Establish concrete
-evidence with tools before judging category, priority, and feasibility, then
-recommend labels, assignees, milestone, duplicate detection, and a normalized
-title when the original is unclear.
+Analyze the GitHub issue with depth proportional to its validity, information,
+impact, and technical complexity. Decide whether code evidence is needed before
+using tools. Give the conclusion first, then actionable handling advice.
 
 ## Analysis focus
 - Classify the issue precisely; prefer the most specific applicable category.
 - Estimate priority from user-reported impact and reproduction evidence, not wording alone.
-- Assess feasibility by inspecting the affected code paths and their complexity.
+- Keep SUMMARY to the conclusion and key facts/impact; use FEASIBILITY for the
+  next step and relevant difficulty or risks, without repeating the summary.
+- Obvious unrelated advertising, marketing, spam or flooding needs only a brief
+  explanation and no technical investigation, repair plan, or workload estimate.
+  Judge the whole context, never an isolated keyword; treat ambiguous content
+  conservatively and suggest human confirmation when necessary.
+- For insufficient bug reports or requests, say what cannot yet be verified and
+  ask only for genuinely missing essentials. Do not invent causes, code locations,
+  or effort estimates, and avoid meaningless repository scans.
+- Answer simple questions directly; for a small bug, give one useful next step
+  and inspect code only when it is needed to support the answer.
+- For sufficiently specified technical issues, verify the affected code as needed.
+  Complex refactors, cross-module defects and security/high-risk issues still need
+  thorough evidence, risks and staged recommendations, even if the issue is short.
 - Recommend labels only from the available repository labels, each with a confidence and reason.
 - Recommend assignees only from repository collaborators who plausibly own the affected area.
 - Suggest a duplicate only when you can cite the other issue number with evidence.
 - Suggest a normalized title only when the original title is unclear or malformed.
+- Do not pad fields with stock introductions or restate the issue description.
 """,
         # 自动评论模板（中文，默认）
         "comment_template": """\
-## 🌸 Sakura AI Issue 分析报告
+### Sakura AI · Issue 分析
 
-### 📋 分析结果
-- **分类**: {category}
-- **优先级**: {priority}
-- **可行性**: {feasibility}
-{suggested_title_section}
-
-### 📝 摘要
 {summary}
 
-### 🏷️ 建议标签
-{labels}
+**处理建议**
 
-### 👥 建议指派人
-{assignees}
+{feasibility}
 
+<details>
+<summary>分类与其他分析信息</summary>
+
+- **类型**：{category}
+- **优先级**：{priority}
+- **建议标签**：{labels}
+- **建议指派**：{assignees}
+{suggested_title_section}
 {related_info}
 
+</details>
+
 ---
-*此评论由 [Sakura AI](https://github.com/Sakura520222/Sakura-AI) 自动生成。*
+*由 [Sakura AI](https://github.com/Sakura520222/Sakura-AI) 自动分析。*
 """,
         # 自动评论模板（英文）
         "comment_template_en": """\
-## 🌸 Sakura AI Issue Analysis Report
+### Sakura AI · Issue Analysis
 
-### 📋 Analysis Result
-- **Category**: {category}
-- **Priority**: {priority}
-- **Feasibility**: {feasibility}
-{suggested_title_section}
-
-### 📝 Summary
 {summary}
 
-### 🏷️ Suggested Labels
-{labels}
+**Recommended action**
 
-### 👥 Suggested Assignees
-{assignees}
+{feasibility}
 
+<details>
+<summary>Classification and other analysis details</summary>
+
+- **Category**: {category}
+- **Priority**: {priority}
+- **Suggested labels**: {labels}
+- **Suggested assignees**: {assignees}
+{suggested_title_section}
 {related_info}
 
+</details>
+
 ---
-*This comment was generated automatically by [Sakura AI](https://github.com/Sakura520222/Sakura-AI).*
+*Automatically analyzed by [Sakura AI](https://github.com/Sakura520222/Sakura-AI).*
 """,
     },
     # ---- 仓库扫描配置 ----

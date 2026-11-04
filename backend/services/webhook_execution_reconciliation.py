@@ -1,0 +1,258 @@
+"""Operator-reviewed receipt recovery, without replaying an external action."""
+
+import json
+from uuid import uuid4
+
+from sqlalchemy import or_, select
+
+from backend.core.time_service import now_utc
+from backend.models.admin_action_log import AdminActionLog
+from backend.models.billing_models import BillingCallAttempt
+from backend.models.service_execution_models import ServiceExecutionOwnership
+from backend.models.telegram_models import TelegramUser
+from backend.models.webhook_execution_models import WebhookExecutionReceipt
+from backend.services.billing_service import BillingError, BillingService
+
+
+async def list_pending_receipts(db, *, limit=100, offset=0):
+    from backend.services.webhook_review_dispatch import DISPATCH_KEY, carrier
+
+    if not 1 <= limit <= 1000 or offset < 0:
+        raise ValueError("Invalid pagination")
+    rows = (
+        (
+            await db.execute(
+                select(WebhookExecutionReceipt)
+                .where(
+                    or_(
+                        WebhookExecutionReceipt.status.in_(
+                            ["processing", "pending_reconciliation", "retryable"]
+                        ),
+                        WebhookExecutionReceipt.response[DISPATCH_KEY][
+                            "state"
+                        ].as_string()
+                        == "queued",
+                    )
+                )
+                .order_by(
+                    WebhookExecutionReceipt.created_at,
+                    WebhookExecutionReceipt.receipt_id,
+                )
+                .offset(offset)
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        {
+            "receipt_id": row.receipt_id,
+            "feature": row.feature,
+            "delivery_id": row.delivery_id,
+            "operation_id": row.operation_id,
+            "status": row.status,
+            "source": row.source,
+            "dispatch_state": carrier(row).get("state") if carrier(row) else None,
+        }
+        for row in rows
+    ]
+
+
+async def reconcile_receipt(db, receipt_id, *, actor_id, resolution, evidence, reason):
+    """Explicitly acknowledge or cancel; unknown results are never resubmitted.
+
+    ``cancelled_unstarted`` is the operator's verified statement that no queue
+    handoff occurred. It still checks durable attempts and worker ownership and
+    releases admission. A new requested execution then needs a new delivery.
+    """
+    actor = await db.get(TelegramUser, actor_id)
+    if actor is None or not actor.is_active or actor.role != "super_admin":
+        raise BillingError("Receipt reconciliation requires an active super-admin")
+    if resolution not in {"terminal", "accepted", "cancelled_unstarted"}:
+        raise BillingError("Invalid receipt resolution")
+    if not isinstance(evidence, str) or not evidence.strip() or len(evidence) > 2000:
+        raise BillingError("Reviewed evidence is required")
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000:
+        raise BillingError("Receipt resolution reason is required")
+    receipt = (
+        await db.execute(
+            select(WebhookExecutionReceipt)
+            .where(WebhookExecutionReceipt.receipt_id == receipt_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if receipt is None:
+        raise BillingError("Webhook receipt does not exist")
+    from backend.services.webhook_review_dispatch import DISPATCH_KEY, carrier
+
+    dispatch = carrier(receipt)
+    if receipt.status == "accepted" and (
+        dispatch is None
+        or dispatch.get("state") == "terminal"
+        or (
+            resolution == "accepted"
+            and (receipt.response or {}).get("reason") == "operator_verified_handoff"
+        )
+    ):
+        return receipt  # Repeating the same operator action has no new effect.
+    previous_status = receipt.status
+    agent_task = None
+    issue_record = None
+    if receipt.feature == "agent":
+        from backend.models.agent_team_models import AgentTeamTask
+
+        agent_task = (
+            await db.execute(
+                select(AgentTeamTask)
+                .where(AgentTeamTask.id == receipt.source.get("task_id"))
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+    if (
+        receipt.feature == "issue_analysis"
+        and receipt.source.get("origin") == "issue_reanalysis"
+    ):
+        from backend.models.database import IssueAnalysis
+
+        issue_record = await db.get(
+            IssueAnalysis,
+            receipt.source["issue_analysis_id"],
+            with_for_update=True,
+            populate_existing=True,
+        )
+    operation = await BillingService(db)._operation(
+        receipt.operation_id, allow_missing=True
+    )
+    if resolution == "terminal":
+        if operation is None or operation.outcome is None:
+            raise BillingError("No durable terminal operation proves completion")
+        if (
+            agent_task is not None
+            and agent_task.billing_operation_id == receipt.operation_id
+            and agent_task.status == "queued"
+        ):
+            # Expired processing may have stopped between the guarded worker
+            # claim and its ownership heartbeat. Finance recovery establishes
+            # its outcome first; now restore a terminal, retryable carrier.
+            agent_task.status = operation.outcome
+            agent_task.current_phase = operation.outcome
+            agent_task.error_message = (
+                "Agent execution outcome restored from reviewed receipt"
+            )
+        response = {"status": "accepted", "outcome": operation.outcome}
+        if issue_record is not None and issue_record.status in {"pending", "analyzing"}:
+            issue_record.status = (
+                operation.outcome if operation.outcome != "completed" else "failed"
+            )
+            issue_record.completed_at = now_utc()
+    elif resolution == "accepted":
+        response = {"status": "accepted", "reason": "operator_verified_handoff"}
+    else:
+        if dispatch is not None and dispatch.get("state") == "started":
+            raise BillingError(
+                "Claimed review delivery requires execution reconciliation"
+            )
+        if (
+            receipt.feature == "agent"
+            or (
+                receipt.feature == "issue_analysis"
+                and receipt.source.get("origin") == "issue_reanalysis"
+            )
+        ) and receipt.status == "processing":
+            # The Worker atomically claimed its carrier before any
+            # workspace/AI action. No current owner/Usage does not undo that
+            # in-flight evidence or prove that it was never dispatched.
+            feature_name = "Agent" if receipt.feature == "agent" else "Issue"
+            raise BillingError(
+                f"Claimed {feature_name} delivery requires execution reconciliation"
+            )
+        attempts = (
+            (
+                await db.execute(
+                    select(BillingCallAttempt.call_id)
+                    .where(BillingCallAttempt.operation_id == receipt.operation_id)
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        owners = (
+            (
+                await db.execute(
+                    select(ServiceExecutionOwnership.token)
+                    .where(
+                        ServiceExecutionOwnership.operation_id == receipt.operation_id,
+                        ServiceExecutionOwnership.state != "released",
+                        ServiceExecutionOwnership.expires_at > now_utc(),
+                    )
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if attempts or owners:
+            raise BillingError("Cannot cancel a called or live execution as unstarted")
+        if operation is not None:
+            if operation.outcome is not None:
+                raise BillingError(
+                    "Existing terminal execution requires terminal resolution"
+                )
+            await BillingService(db).finish_operation(receipt.operation_id, "cancelled")
+        if (
+            agent_task is not None
+            and agent_task.billing_operation_id == receipt.operation_id
+        ):
+            agent_task.status = "cancelled"
+            agent_task.current_phase = "cancelled"
+            agent_task.error_message = (
+                "Agent delivery cancelled after reviewed unstarted handoff"
+            )
+        response = {"status": "cancelled", "reason": "operator_verified_unstarted"}
+        if issue_record is not None:
+            issue_record.status = "cancelled"
+            issue_record.completed_at = now_utc()
+    receipt.status = "accepted"
+    # Fence a late original handler acknowledgement after an operator resolves
+    # its crashed/unknown window. That handler cannot overwrite the audit result.
+    receipt.owner_token = str(uuid4())
+    receipt.response = {
+        **response,
+        "operation_id": receipt.operation_id,
+        **(
+            {
+                DISPATCH_KEY: {
+                    **dispatch,
+                    "state": "terminal"
+                    if resolution != "accepted"
+                    else dispatch["state"],
+                }
+            }
+            if dispatch
+            else {}
+        ),
+    }
+    db.add(
+        AdminActionLog(
+            admin_id=actor_id,
+            action="webhook_execution_reconcile",
+            target_type="webhook_execution_receipt",
+            target_id=receipt.receipt_id,
+            detail=json.dumps(
+                {
+                    "resolution": resolution,
+                    "previous_status": previous_status,
+                    "operation_id": receipt.operation_id,
+                    "evidence": evidence,
+                    "reason": reason,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    await db.flush()
+    return receipt

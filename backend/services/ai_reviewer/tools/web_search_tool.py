@@ -138,7 +138,7 @@ class WebSearchToolHandler:
             }
 
         except Exception as e:
-            logger.error(f"Web 搜索失败: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Web 搜索失败: {e}")
             return {
                 "query": query,
                 "results": [],

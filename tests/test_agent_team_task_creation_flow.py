@@ -6,6 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from backend.services.agent_team.api_operations import (
+    _format_agent_conversation_contexts,
+    _parse_task_overrides,
+    _should_schedule_agent_task,
+    create_task_from_issue,
+    preview_task_from_issue,
+)
 from backend.services.agent_team.candidate_service import (
     AgentCandidate,
     AgentTeamCandidateService,
@@ -18,13 +25,6 @@ from backend.services.agent_team.submission_context import (
     build_issue_context_markdown,
     format_issue_analysis_context,
     format_issue_comments,
-)
-from backend.webui.routes.agent_team import (
-    _format_agent_conversation_contexts,
-    _parse_task_overrides,
-    _should_schedule_agent_task,
-    create_task_from_issue,
-    preview_task_from_issue,
 )
 
 
@@ -287,6 +287,9 @@ class DraftDb:
         self.scalar_calls = 0
         self.added = []
 
+    async def commit(self):
+        self.committed = True
+
     async def scalar(self, _stmt):
         self.scalar_calls += 1
         if self.scalar_calls == 1:
@@ -388,15 +391,15 @@ async def test_preview_task_from_issue_returns_draft(monkeypatch):
         }
 
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team.AgentTeamCandidateService.build_manual_issue_task_draft",
+        "backend.services.agent_team.api_operations.AgentTeamCandidateService.build_manual_issue_task_draft",
         fake_draft,
     )
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team.load_sakura_memory",
+        "backend.services.agent_team.api_operations.load_sakura_memory",
         _fake_sakura_memory,
     )
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team.load_skills_context",
+        "backend.services.agent_team.api_operations.load_skills_context",
         _fake_skills_context,
     )
 
@@ -447,14 +450,14 @@ async def test_preview_task_from_issue_rebuilds_exact_production_preview_for_edi
         return "Skills reference", {}, []
 
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team.AgentTeamCandidateService.build_manual_issue_task_draft",
+        "backend.services.agent_team.api_operations.AgentTeamCandidateService.build_manual_issue_task_draft",
         fake_draft,
     )
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team.load_sakura_memory", fake_memory
+        "backend.services.agent_team.api_operations.load_sakura_memory", fake_memory
     )
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team.load_skills_context", fake_skills
+        "backend.services.agent_team.api_operations.load_skills_context", fake_skills
     )
 
     response = await preview_task_from_issue(
@@ -552,11 +555,11 @@ async def test_preview_task_from_issue_serializes_datetime_context(monkeypatch):
         }
 
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team.AgentTeamCandidateService.build_manual_issue_task_draft",
+        "backend.services.agent_team.api_operations.AgentTeamCandidateService.build_manual_issue_task_draft",
         fake_draft,
     )
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team._build_manual_issue_submission_context",
+        "backend.services.agent_team.api_operations._build_manual_issue_submission_context",
         fake_submission_context,
     )
 
@@ -590,6 +593,7 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
         ai_config_snapshot=None,
         base_branch=None,
         overrides=None,
+        commit=True,
     ):
         captured.update(
             {
@@ -603,6 +607,7 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
         )
         return SimpleNamespace(
             id=88,
+            billing_operation_id="TEST-created-task",
             source_type=overrides["source_type"],
             source_id=overrides["source_id"],
             repo_full_name=overrides["repo_full_name"],
@@ -617,19 +622,19 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
         return None
 
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team.AgentTeamCandidateService.create_task_from_manual_issue",
+        "backend.services.agent_team.api_operations.AgentTeamCandidateService.create_task_from_manual_issue",
         fake_create,
     )
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team.log_admin_action",
+        "backend.services.agent_team.api_operations.log_admin_action",
         fake_log_admin_action,
     )
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team.load_sakura_memory",
+        "backend.services.agent_team.api_operations.load_sakura_memory",
         _fake_sakura_memory,
     )
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team.load_skills_context",
+        "backend.services.agent_team.api_operations.load_skills_context",
         _fake_skills_context,
     )
 

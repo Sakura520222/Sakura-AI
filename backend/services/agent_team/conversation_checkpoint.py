@@ -15,8 +15,10 @@ from backend.models import database as db_module
 from backend.models.agent_team_models import (
     AgentTeamMessage,
     AgentTeamSession,
+    AgentTeamSubagent,
     AgentTeamTask,
     AgentTeamToolCall,
+    AgentTeamUsage,
     AgentTeamUserPrompt,
 )
 from backend.models.database import utc_now
@@ -37,6 +39,136 @@ class ConversationCheckpointService:
 
     def __init__(self, task_id: int):
         self.task_id = task_id
+
+    async def record_control_event(self, event: dict[str, Any]) -> None:
+        """Persist worker-only capability evidence outside model/resume history."""
+        async with db_module.async_session() as db:
+            task = await db.get(AgentTeamTask, self.task_id, with_for_update=True)
+            if task is None:
+                raise ValueError("control_audit_task_missing")
+            rows = await db.execute(
+                select(AgentTeamSession).where(
+                    AgentTeamSession.task_id == self.task_id,
+                    AgentTeamSession.role_name == "harness_control",
+                )
+            )
+            control = rows.scalar_one_or_none()
+            if control is None:
+                control = AgentTeamSession(
+                    task_id=self.task_id,
+                    iteration_number=0,
+                    role_name="harness_control",
+                    status="completed",
+                )
+                db.add(control)
+                await db.flush()
+            payload = {**event, "task_id": self.task_id, "session_id": control.id}
+            await self.append_message_in_session(
+                db,
+                control.id,
+                {"role": "audit", "content": "", "metadata": {"harness_event": payload}},
+                publish_event=False,
+            )
+            control.completed_at = utc_now()
+            await db.commit()
+
+    async def record_usage(self, session_id: int, request_id: str, usage: Any) -> None:
+        """Settle one runtime request exactly once, before executing its tools.
+
+        The task lock serializes receipts from parent and child sessions. A
+        failed commit leaves both the receipt and the counters unchanged;
+        retrying an uncertain commit with the same request ID is safe.
+        """
+        from backend.core.config import get_settings
+        from backend.services.ai_reviewer.token_tracker import TokenTracker
+        from backend.services.ai_usage_service import extract_provider_usage
+
+        counters = extract_provider_usage(usage)
+        async with db_module.async_session() as db:
+            task = await db.get(AgentTeamTask, self.task_id, with_for_update=True)
+            agent_session = await db.get(AgentTeamSession, session_id)
+            if (
+                task is None
+                or agent_session is None
+                or agent_session.task_id != self.task_id
+            ):
+                raise ValueError("Usage session does not belong to task")
+            previous = await db.get(AgentTeamUsage, request_id)
+            if previous is not None:
+                if (
+                    previous.session_id != session_id
+                    or previous.prompt_tokens != counters.input_tokens
+                    or previous.completion_tokens != counters.output_tokens
+                ):
+                    raise ValueError("Usage receipt identity or counters changed")
+                return
+            db.add(
+                AgentTeamUsage(
+                    request_id=request_id,
+                    session_id=session_id,
+                    prompt_tokens=counters.input_tokens,
+                    completion_tokens=counters.output_tokens,
+                )
+            )
+            settings = get_settings()
+            tracker = TokenTracker()
+            tracker.add_tokens(task.prompt_tokens or 0, task.completion_tokens or 0)
+            old_cost = tracker.calculate_cost(
+                settings.review_price_per_1k_prompt,
+                settings.review_price_per_1k_completion,
+            )
+            tracker.add_tokens(counters.input_tokens or 0, counters.output_tokens or 0)
+            new_cost = tracker.calculate_cost(
+                settings.review_price_per_1k_prompt,
+                settings.review_price_per_1k_completion,
+            )
+            task.prompt_tokens = tracker.prompt_tokens
+            task.completion_tokens = tracker.completion_tokens
+            task.estimated_cost = (task.estimated_cost or 0) + new_cost - old_cost
+            task.updated_at = utc_now()
+            await db.commit()
+
+    async def load_usage(self, session_id: int) -> tuple[int, int]:
+        """Read durable usage for a session and its descendants, in any state."""
+        async with db_module.async_session() as db:
+            root = await db.get(AgentTeamSession, session_id)
+            if root is None or root.task_id != self.task_id:
+                raise ValueError("Usage session does not belong to task")
+            links = (
+                (
+                    await db.execute(
+                        select(AgentTeamSubagent)
+                        .join(
+                            AgentTeamSession,
+                            AgentTeamSession.id == AgentTeamSubagent.session_id,
+                        )
+                        .where(AgentTeamSession.task_id == self.task_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            ids = {session_id}
+            while (
+                children := {
+                    link.session_id for link in links if link.parent_session_id in ids
+                }
+                - ids
+            ):
+                ids.update(children)
+            receipts = (
+                (
+                    await db.execute(
+                        select(AgentTeamUsage).where(AgentTeamUsage.session_id.in_(ids))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return (
+                sum(row.prompt_tokens or 0 for row in receipts),
+                sum(row.completion_tokens or 0 for row in receipts),
+            )
 
     async def create_session(
         self,
@@ -65,6 +197,71 @@ class ConversationCheckpointService:
                 "session_id": agent_session.id,
                 "iteration": iteration_number,
                 "role_name": role_name,
+            },
+        )
+        return agent_session
+
+    async def create_session_from_history(
+        self,
+        iteration_number: int,
+        messages: list[dict[str, Any]],
+        tool_states: dict[str, dict[str, Any]],
+        resume_index: int = 0,
+    ) -> AgentTeamSession:
+        """Publish a migrated session only after its entire ledger is durable.
+
+        Session creation, message copying, result links and original call states
+        share one transaction. A cancellation/crash before commit leaves the
+        original session as the latest cursor; after commit the new session has
+        all recovery evidence. In particular, a copied assistant can never
+        expose a completed or uncertain mutation as a runnable pending call.
+        """
+        async with db_module.async_session() as session:
+            agent_session = AgentTeamSession(
+                task_id=self.task_id,
+                iteration_number=iteration_number,
+                role_name="agent",
+                resume_index=resume_index,
+                status="running",
+            )
+            session.add(agent_session)
+            await session.flush()
+            result_ids: dict[str, int] = {}
+            for message in messages:
+                row = await self.append_message_in_session(
+                    session,
+                    agent_session.id,
+                    message,
+                    publish_event=False,
+                )
+                if message.get("role") == "tool":
+                    result_ids[message.get("tool_call_id")] = row.id
+            rows = await session.execute(
+                select(AgentTeamToolCall).where(
+                    AgentTeamToolCall.session_id == agent_session.id
+                )
+            )
+            for call in rows.scalars():
+                state = tool_states.get(call.tool_call_id, {})
+                # Missing original evidence is uncertain, never a fresh call.
+                call.status = state.get("status") or "cancelled"
+                call.result_message_id = result_ids.get(call.tool_call_id)
+                if state.get("name") is not None:
+                    call.name = state["name"]
+                if state.get("arguments_hash") is not None:
+                    call.arguments_hash = state["arguments_hash"]
+                if call.status in {"completed", "failed", "cancelled"}:
+                    call.completed_at = utc_now()
+            await session.commit()
+            await session.refresh(agent_session)
+
+        await _publish(
+            "agent:session_started",
+            {
+                "task_id": self.task_id,
+                "session_id": agent_session.id,
+                "iteration": iteration_number,
+                "role_name": "agent",
             },
         )
         return agent_session
@@ -137,8 +334,12 @@ class ConversationCheckpointService:
         session_id: int,
         message: dict[str, Any],
         finish_reason: str | None = None,
+        *,
+        publish_event: bool = True,
     ) -> AgentTeamMessage:
-        agent_session = await db.get(AgentTeamSession, session_id)
+        # Lock allocation together with the insert, including guidance writers
+        # in other transactions. A batch never allocates message seq concurrently.
+        agent_session = await db.get(AgentTeamSession, session_id, with_for_update=True)
         if agent_session is None:
             raise ValueError(f"AgentTeamSession 不存在: {session_id}")
 
@@ -176,23 +377,26 @@ class ConversationCheckpointService:
                     )
                 )
 
-        await _publish(
-            "agent:message_added",
-            {
-                "task_id": self.task_id,
-                "session_id": session_id,
-                "msg_id": msg.id,
-                "role": msg.role,
-                "seq": seq,
-            },
-        )
+        if publish_event:
+            await _publish(
+                "agent:message_added",
+                {
+                    "task_id": self.task_id,
+                    "session_id": session_id,
+                    "msg_id": msg.id,
+                    "role": msg.role,
+                    "seq": seq,
+                },
+            )
         return msg
 
     async def mark_tool_call_running(self, session_id: int, tool_call_id: str) -> None:
         async with db_module.async_session() as session:
             tool_call = await self._get_tool_call(session, session_id, tool_call_id)
             if tool_call is None:
-                return
+                raise ValueError("Tool call checkpoint is missing")
+            if tool_call.status == "completed" or tool_call.result_message_id:
+                raise ValueError("Tool call already completed; cannot execute again")
             tool_call.status = "running"
             tool_call.started_at = utc_now()
             await session.commit()
@@ -206,6 +410,101 @@ class ConversationCheckpointService:
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
             },
+        )
+
+    async def load_tool_call_states(self, session_id: int) -> dict[str, dict[str, Any]]:
+        async with db_module.async_session() as session:
+            rows = await session.execute(
+                select(AgentTeamToolCall).where(
+                    AgentTeamToolCall.session_id == session_id
+                )
+            )
+            return {
+                row.tool_call_id: {
+                    "name": row.name,
+                    "arguments_hash": row.arguments_hash,
+                    "status": row.status,
+                    "result_message_id": row.result_message_id,
+                }
+                for row in rows.scalars()
+            }
+
+    async def record_tool_result(
+        self,
+        session_id: int,
+        tool_call_id: str,
+        message: dict[str, Any],
+        status: str,
+        error: str = "",
+    ) -> int:
+        """Atomically append a result and commit its call state.
+
+        A crash cannot leave a successful mutation result with a stale running
+        status (or vice versa). Callers serialize this method in model order.
+        """
+        if status not in {"completed", "failed", "cancelled"}:
+            raise ValueError("Invalid tool result status")
+        async with db_module.async_session() as session:
+            message_row = await self.append_message_in_session(
+                session, session_id, message
+            )
+            call = await self._get_tool_call(session, session_id, tool_call_id)
+            if call is None:
+                raise ValueError("Tool call checkpoint is missing")
+            call.status = status
+            call.result_message_id = message_row.id
+            call.completed_at = utc_now()
+            call.error_message = error or None
+            await session.commit()
+            message_id = message_row.id
+        await _publish(
+            f"agent:tool_{status}",
+            {
+                "task_id": self.task_id,
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+            },
+        )
+        return message_id
+
+    async def mark_tool_call_cancelled(
+        self, session_id: int, tool_call_id: str
+    ) -> None:
+        async with db_module.async_session() as session:
+            call = await self._get_tool_call(session, session_id, tool_call_id)
+            if call is None:
+                return
+            call.status = "cancelled"
+            call.completed_at = utc_now()
+            call.error_message = "Interrupted; reconcile mutations before retry"
+            await session.commit()
+
+    async def finish_session(
+        self, session_id: int, outcome: str, payload: dict[str, Any]
+    ) -> None:
+        """Commit the structured outcome and matching session status together."""
+        if outcome not in {"success", "cancelled", "blocked", "unrecoverable_error"}:
+            raise ValueError("Invalid Agent outcome")
+        status = "completed" if outcome == "success" else outcome
+        prompt_tokens, completion_tokens = await self.load_usage(session_id)
+        payload = {
+            **payload,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+        }
+        async with db_module.async_session() as session:
+            row = await session.get(AgentTeamSession, session_id)
+            if row is None:
+                raise ValueError("Agent session checkpoint is missing")
+            row.status = status
+            row.result_payload = json.dumps(payload, ensure_ascii=False, default=str)
+            row.tool_calls_count = payload.get("tool_calls_count", 0)
+            row.error_message = payload.get("error") or None
+            row.completed_at = utc_now()
+            await session.commit()
+        await _publish(
+            "agent:session_completed",
+            {"task_id": self.task_id, "session_id": session_id, "status": status},
         )
 
     async def mark_tool_call_completed(
@@ -279,20 +578,12 @@ class ConversationCheckpointService:
                 select(AgentTeamSession)
                 .where(
                     AgentTeamSession.task_id == self.task_id,
-                    AgentTeamSession.status != "completed",
+                    AgentTeamSession.role_name.not_in(("subagent", "harness_control")),
                 )
                 .order_by(desc(AgentTeamSession.id))
                 .limit(1)
             )
             agent_session = result.scalar_one_or_none()
-            if agent_session is None:
-                result = await session.execute(
-                    select(AgentTeamSession)
-                    .where(AgentTeamSession.task_id == self.task_id)
-                    .order_by(desc(AgentTeamSession.id))
-                    .limit(1)
-                )
-                agent_session = result.scalar_one_or_none()
             if agent_session is None:
                 return None
             return ResumeCursor(
@@ -312,6 +603,7 @@ class ConversationCheckpointService:
                     AgentTeamSession.task_id == self.task_id,
                     AgentTeamSession.iteration_number == iteration_number,
                     AgentTeamSession.role_name == role_name,
+                    AgentTeamSession.role_name.not_in(("subagent", "harness_control")),
                     AgentTeamSession.status == "completed",
                 )
                 .order_by(desc(AgentTeamSession.id))

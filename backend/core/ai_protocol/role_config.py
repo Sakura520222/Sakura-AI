@@ -104,6 +104,9 @@ def _parse_metadata_overrides(
                 vision=bool(raw_caps.get("vision", default_caps.vision)),
                 tools=bool(raw_caps.get("tools", default_caps.tools)),
                 streaming=bool(raw_caps.get("streaming", default_caps.streaming)),
+                stream_usage=raw_caps.get("stream_usage", default_caps.stream_usage)
+                if type(raw_caps.get("stream_usage", default_caps.stream_usage)) is bool
+                else default_caps.stream_usage,
                 reasoning_content=bool(
                     raw_caps.get("reasoning_content", default_caps.reasoning_content)
                 ),
@@ -210,6 +213,21 @@ async def _resolve_from_accounts(
 
     accounts = {a.id: a for a in await account_store.list_accounts()}
     overrides = await _load_model_overrides(bindings, accounts)
+
+    return resolve_role_from_snapshot(role, accounts, bindings, overrides)
+
+
+def resolve_role_from_snapshot(
+    role: str,
+    accounts: dict[str, Any],
+    bindings: dict[str, Any],
+    overrides: dict[tuple[str, str], ModelMetadata] | None = None,
+) -> ResolvedChain | None:
+    """Resolve a proposed route with the same rules as persisted AI bindings."""
+    binding = bindings.get(role)
+    if binding is None:
+        return None
+    overrides = overrides or {}
 
     candidates: list[ResolvedModel] = []
 

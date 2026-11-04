@@ -27,8 +27,11 @@ class _FakeUserConfigDb:
 
 
 @pytest.fixture
-def loguru_capture():
+def loguru_capture(monkeypatch):
     """捕获 loguru 日志到 StringIO，供断言 traceback 与消息内容。"""
+    from backend.core.logging_bridge import _patch_record
+
+    monkeypatch.setattr(logger._core, "patcher", _patch_record)
     buf = io.StringIO()
     handler_id = logger.add(
         buf,
@@ -75,8 +78,8 @@ async def test_user_config_invalid_value_sanitizes_response_and_logs_traceback(
 
     # loguru 必须记录完整 traceback（回归守护点）
     assert "Traceback" in log_output
-    assert "ValueError" in log_output
-    assert "output_language 仅允许为空、zh-CN 或 en" in log_output
+    assert "ConfigError" in log_output
+    assert "invalid_choice" in log_output
 
 
 @pytest.mark.asyncio
@@ -84,40 +87,40 @@ async def test_chromadb_connection_failure_sanitizes_response_and_logs_traceback
     monkeypatch,
     loguru_capture,
 ):
-    """Exception 路径：响应返回固定脱敏消息，日志保留含敏感细节的完整 traceback。
+    """Exception 路径：API 返回固定脱敏消息，日志保留异常 traceback。
 
-    覆盖 backend/webui/routes/vector_db.py 的 ``logger.exception`` 修复（CodeQL 告警 37）——
-    若回退为 ``exc_info=True``，loguru 不记录 traceback，本测试会失败。
+    覆盖 backend/api/v1/console_data.py 的 ChromaDB 存储读取异常处理；
+    若异常详情泄漏到 API 响应或日志丢失 traceback，本测试会失败。
     """
-    from backend.webui.routes import vector_db
+    from fastapi import HTTPException
+
+    from backend.api.v1 import console_data
 
     sensitive_detail = "chromadb internal error: host=10.0.0.1 token=secret-token"
     monkeypatch.setattr(
-        vector_db,
+        console_data,
         "get_vector_store",
         Mock(side_effect=RuntimeError(sensitive_detail)),
     )
 
-    result = await vector_db.test_chromadb(
-        request=None,
-        user={"sub": "admin"},
-        _csrf="token",
-        user_prefs={},
-    )
+    with pytest.raises(HTTPException) as raised:
+        await console_data.collections(user={"sub": "admin"})
 
+    result = {"detail": raised.value.detail}
     log_output = loguru_capture.getvalue()
 
     # 响应脱敏：固定通用消息，不含任何内部细节
-    assert result["success"] is False
-    assert result["message"] == "ChromaDB 连接测试失败，请检查服务状态"
-    assert "secret-token" not in result["message"]
-    assert "10.0.0.1" not in result["message"]
-    assert "chromadb internal" not in result["message"]
+    assert raised.value.status_code == 503
+    assert result["detail"] == "ChromaDB 连接测试失败，请检查服务状态"
+    assert "secret-token" not in result["detail"]
+    assert "10.0.0.1" not in result["detail"]
+    assert "chromadb internal" not in result["detail"]
 
     # loguru 必须保留完整 traceback 与原始异常细节，供服务端排查
     assert "Traceback" in log_output
     assert "RuntimeError" in log_output
-    assert sensitive_detail in log_output
+    assert "chromadb internal error: host=10.0.0.1" in log_output
+    assert "secret-token" not in log_output
 
 
 @pytest.mark.asyncio
@@ -134,6 +137,12 @@ async def test_user_config_unexpected_error_logs_traceback_and_sanitizes(
     from backend.api.v1.user_config import update_user_config
 
     db = AsyncMock()
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    db.get_bind = Mock(
+        return_value=SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+    )
     db.execute = AsyncMock(
         side_effect=RuntimeError("db connection lost: pool exhausted, host=internal-db")
     )

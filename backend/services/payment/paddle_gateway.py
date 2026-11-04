@@ -21,18 +21,25 @@ import re
 
 from loguru import logger
 
+from backend.core.log_sanitizer import sanitize_exception_text, sanitize_text
 from backend.services.payment.gateway_base import (
     PaymentGateway,
     PaymentIntentResult,
     PaymentStatusResult,
+    PaymentWebhookConfigurationError,
+    PaymentWebhookVerificationError,
     RefundResult,
     WebhookEvent,
     WebhookEventType,
+    payment_gateway_operation,
 )
+from backend.services.payment.paddle_capabilities import validate_paddle_currency
 
 
 class PaddleGateway(PaymentGateway):
     """Paddle Billing 网关（使用 paddle-python-sdk）"""
+
+    LOG_SECRET_ATTRIBUTES = ("_api_key", "_webhook_secret")
 
     def __init__(self, api_key: str, webhook_secret: str):
         self._api_key = api_key
@@ -42,6 +49,7 @@ class PaddleGateway(PaymentGateway):
     # 创建支付
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def create_payment(
         self,
         order_no: str,
@@ -58,6 +66,12 @@ class PaddleGateway(PaymentGateway):
         使用非目录商品（Non-catalog price with product），
         无需预先在 Paddle Dashboard 创建 Product/Price。
         """
+        try:
+            currency = validate_paddle_currency(currency)
+        except ValueError:
+            return PaymentIntentResult(
+                success=False, error_message="Unsupported Paddle payment currency"
+            )
         try:
             from paddle_billing import Client, Environment, Options
             from paddle_billing.Entities.Shared import (
@@ -129,7 +143,7 @@ class PaddleGateway(PaymentGateway):
                 "Paddle Transaction created: tx_id={}, order_no={}, checkout_url={}",
                 tx_id,
                 order_no,
-                checkout_url[:80] if checkout_url else "(empty)",
+                sanitize_text(checkout_url)[:80] if checkout_url else "(empty)",
             )
 
             return PaymentIntentResult(
@@ -144,7 +158,7 @@ class PaddleGateway(PaymentGateway):
                 },
             )
         except ImportError:
-            logger.error(
+            logger.opt(exception=True).error(
                 "paddle-python-sdk is not installed. Run: pip install paddle-python-sdk"
             )
             return PaymentIntentResult(
@@ -152,16 +166,17 @@ class PaddleGateway(PaymentGateway):
                 error_message="paddle-python-sdk is not installed",
             )
         except Exception as e:
-            logger.error("Paddle create_payment failed: {}", e)
+            logger.opt(exception=True).error("Paddle create_payment failed: {}", e)
             return PaymentIntentResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
 
     # ------------------------------------------------------------------
     # Webhook 验证
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     def verify_webhook(
         self,
         payload: bytes,
@@ -173,43 +188,51 @@ class PaddleGateway(PaymentGateway):
         - Header: Paddle-Signature: ts=<timestamp>;h1=<hmac_sha256_hex>
         - 验证: HMAC-SHA256(webhook_secret, f"{timestamp}:{raw_body}")
         """
+        if (
+            not isinstance(self._webhook_secret, str)
+            or not self._webhook_secret.strip()
+        ):
+            raise PaymentWebhookConfigurationError(
+                "Paddle verification is not configured"
+            )
         signature_header = headers.get("paddle-signature", "")
-        if not signature_header:
-            logger.warning("Paddle webhook: missing Paddle-Signature header")
-            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+        if not isinstance(signature_header, str) or not signature_header:
+            raise PaymentWebhookVerificationError("Missing Paddle signature")
 
         # 解析 ts=<timestamp>;h1=<hmac_hex>
         ts_match = re.search(r"ts=(\d+)", signature_header)
         h1_match = re.search(r"h1=([a-fA-F0-9]+)", signature_header)
         if not ts_match or not h1_match:
-            logger.warning("Paddle webhook: invalid signature format")
-            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+            raise PaymentWebhookVerificationError("Invalid Paddle signature format")
 
         timestamp = ts_match.group(1)
         provided_sig = h1_match.group(1)
 
         # 计算 HMAC-SHA256
-        payload_str = payload.decode("utf-8") if isinstance(payload, bytes) else payload
-        signed_payload = f"{timestamp}:{payload_str}"
+        if isinstance(payload, str):
+            payload = payload.encode("utf-8")
+        if not isinstance(payload, bytes):
+            raise PaymentWebhookVerificationError("Invalid Paddle payload")
+        signed_payload = timestamp.encode("utf-8") + b":" + payload
         computed_sig = hmac.new(
             self._webhook_secret.encode("utf-8"),
-            signed_payload.encode("utf-8"),
+            signed_payload,
             hashlib.sha256,
         ).hexdigest()
 
         # 时序安全比较
         if not hmac.compare_digest(computed_sig, provided_sig):
-            logger.warning("Paddle webhook: signature verification failed")
-            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+            raise PaymentWebhookVerificationError("Invalid Paddle signature")
 
         # 解析事件 payload
         try:
             import json
 
             body = json.loads(payload)
-        except (json.JSONDecodeError, TypeError) as e:
-            logger.warning("Paddle webhook: invalid JSON payload: {}", e)
-            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+            if not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, TypeError) as exc:
+            raise PaymentWebhookVerificationError("Invalid Paddle payload") from exc
 
         event_type_str = body.get("event_type", "") or body.get("meta", {}).get(
             "event_name", ""
@@ -225,6 +248,7 @@ class PaddleGateway(PaymentGateway):
             "transaction.payment_failed": WebhookEventType.PAYMENT_EXPIRED,
             "transaction.past_due": WebhookEventType.PAYMENT_EXPIRED,
             "adjustment.created": WebhookEventType.PAYMENT_REFUNDED,
+            "adjustment.updated": WebhookEventType.PAYMENT_REFUNDED,
         }
         resolved_type = type_map.get(event_type_str, WebhookEventType.UNKNOWN)
 
@@ -245,15 +269,54 @@ class PaddleGateway(PaymentGateway):
             order_no = ""  # 需要通过 provider_tx_id 反查
 
         # 金额（Paddle 使用字符串金额，最小货币单位）
-        detail_totals = attrs.get("details", {}).get("totals", {})
-        amount_str = detail_totals.get("total", attrs.get("total", "0"))
+        detail_totals = (attrs.get("details") or {}).get("totals") or {}
+        wire_amount = detail_totals.get("total", attrs.get("total"))
+        wire_currency = attrs.get("currency_code", attrs.get("currency"))
+        currency = wire_currency if isinstance(wire_currency, str) else ""
+
+        refund_items = []
+        complete = False
+        payment_reference = attrs.get("transaction_id", "")
+        if resolved_type == WebhookEventType.PAYMENT_REFUNDED:
+            action = attrs.get("action")
+            status = attrs.get("status")
+            # A credit adjustment reduces an invoice; it is not returned cash.
+            if action != "refund":
+                return WebhookEvent(event_type=WebhookEventType.UNKNOWN, raw_event=body)
+            totals = attrs.get("totals") or detail_totals
+            wire_amount = totals.get("total")
+        amount_cents = None
+        normalization_error = ""
         try:
-            amount_cents = int(amount_str) if amount_str else 0
+            from backend.services.payment.currency_units import currency_minor_exponent
+
+            currency_minor_exponent(currency)
+            if isinstance(wire_amount, bool) or not isinstance(wire_amount, (int, str)):
+                raise ValueError("Provider amount must use integer minor units")
+            amount_cents = int(wire_amount)
+            if amount_cents < 0:
+                raise ValueError("Provider amount must be nonnegative")
         except ValueError, TypeError:
-            amount_cents = 0
-
-        currency = attrs.get("currency_code", attrs.get("currency", ""))
-
+            amount_cents = None
+            if resolved_type in {
+                WebhookEventType.PAYMENT_COMPLETED,
+                WebhookEventType.PAYMENT_REFUNDED,
+            }:
+                normalization_error = "provider_amount_requires_review"
+        if resolved_type == WebhookEventType.PAYMENT_REFUNDED:
+            refund_items = [
+                {
+                    "id": provider_tx_id,
+                    "amount_cents": amount_cents,
+                    "currency": currency,
+                    "status": "succeeded"
+                    if status == "approved"
+                    else status or "unknown",
+                }
+            ]
+            complete = (
+                status == "approved" and amount_cents is not None and amount_cents > 0
+            )
         return WebhookEvent(
             event_type=resolved_type,
             provider_tx_id=provider_tx_id,
@@ -261,17 +324,29 @@ class PaddleGateway(PaymentGateway):
             amount_cents=amount_cents,
             currency=currency,
             raw_event=body,
+            event_id=str(body.get("event_id") or ""),
+            payment_reference_id=payment_reference,
+            refund_items=refund_items,
+            refund_evidence_complete=complete,
+            normalization_error=normalization_error,
+            wire_evidence={
+                "event_type": event_type_str,
+                "amount": wire_amount,
+                "currency": wire_currency,
+            },
         )
 
     # ------------------------------------------------------------------
     # 退款
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def refund(
         self,
         provider_tx_id: str,
         amount_cents: int | None = None,
         reason: str | None = None,
+        idempotency_key: str | None = None,
     ) -> RefundResult:
         """通过 Paddle Adjustments API 发起退款
 
@@ -348,17 +423,19 @@ class PaddleGateway(PaymentGateway):
                 success=True,
                 refund_id=adjustment.id,
                 amount_cents=amount_cents or 0,
-                status=str(adjustment.status) if adjustment.status else "",
+                status="succeeded"
+                if getattr(adjustment.status, "value", adjustment.status) == "approved"
+                else "pending",
             )
         except ImportError:
-            logger.error("paddle-python-sdk is not installed")
+            logger.opt(exception=True).error("paddle-python-sdk is not installed")
             return RefundResult(
                 success=False,
                 error_message="paddle-python-sdk is not installed",
             )
         except Exception as e:
-            error_str = str(e)
-            logger.error("Paddle refund failed: {}", error_str)
+            error_str = sanitize_exception_text(e)
+            logger.opt(exception=True).error("Paddle refund failed: {}", error_str)
             return RefundResult(
                 success=False,
                 error_message=error_str,
@@ -368,6 +445,7 @@ class PaddleGateway(PaymentGateway):
     # 查询支付状态
     # ------------------------------------------------------------------
 
+    @payment_gateway_operation
     async def get_payment_status(
         self,
         provider_tx_id: str,
@@ -417,18 +495,19 @@ class PaddleGateway(PaymentGateway):
                 },
             )
         except ImportError:
-            logger.error("paddle-python-sdk is not installed")
+            logger.opt(exception=True).error("paddle-python-sdk is not installed")
             return PaymentStatusResult(
                 success=False,
                 error_message="paddle-python-sdk is not installed",
             )
         except Exception as e:
-            logger.error("Paddle get_payment_status failed: {}", e)
+            logger.opt(exception=True).error("Paddle get_payment_status failed: {}", e)
             return PaymentStatusResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )
 
+    @payment_gateway_operation
     async def cancel_payment(
         self,
         provider_tx_id: str,
@@ -462,14 +541,14 @@ class PaddleGateway(PaymentGateway):
                 status="cancelled",
             )
         except ImportError:
-            logger.error("paddle-python-sdk is not installed")
+            logger.opt(exception=True).error("paddle-python-sdk is not installed")
             return RefundResult(
                 success=False,
                 error_message="paddle-python-sdk is not installed",
             )
         except Exception as e:
-            logger.error("Paddle cancel failed: {}", e)
+            logger.opt(exception=True).error("Paddle cancel failed: {}", e)
             return RefundResult(
                 success=False,
-                error_message=str(e),
+                error_message=sanitize_exception_text(e),
             )

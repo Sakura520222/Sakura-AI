@@ -2,7 +2,7 @@
 
 > 智能审查批准功能实现总结，介绍多维度决策引擎、幂等性保护和配置部署建议。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 

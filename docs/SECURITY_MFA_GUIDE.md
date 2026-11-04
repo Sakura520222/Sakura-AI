@@ -2,7 +2,7 @@
 
 > Sakura AI 多因素认证（MFA）、Passkeys/WebAuthn、安全中心与安全审计能力的使用与管理指南。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 

@@ -9,12 +9,11 @@ from fastapi import (
     APIRouter,
     Body,
     Depends,
-    Form,
     HTTPException,
     Query,
     Request,
 )
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from loguru import logger
 from sqlalchemy import select
 
@@ -38,12 +37,6 @@ from backend.services.mfa_lockout_service import (
     reset_mfa_failures,
 )
 from backend.services.security_admin_service import user_has_any_mfa_method
-from backend.services.two_factor_service import (
-    TwoFactorError,
-    TwoFactorReplayError,
-    consume_recovery_code,
-    verify_user_totp,
-)
 from backend.services.webauthn_service import (
     WebAuthnError,
     begin_authentication,
@@ -58,26 +51,17 @@ from backend.webui.auth import (
     set_webui_token_cookie,
 )
 from backend.webui.deps import (
-    get_csrf_serializer,
-    get_templates,
-    refresh_login_claims,
-    render_template,
     request_origin,
     require_csrf,
     require_csrf_header,
     toast_redirect,
 )
-from backend.webui.i18n import (
-    detect_language,
-    resolve_language,
-    set_language_cookie,
-)
+from backend.webui.i18n import detect_language
 from backend.webui.i18n import (
     i18n as _i18n,
 )
 
 router = APIRouter(prefix="/auth", tags=["WebUI Auth"])
-templates = get_templates()
 
 
 APP_VERSION = __version__
@@ -105,24 +89,11 @@ def _oauth_error(
     has_oauth: bool = True,
     status_code: int = 400,
 ):
-    """统一的 OAuth 错误页面响应"""
-    lang = resolve_language(request)
-    from backend.webui.i18n import make_translation_func
-
-    return templates.TemplateResponse(
-        request,
-        "login.html",
-        {
-            "request": request,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "error": error_msg,
-            "app_version": APP_VERSION,
-            "has_oauth": has_oauth,
-            "lang": lang,
-            "_": make_translation_func(lang),
-            "user_prefs": {"language": lang},
-        },
-        status_code=status_code,
+    """Return to the native login screen without reflecting provider errors."""
+    return RedirectResponse(
+        "/app/login?error=oauth_failed",
+        status_code=302,
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -209,44 +180,6 @@ async def _delete_oauth_state(state: str):
     _oauth_states_fallback.pop(state, None)
 
 
-@router.get("/login")
-async def login_page(request: Request):
-    """渲染登录页面（GitHub OAuth 和 Passkey 按钮）"""
-    # 已登录则跳转仪表盘；仅通过签名校验但数据库已拒绝的会话要清除，
-    # 否则 login -> / -> 401 -> login 会形成重定向循环。
-    stale_session = False
-    token = request.cookies.get(WEBUI_TOKEN_COOKIE_NAME)
-    if token:
-        payload = decode_access_token(token)
-        if payload:
-            if await refresh_login_claims(payload):
-                return toast_redirect("/", "toast.auto_logged_in", lang=detect_language())
-            stale_session = True
-
-    settings = get_settings()
-    has_oauth = bool(settings.github_oauth_client_id)
-
-    # 语言切换请求：设置 Cookie 后重定向（去掉 ?lang= 参数）
-    lang = resolve_language(request)
-    if request.query_params.get("lang"):
-        response = RedirectResponse(url="/auth/login", status_code=302)
-        set_language_cookie(response, lang)
-        return response
-
-    response = render_template(
-        "login.html",
-        request,
-        user_prefs={"language": lang},
-        csrf_token=get_csrf_serializer().dumps({}),
-        error=None,
-        app_version=APP_VERSION,
-        has_oauth=has_oauth,
-    )
-    if stale_session:
-        response.delete_cookie(WEBUI_TOKEN_COOKIE_NAME)
-    return response
-
-
 @router.get("/github")
 async def github_login(request: Request):
     """GitHub OAuth 第一步：重定向到 GitHub 授权页面"""
@@ -277,7 +210,7 @@ async def github_login(request: Request):
     params = {
         "client_id": settings.github_oauth_client_id,
         "redirect_uri": settings.github_oauth_redirect_uri,
-            "scope": "read:user user:email",
+        "scope": "read:user user:email",
         "state": state,
     }
 
@@ -321,7 +254,9 @@ async def github_callback(
     except AuthProviderError as exc:
         if exc.status_code is not None and exc.status_code != 200:
             if "token" in str(exc).lower():
-                logger.error("GitHub OAuth token exchange failed: status={}", exc.status_code)
+                logger.error(
+                    "GitHub OAuth token exchange failed: status={}", exc.status_code
+                )
                 return _oauth_error(request, "获取访问令牌失败，请重试")
             logger.error("GitHub OAuth user request failed: status={}", exc.status_code)
             return _oauth_error(request, "获取用户信息失败，请重试", status_code=502)
@@ -348,7 +283,7 @@ async def github_callback(
     github_username = account.username
     try:
         github_id = int(account.provider_user_id)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         github_id = None
     avatar_url = account.avatar_url or ""
 
@@ -386,7 +321,10 @@ async def github_callback(
     if has_mfa_method:
         mfa_token = create_mfa_pending_token(token_data)
         logger.info(f"GitHub OAuth 需要二次验证: {github_username} (role={user.role})")
-        response = RedirectResponse(url="/auth/2fa", status_code=302)
+        response = RedirectResponse(
+            url="/app/login?step=mfa",
+            status_code=302,
+        )
         _set_mfa_pending_cookie(response, mfa_token)
         response.delete_cookie(WEBUI_TOKEN_COOKIE_NAME)
         return response
@@ -397,142 +335,6 @@ async def github_callback(
 
     response = RedirectResponse(url=redirect_target, status_code=302)
     _set_webui_token_cookie(response, jwt_token)
-    return response
-
-
-@router.get("/2fa")
-async def two_factor_page(request: Request):
-    """渲染登录二次验证页面。"""
-    token = request.cookies.get(MFA_PENDING_COOKIE_NAME)
-    payload = decode_access_token(token) if token else None
-    if not is_mfa_pending_payload(payload):
-        return toast_redirect("/auth/login", "toast.login_required", "error")
-
-    user_id = payload.get("user_id")
-    async with db_module.async_session() as session:
-        result = await session.execute(
-            select(TelegramUser).where(
-                TelegramUser.id == user_id,
-                TelegramUser.is_active,
-            )
-        )
-        user = result.scalar_one_or_none()
-        if not user or not await user_has_any_mfa_method(session, user):
-            return toast_redirect("/auth/login", "toast.login_required", "error")
-        totp_enabled = bool(user.totp_enabled)
-
-    return render_template(
-        "two_factor_verify.html",
-        request,
-        csrf_token=get_csrf_serializer().dumps({}),
-        error=None,
-        app_version=APP_VERSION,
-        github_username=payload.get("sub", ""),
-        totp_enabled=totp_enabled,
-    )
-
-
-@router.post("/2fa", dependencies=[Depends(require_csrf)])
-@limiter.limit(lambda: get_settings().two_factor_verify_rate_limit)
-async def verify_two_factor(
-    request: Request,
-    code: str = Form(...),
-):
-    """验证 TOTP 或恢复码并签发正式登录 Cookie。"""
-    token = request.cookies.get(MFA_PENDING_COOKIE_NAME)
-    payload = decode_access_token(token) if token else None
-    if not is_mfa_pending_payload(payload):
-        return toast_redirect("/auth/login", "toast.login_required", "error")
-
-    user_id = payload.get("user_id")
-    async with db_module.async_session() as session:
-        result = await session.execute(
-            select(TelegramUser).where(
-                TelegramUser.id == user_id,
-                TelegramUser.is_active,
-            )
-        )
-        user = result.scalar_one_or_none()
-        if not user or not await user_has_any_mfa_method(session, user):
-            return toast_redirect("/auth/login", "toast.login_required", "error")
-
-        # Check lockout before attempting verification
-        try:
-            await check_mfa_lockout(int(user_id))
-        except AccountLockedError as exc:
-            lang = detect_language()
-            locked_msg = _i18n.t(
-                "toast.account_locked", lang=lang, seconds=exc.remaining_seconds
-            )
-            return render_template(
-                "two_factor_verify.html",
-                request,
-                csrf_token=get_csrf_serializer().dumps({}),
-                error=locked_msg,
-                app_version=APP_VERSION,
-                github_username=payload.get("sub", ""),
-                totp_enabled=bool(user.totp_enabled),
-                status_code=429,
-            )
-
-        if not user.totp_enabled:
-            return render_template(
-                "two_factor_verify.html",
-                request,
-                csrf_token=get_csrf_serializer().dumps({}),
-                error="请使用通行密钥完成验证",
-                app_version=APP_VERSION,
-                github_username=payload.get("sub", ""),
-                totp_enabled=False,
-                status_code=400,
-            )
-
-        verified = False
-        try:
-            used_step = verify_user_totp(user, code)
-            if used_step is not None:
-                user.totp_last_used_step = used_step
-                verified = True
-        except TwoFactorReplayError:
-            logger.warning("TOTP 重放尝试: user_id={}", user_id)
-        except TwoFactorError as exc:
-            logger.warning("TOTP 验证失败: user_id={}, error={}", user_id, exc)
-
-        if not verified:
-            verified = await consume_recovery_code(session, int(user_id), code)
-
-        if not verified:
-            await record_mfa_failure(int(user_id))
-            await session.rollback()
-            return render_template(
-                "two_factor_verify.html",
-                request,
-                csrf_token=get_csrf_serializer().dumps({}),
-                error="验证码或恢复码无效",
-                app_version=APP_VERSION,
-                github_username=payload.get("sub", ""),
-                totp_enabled=True,
-                status_code=400,
-            )
-
-        await reset_mfa_failures(int(user_id))
-        await session.commit()
-
-    jwt_token = create_access_token(
-        {
-            "sub": payload.get("sub"),
-            "role": payload.get("role"),
-            "user_id": payload.get("user_id"),
-            "github_id": payload.get("github_id"),
-            "avatar_url": payload.get("avatar_url"),
-            "email": payload.get("email"),
-            "email_verified": payload.get("email_verified", False),
-        }
-    )
-    logger.info("WebUI 二次验证成功: user={}", payload.get("sub"))
-    response = RedirectResponse(url="/", status_code=302)
-    _set_webui_token_cookie(response, jwt_token)
-    response.delete_cookie(MFA_PENDING_COOKIE_NAME)
     return response
 
 
@@ -756,14 +558,3 @@ async def passkey_verify_discover(request: Request, body: dict = Body(...)):
     _set_webui_token_cookie(response, jwt_token)
     response.delete_cookie(MFA_PENDING_COOKIE_NAME)
     return response
-
-
-@router.post("/api/theme", dependencies=[Depends(require_csrf_header)])
-async def set_theme(
-    request: Request,
-    theme: str = Form(...),
-):
-    """HTMX 调用的主题切换接口"""
-    if theme not in ("light", "dark"):
-        return HTMLResponse(status_code=400)
-    return HTMLResponse(status_code=204)

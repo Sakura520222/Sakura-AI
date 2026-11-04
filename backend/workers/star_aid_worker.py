@@ -97,15 +97,18 @@ class StarAidWorker:
                 redis_until = parse_rfc3339(val)
         except Exception:
             shared_state_healthy = False
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "star_aid shared cooldown read failed; failing closed for this tick",
-                exc_info=True,
             )
 
         # A local extension must still be honored if Redis became unavailable
         # before the write, or contains an older deadline.
         until = max(
-            (candidate for candidate in (redis_until, _in_process_cooldown_until) if candidate),
+            (
+                candidate
+                for candidate in (redis_until, _in_process_cooldown_until)
+                if candidate
+            ),
             default=None,
         )
         return CooldownState(
@@ -131,22 +134,29 @@ class StarAidWorker:
 
             r = await get_async_redis()
             effective = await r.eval(
-                _EXTEND_COOLDOWN_LUA, 1, _REDIS_COOLDOWN_KEY,
-                format_rfc3339(until), ttl,
+                _EXTEND_COOLDOWN_LUA,
+                1,
+                _REDIS_COOLDOWN_KEY,
+                format_rfc3339(until),
+                ttl,
             )
             effective_until = parse_rfc3339(effective)
-            _in_process_cooldown_until = max(_in_process_cooldown_until, effective_until)
-            if _coordination_failed_until is None or effective_until >= _coordination_failed_until:
+            _in_process_cooldown_until = max(
+                _in_process_cooldown_until, effective_until
+            )
+            if (
+                _coordination_failed_until is None
+                or effective_until >= _coordination_failed_until
+            ):
                 _coordination_failed_until = None
             return True
         except Exception:
             if _coordination_failed_until is None or until > _coordination_failed_until:
                 _coordination_failed_until = until
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "star_aid global cooldown persistence failed: until={} "
                 "current replica will pause, but cross-replica coordination is unavailable",
                 until,
-                exc_info=True,
             )
             return False
 
@@ -168,7 +178,9 @@ class StarAidWorker:
         cooldown_until = cooldown_state.until
         now = now_utc()
         if cooldown_until and cooldown_until > now:
-            logger.warning("star_aid tick skipped: worker in cooldown until {}", cooldown_until)
+            logger.warning(
+                "star_aid tick skipped: worker in cooldown until {}", cooldown_until
+            )
             return
 
         batch_size = int(await get_dynamic_config("star_aid_batch_size") or 5)
@@ -191,7 +203,9 @@ class StarAidWorker:
             try:
                 short_circuit = await self._process_member(member_id)
                 if short_circuit:
-                    logger.warning("star_aid tick: aborting remaining batch members due to rate limit")
+                    logger.warning(
+                        "star_aid tick: aborting remaining batch members due to rate limit"
+                    )
                     break
             except Exception as exc:
                 logger.error(
@@ -240,9 +254,7 @@ class StarAidWorker:
                     break
                 if result.get("rate_limited"):
                     rate_reset_at = result.get("rate_limit_reset_at")
-                    rate_limit_kind = (
-                        result.get("rate_limit_kind") or "primary"
-                    )
+                    rate_limit_kind = result.get("rate_limit_kind") or "primary"
                     if rate_reset_at is None:
                         rate_reset_at = now + timedelta(seconds=60)
                     if rate_limit_kind == "secondary":

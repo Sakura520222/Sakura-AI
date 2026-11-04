@@ -7,13 +7,37 @@ from pathlib import Path
 from typing import Any, Literal, get_origin
 
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from backend.core.config_sections import get_sections_for_target
 from backend.core.time_service import monotonic, resolve_timezone
+from backend.services.payment.currency_units import (
+    normalize_currency,
+    supported_currencies,
+)
+from backend.services.payment.paddle_capabilities import (
+    supported_paddle_currencies,
+    validate_paddle_currency,
+)
 
 DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
+# Bounds apply before Issue corpus recall and source hydration, independent of
+# the later model input budget. Keep Settings, dynamic forms and runtime aligned.
+ISSUE_RELATION_MAX_CANDIDATES_RANGE = (1, 200)
+# Operational recall bounds, shared by Settings, forms and request admission.
+ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE = (1, 10)
+PR_ISSUE_MAX_LINKS_RANGE = (1, 200)
+
+
+def validate_currency_config_value(key: str, value: object) -> str:
+    """Validate configured money codes against each payment protocol."""
+    currency = normalize_currency(value)
+    if key == "alipay_currency" and currency != "CNY":
+        raise ValueError("Alipay website payments support CNY only")
+    if key == "paddle_currency":
+        return validate_paddle_currency(currency)
+    return currency
 
 
 def sanitize_domain(domain: str | None) -> str:
@@ -58,6 +82,7 @@ class Settings(BaseSettings):
     # 用户可见时间的应用时区；system 在每次进程启动时解析为系统 IANA 区域。
     app_timezone: str = "system"
     log_level: str = "INFO"
+    config_sync_interval_seconds: float = Field(2.0, ge=0.1, le=60.0)
     sakura_env: str = Field(
         "production",
         description="运行环境标识（production / development）",
@@ -94,7 +119,20 @@ class Settings(BaseSettings):
     # 基础审查任务配置
     max_concurrent_reviews: int = Field(
         5,
-        description="最大并发审查数量",
+        ge=1,
+        description="PR 服务执行并发；共享同一数据库的实例合计容量，超出排队等待",
+    )
+    service_execution_lease_seconds: int = Field(
+        300,
+        ge=30,
+        le=3600,
+        description="服务执行名额租约时长（秒）；执行期间续约，异常退出后到期回收",
+    )
+    service_execution_poll_seconds: float = Field(
+        0.25,
+        ge=0.05,
+        le=60,
+        description="服务执行排队轮询间隔（秒）；等待共享并发名额时使用",
     )
     review_timeout_seconds: int = Field(
         600,
@@ -117,7 +155,7 @@ class Settings(BaseSettings):
     )
     enable_findings_check: bool = Field(
         True,
-        description="是否启用副 Findings Check（发现统计），仅有 publishable findings 时出现",
+        description="是否启用副 Findings Check（发现一些问题），仅有 publishable findings 时出现",
     )
     analysis_min_interval_sec: int = Field(
         3,
@@ -422,12 +460,23 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     smtp_from: str | None = None
     smtp_from_name: str = "Sakura-AI"  # 邮件 From 显示昵称
-    smtp_security: str = "starttls"  # SMTP 安全模式：ssl（隐式 TLS，465）/ starttls（587）/ none（明文）
+    smtp_security: str = (
+        "starttls"  # SMTP 安全模式：ssl（隐式 TLS，465）/ starttls（587）/ none（明文）
+    )
     notification_max_concurrency: int = Field(5, ge=1, le=100)
     notification_retry_max_attempts: int = Field(3, ge=1, le=20)
     notification_retry_initial_delay_seconds: float = Field(1.0, ge=0)
     notification_retry_backoff_factor: float = Field(2.0, ge=1.0)
     notification_rate_limit_seconds: float = Field(0.05, ge=0)
+    notification_poll_seconds: float = Field(5.0, ge=0.1, le=300)
+    notification_batch_size: int = Field(100, ge=1, le=1000)
+    notification_send_timeout_seconds: float = Field(60.0, ge=1, le=90)
+    notification_webhook_enabled: bool = True
+    notification_webhook_timeout_seconds: float = Field(15.0, ge=1, le=60)
+    notification_webhook_response_max_bytes: int = Field(65536, ge=1024, le=1048576)
+    notification_webhook_allowed_hosts: str = ""
+    notification_email_verification_ttl_seconds: int = Field(900, ge=60, le=3600)
+    notification_verification_max_attempts: int = Field(5, ge=1, le=10)
     register_quota_multiplier: float = Field(
         0.2,
         ge=0.1,
@@ -596,7 +645,7 @@ class Settings(BaseSettings):
     rerank_base_url: str = "https://api.siliconflow.cn/v1/rerank"
     rerank_api_key: str = ""
     rerank_top_k: int = 10
-    rerank_score_threshold: float = 0.6
+    rerank_score_threshold: float = Field(0.6, ge=0.0, le=1.0, allow_inf_nan=False)
 
     # 文档分块配置
     chunk_size: int = 1000
@@ -620,20 +669,45 @@ class Settings(BaseSettings):
     issue_assignee_confidence_threshold: float = 0.8
     issue_auto_assign_max: int = 3
     issue_detect_duplicates: bool = True
+    issue_relation_max_candidates: int = Field(
+        5,
+        ge=ISSUE_RELATION_MAX_CANDIDATES_RANGE[0],
+        le=ISSUE_RELATION_MAX_CANDIDATES_RANGE[1],
+    )
+    issue_relation_max_input_tokens: int = Field(64000, ge=1)
+    issue_relation_candidate_max_comments: int = Field(20, ge=1)
+    issue_relation_candidate_comment_max_chars: int = Field(4000, ge=1)
+    issue_relation_similarity_threshold: float = 0.75
+    issue_relation_confidence_threshold: float = 0.85
+    issue_duplicate_confidence_threshold: float = 0.95
     issue_suggest_assignees: bool = True
     issue_suggest_milestones: bool = True
     protocol_repair_max_attempts: int = 3
     issue_max_files_per_analysis: int = 500
-    max_concurrent_issues: int = 5
+    max_concurrent_issues: int = Field(
+        5,
+        ge=1,
+        le=500,
+        description="Issue 服务执行并发；共享同一数据库的实例合计容量，超出排队等待",
+    )
     issue_price_per_1k_prompt: float = 0.0
     issue_price_per_1k_completion: float = 0.0
     # Module A: 向量存储元数据增强
     issue_vector_store_rich_metadata: bool = True
+    issue_corpus_freshness_seconds: int = 60
+    issue_corpus_batch_size: int = 100
+    issue_candidate_pool_multiplier: int = Field(
+        3,
+        ge=ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE[0],
+        le=ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE[1],
+    )
     # Module F: 多人对话上下文分析
     issue_include_comments: bool = True
     # 图片多模态：消费模型能力配置 capabilities.vision（Issue #538）
     issue_vision_enabled: bool = True  # 总开关；模型能力仍需勾选"支持图片多模态"
-    issue_vision_max_image_size_bytes: int = 10_485_760  # 单张图片下载上限（字节，默认 10MB，防内存耗尽）
+    issue_vision_max_image_size_bytes: int = (
+        10_485_760  # 单张图片下载上限（字节，默认 10MB，防内存耗尽）
+    )
     issue_vision_allowed_image_domains: str = (
         # 允许下载的图片域名（逗号分隔，段内支持 ``*`` 通配）；仅 GitHub
         # 资产域，私有仓库经 installation 凭据下载，避免向任意外链发起请求
@@ -676,7 +750,15 @@ class Settings(BaseSettings):
     fetch_url_max_redirects: int = 3  # 最大重定向次数
 
     # ========== 支付配置 ==========
-    payment_enabled: bool = False  # 是否启用付费配额系统
+    payment_enabled: bool = False  # 是否启用支付入口
+    billing_enabled: bool = False  # 正式 Credits 收费需显式启用
+    billing_charge_failed_operations: bool = False
+    billing_charge_failed_calls: bool = False
+    billing_initial_reserve_credits: str = "0"
+    billing_reservation_ttl_seconds: int = Field(3600, ge=60)
+    payment_partial_refund_policy: Literal["reject", "proportional_unused_credits"] = (
+        "reject"
+    )
     payment_order_expire_minutes: int = Field(
         30, description="未支付订单过期时间（分钟）"
     )
@@ -702,6 +784,17 @@ class Settings(BaseSettings):
     alipay_public_key: str = Field("", description="支付宝公钥（用于验签）")
     alipay_currency: str = Field("CNY", description="支付宝默认货币")
     alipay_sandbox: bool = Field(False, description="启用支付宝沙箱环境")
+
+    @field_validator(
+        "payment_default_currency",
+        "stripe_currency",
+        "paddle_currency",
+        "alipay_currency",
+        mode="before",
+    )
+    @classmethod
+    def validate_payment_currencies(cls, value, info):
+        return validate_currency_config_value(info.field_name, value)
 
     # NOWPayments 虚拟币支付（无需 KYC，非托管）
     nowpayments_enabled: bool = Field(False, description="启用 NOWPayments 虚拟币支付")
@@ -737,8 +830,38 @@ class Settings(BaseSettings):
 
     # ========== 语义 Issue 关联配置 ==========
     enable_semantic_issue_linking: bool = True  # 是否启用语义 Issue 关联
-    semantic_issue_similarity_threshold: float = 0.8  # 语义相似度阈值
-    semantic_issue_max_links: int = 5  # 最大关联 Issue 数量
+    semantic_issue_similarity_threshold: float = Field(
+        0.65, ge=0.0, le=1.0, allow_inf_nan=False
+    )  # 语义相似度阈值
+    pr_issue_related_confidence_threshold: float = Field(
+        0.85, ge=0.0, le=1.0, allow_inf_nan=False
+    )
+    pr_issue_closing_confidence_threshold: float = Field(
+        0.95, ge=0.0, le=1.0, allow_inf_nan=False
+    )
+    pr_issue_max_files: int = 128  # PR 关系验证的惰性读取文件上限
+    pr_issue_max_input_tokens: int = 64000  # 完整请求的估算输入 token 上限
+    semantic_issue_max_links: int = Field(
+        5, ge=PR_ISSUE_MAX_LINKS_RANGE[0], le=PR_ISSUE_MAX_LINKS_RANGE[1]
+    )  # 最大关联 Issue 数量
+
+    @field_validator(
+        "issue_relation_max_candidates",
+        "issue_candidate_pool_multiplier",
+        "semantic_issue_max_links",
+        "semantic_issue_similarity_threshold",
+        "rerank_score_threshold",
+        "pr_issue_related_confidence_threshold",
+        "pr_issue_closing_confidence_threshold",
+        mode="before",
+    )
+    @classmethod
+    def reject_boolean_relation_config(cls, value: Any) -> Any:
+        # Reject before Pydantic turns bool into an indistinguishable 0/1.
+        # Numeric strings remain valid for environment-backed Settings.
+        if isinstance(value, bool):
+            raise ValueError("relation numeric configuration cannot be boolean")
+        return value
 
     # 支持的编程语言
     code_index_languages: list[str] = [
@@ -778,6 +901,11 @@ class Settings(BaseSettings):
     scan_min_severity_for_issue: str = "major"  # 创建 Issue 的最低严重性
 
     # ========== Agent 模式配置 ==========
+    agent_team_harness_plugins: str = '{"version":1,"mcp":{"servers":[]},"hooks":[]}'
+    agent_team_permission_profile: Literal[
+        "read_only", "workspace_write", "autonomous", "full_access"
+    ] = "autonomous"
+    agent_team_mcp_io_timeout_seconds: float = Field(300.0, gt=0, allow_inf_nan=False)
     agent_team_enabled: bool = False  # 是否启用 Agent 模式（super_admin 手动使用）
     agent_team_workspace_root: str = "./workplace"  # Agent 独立工作区根目录
     # Agent command execution backend.  ``sandbox`` is the production-safe
@@ -806,7 +934,12 @@ class Settings(BaseSettings):
     agent_team_sandbox_expected_workspace_root: str | None = None
     agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
     # 推理参数和单次传输保护由 AI 配置页角色绑定及统一协议层负责。
-    agent_team_max_concurrent: int = 1
+    agent_team_max_concurrent: int = Field(
+        1,
+        ge=1,
+        description="Agent 服务执行并发；共享同一数据库的实例合计容量，超出排队等待",
+    )
+    agent_team_subagent_concurrency: int = Field(4, ge=1)
     agent_team_min_priority: str = "high"
     agent_team_feasibility_keywords: str = "容易,简单,明确,低风险,可快速修复"
     agent_team_branch_index_delay: float = 2.0
@@ -977,6 +1110,27 @@ def get_settings() -> Settings:
     return Settings()
 
 
+def effective_log_level(settings: Settings | None) -> str:
+    """Shared consumer value, including the unconfigured development default."""
+    level = getattr(
+        settings, "log_level", Settings.model_fields["log_level"].default
+    ).upper()
+    if getattr(settings, "is_development", False) and "log_level" not in getattr(
+        settings, "model_fields_set", set()
+    ):
+        return "DEBUG"
+    return level
+
+
+def restore_settings_field(key: str, defaults: Settings | None = None) -> None:
+    """Restore inherited value AND explicitness, without retaining a DB override."""
+    defaults = defaults if defaults is not None else Settings()
+    settings = get_settings()
+    setattr(settings, key, getattr(defaults, key))
+    if key not in defaults.model_fields_set:
+        settings.model_fields_set.discard(key)
+
+
 @lru_cache
 def get_strategy_config() -> StrategyConfig:
     """获取策略配置单例"""
@@ -1078,7 +1232,9 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "label": "审查任务基础配置",
                 "icon": "activity",
                 "descriptions": {
-                    "max_concurrent_reviews": "同时进行的最大 PR 审查任务数，超出排队等待",
+                    "max_concurrent_reviews": "共享同一数据库的 API/Worker 实例合计 PR 执行容量；超出排队等待。套餐另按每用户限制已登记且未结束的业务执行。",
+                    "service_execution_lease_seconds": "共享服务执行名额租约时长（30–3600 秒）；执行期间每隔租约时长的三分之一续约，异常退出后到期回收。不会限制任务总时长。",
+                    "service_execution_poll_seconds": "排队等待共享服务执行名额时的轮询间隔（0.05–60 秒），适用于 PR、Issue 和 Agent。",
                     "review_timeout_seconds": (
                         "PR 审查、Issue 分析与仓库扫描共用的软超时时间（秒）；"
                         "超时后在下一次 AI 调用时提示"
@@ -1086,12 +1242,14 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "enable_auto_review": "启用后，Webhook 触发的 PR 变更将自动进入审查",
                     "enable_check_runs": "启用 GitHub Check Runs 审查进度可视化",
                     "enable_analysis_check": "启用副 Analysis Check（AI 运行时指标），仅工具模式下出现",
-                    "enable_findings_check": "启用副 Findings Check（发现统计），仅有可发布 findings 时出现",
+                    "enable_findings_check": "启用副 Findings Check（发现一些问题），仅有可发布 findings 时出现",
                     "analysis_min_interval_sec": "Analysis Check 快照写入 GitHub 的最小间隔（秒）",
                     "protocol_repair_max_attempts": "协议信封解析失败时的最大修复次数（1-10）",
                 },
                 "keys": [
                     "max_concurrent_reviews",
+                    "service_execution_lease_seconds",
+                    "service_execution_poll_seconds",
                     "review_timeout_seconds",
                     "enable_auto_review",
                     "enable_check_runs",
@@ -1215,10 +1373,18 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             {
                 "label": "语义 Issue 关联",
                 "icon": "link",
+                "descriptions": {
+                    "pr_issue_max_files": "逐项读取 PR 文件的上限；超限、缺页或补丁不完整时跳过验证并保留已有语义关联",
+                    "pr_issue_max_input_tokens": "完整验证请求的估算输入 token 上限，包含 PR 说明、Issue、JSON 和系统提示；同时受摘要角色候选模型的上下文、输出预算与协议预留限制",
+                },
                 "keys": [
                     "enable_semantic_issue_linking",
                     "semantic_issue_similarity_threshold",
                     "semantic_issue_max_links",
+                    "pr_issue_related_confidence_threshold",
+                    "pr_issue_closing_confidence_threshold",
+                    "pr_issue_max_files",
+                    "pr_issue_max_input_tokens",
                 ],
             },
         ),
@@ -1233,14 +1399,24 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_auto_rewrite_title": "AI 生成规范化标题并自动修改 Issue 标题（默认关闭）",
                     "issue_assignee_confidence_threshold": "指派人置信度阈值（0-1），达到此值才会自动指派",
                     "issue_auto_assign_max": "单个 Issue 最多自动指派的人数",
-                    "issue_detect_duplicates": "启用后自动检测重复 Issue",
+                    "issue_detect_duplicates": "主分析前验证开放重复及关联关系，无开放重复时验证关闭 Issue 历史关系",
+                    "issue_relation_max_candidates": "每个开放或历史阶段最多验证的 Issue 数量（1-200，默认 5）；无效配置使关系阶段失败并继续主分析",
+                    "issue_relation_max_input_tokens": "开放及历史阶段完整请求的估算输入 token 上限，包含正文、评论、语言、JSON 和系统提示；同时受全部摘要候选模型上下文、输出与协议预留限制，超限或未知时失败并继续主分析",
+                    "issue_relation_candidate_max_comments": "启用评论时每个候选最多惰性读取的最新评论数量；较早讨论可能被省略，提示中保留来源及范围",
+                    "issue_relation_candidate_comment_max_chars": "候选单条评论保留的原文字符上限；截断状态显式传给关系分析，不将缺失内容作为证据",
+                    "issue_relation_similarity_threshold": "关系候选的最低余弦相似度，检索本身不决定关系",
+                    "issue_relation_confidence_threshold": "普通及历史关系的最低验证置信度",
+                    "issue_duplicate_confidence_threshold": "开放重复 Issue 的最低验证置信度",
                     "issue_suggest_assignees": "AI 分析时推荐合适的指派人",
                     "issue_suggest_milestones": "AI 分析时推荐合适的里程碑",
                     "issue_max_files_per_analysis": "单次分析最多读取的文件数",
-                    "max_concurrent_issues": "同时进行的最大 Issue 分析任务数，超出排队等待",
+                    "max_concurrent_issues": "共享同一数据库的 API/Worker 实例合计 Issue 执行容量；超出排队等待。套餐另按每用户限制已登记且未结束的业务执行。",
                     "issue_vector_store_rich_metadata": "启用后向量搜索结果将包含 AI 分类、优先级和可行性评估",
+                    "issue_corpus_freshness_seconds": "Issue 语料同步的最小间隔（秒），0 表示每次检索都同步",
+                    "issue_corpus_batch_size": "每批同步并嵌入的 Issue 数量",
+                    "issue_candidate_pool_multiplier": "初步召回的候选数量相对于目标结果数量的倍数（1-10，默认 3）；无效配置在语料同步前失败",
                     "issue_include_comments": "启用后分析将包含 Issue 评论区的多人讨论，AI 可参考社区反馈做出更准确判断",
-                    "issue_vision_enabled": "启用后 Issue 正文与评论中的图片将安全下载，超过 5 MiB 时压缩后以多模态输入交给 AI（需模型高级配置勾选\"支持图片多模态\"）",
+                    "issue_vision_enabled": '启用后 Issue 正文与评论中的图片将安全下载，超过 5 MiB 时压缩后以多模态输入交给 AI（需模型高级配置勾选"支持图片多模态"）',
                 },
                 "keys": [
                     "enable_issue_analysis",
@@ -1249,11 +1425,21 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_assignee_confidence_threshold",
                     "issue_auto_assign_max",
                     "issue_detect_duplicates",
+                    "issue_relation_max_candidates",
+                    "issue_relation_max_input_tokens",
+                    "issue_relation_candidate_max_comments",
+                    "issue_relation_candidate_comment_max_chars",
+                    "issue_relation_similarity_threshold",
+                    "issue_relation_confidence_threshold",
+                    "issue_duplicate_confidence_threshold",
                     "issue_suggest_assignees",
                     "issue_suggest_milestones",
                     "issue_max_files_per_analysis",
                     "max_concurrent_issues",
                     "issue_vector_store_rich_metadata",
+                    "issue_corpus_freshness_seconds",
+                    "issue_corpus_batch_size",
+                    "issue_candidate_pool_multiplier",
                     "issue_include_comments",
                     "issue_vision_enabled",
                 ],
@@ -1292,6 +1478,8 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                         "full_access 允许 Agent/Dependency 使用 sandboxd 固定出口网络"
                     ),
                     "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
+                    "agent_team_subagent_concurrency": "新主会话中同时运行的只读子 Agent 槽位；其余排队，不限制累计创建或调用次数，不结束主任务",
+                    "agent_team_max_concurrent": "共享同一数据库的 API/Worker 实例合计 Agent 执行容量；超出排队等待。套餐另按每用户限制已登记且未结束的业务执行。",
                     "agent_team_pr_closed_loop_enabled": "启用后，Agent 创建的 PR 会根据 Sakura PR 审查结果自动判定通过、继续迭代或等待人工处理",
                     "agent_team_pr_review_pass_score": "Agent PR 审查通过分数阈值（1-10），低于该分数会进入迭代",
                     "agent_team_pr_review_blocking_severities": "会阻塞 Agent PR 通过的审查严重级别，多个值用逗号分隔",
@@ -1310,6 +1498,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_network_policy",
                     "agent_team_repo_allowlist",
                     "agent_team_max_concurrent",
+                    "agent_team_subagent_concurrency",
                     "agent_team_min_priority",
                     "agent_team_feasibility_keywords",
                     "agent_team_draft_pr",
@@ -1375,8 +1564,22 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             {
                 "label": "付费配额配置",
                 "icon": "credit-card",
+                "descriptions": {
+                    "billing_enabled": "开启前必须配置实际模型的完整定价与换算。默认关闭，不自动追溯旧 Usage。",
+                    "billing_charge_failed_operations": "关闭时保留失败任务真实 Provider 成本，但不新增用户扣费。",
+                    "billing_charge_failed_calls": "控制成功任务中产生实际 Usage 的失败或重试调用是否由用户承担，默认不收费。",
+                    "billing_initial_reserve_credits": "每次执行初始预留的 Credits，十进制字符串；不是任务总预算，不保证未知成本的上界。",
+                    "billing_reservation_ttl_seconds": "过期未完成执行由恢复入口标记待核对并释放预留，最小 60 秒。",
+                    "payment_partial_refund_policy": "默认拒绝部分退款。可选按未消费 Credits 比例退款，仅适用于 Credits 单一权益订单，需幂等事件标识。",
+                },
                 "keys": [
                     "payment_enabled",
+                    "billing_enabled",
+                    "billing_charge_failed_operations",
+                    "billing_charge_failed_calls",
+                    "billing_initial_reserve_credits",
+                    "billing_reservation_ttl_seconds",
+                    "payment_partial_refund_policy",
                     "payment_order_expire_minutes",
                     "payment_default_currency",
                     "stripe_enabled",
@@ -1515,7 +1718,29 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
 )
 
 # 选择类字段的选项
+MONETARY_CURRENCY_CONFIG_KEYS = (
+    "payment_default_currency",
+    "stripe_currency",
+    "paddle_currency",
+    "alipay_currency",
+)
 DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
+    **{
+        key: [{"value": code, "label": code} for code in supported_currencies()]
+        for key in MONETARY_CURRENCY_CONFIG_KEYS
+    },
+    # alipay.trade.page.pay is a CNY-only gateway, not a general FX gateway.
+    "alipay_currency": [{"value": "CNY", "label": "CNY"}],
+    "paddle_currency": [
+        {"value": code, "label": code} for code in supported_paddle_currencies()
+    ],
+    "payment_partial_refund_policy": [
+        {"value": "reject", "label": "拒绝部分退款"},
+        {
+            "value": "proportional_unused_credits",
+            "label": "仅退未消费 Credits 的对应付款",
+        },
+    ],
     "embedding_provider": [
         {"value": "siliconflow", "label": "SiliconFlow"},
         {"value": "openai", "label": "OpenAI"},
@@ -1565,6 +1790,9 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
 DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     # 审查任务基础配置
     "max_concurrent_reviews": (1, None),
+    "service_execution_lease_seconds": (30, 3600),
+    "service_execution_poll_seconds": (0.05, 60),
+    "agent_team_max_concurrent": (1, None),
     "review_timeout_seconds": (1, None),
     "analysis_min_interval_sec": (1, None),
     "protocol_repair_max_attempts": (1, 10),
@@ -1579,9 +1807,24 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
     "pr_dependency_graph_max_nodes": (5, 100),
     "pr_dependency_graph_max_files": (5, 500),
     "semantic_issue_similarity_threshold": (0.0, 1.0),
-    "semantic_issue_max_links": (1, 200),
+    "semantic_issue_max_links": PR_ISSUE_MAX_LINKS_RANGE,
+    "pr_issue_related_confidence_threshold": (0.0, 1.0),
+    "pr_issue_closing_confidence_threshold": (0.0, 1.0),
+    "pr_issue_max_files": (1, 3000),
+    "pr_issue_max_input_tokens": (1, 1000000),
+    "issue_corpus_freshness_seconds": (0, None),
+    "issue_corpus_batch_size": (1, None),
+    "issue_relation_max_candidates": ISSUE_RELATION_MAX_CANDIDATES_RANGE,
+    "issue_relation_max_input_tokens": (1, None),
+    "issue_relation_candidate_max_comments": (1, None),
+    "issue_relation_candidate_comment_max_chars": (1, None),
+    "issue_relation_similarity_threshold": (0.0, 1.0),
+    "issue_relation_confidence_threshold": (0.0, 1.0),
+    "issue_duplicate_confidence_threshold": (0.0, 1.0),
+    "issue_candidate_pool_multiplier": ISSUE_CANDIDATE_POOL_MULTIPLIER_RANGE,
     "agent_team_candidate_cache_ttl": (0, 3600),
     "agent_team_dependency_install_attempts": (1, 5),
+    "agent_team_subagent_concurrency": (1, None),
     "agent_team_dependency_retry_delay_seconds": (0, 60),
     "scan_interval_minutes": (30, 10080),  # 30分钟 ~ 7天
     "scan_cooldown_hours": (1, 168),  # 1小时 ~ 7天
@@ -1614,7 +1857,9 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float | None]] = {
 # 字段中文标签
 DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     # 审查任务基础配置
-    "max_concurrent_reviews": "最大并发审查数",
+    "max_concurrent_reviews": "PR 服务执行并发",
+    "service_execution_lease_seconds": "服务执行名额租约时长（秒）",
+    "service_execution_poll_seconds": "服务执行排队轮询间隔（秒）",
     "review_timeout_seconds": "PR/Issue/仓库扫描软超时（秒）",
     "enable_auto_review": "启用 Webhook 自动审查",
     "enable_check_runs": "启用 Check Runs 进度可视化",
@@ -1653,7 +1898,17 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "enable_semantic_issue_linking": "启用语义 Issue 关联",
     "semantic_issue_similarity_threshold": "语义相似度阈值",
     "semantic_issue_max_links": "最大关联 Issue 数量",
+    "pr_issue_related_confidence_threshold": "PR 关联关系置信度阈值",
+    "pr_issue_closing_confidence_threshold": "PR 关闭关系置信度阈值",
+    "pr_issue_max_files": "PR 关系验证文件上限（超限时保留原关联）",
+    "pr_issue_max_input_tokens": "PR 关系验证完整请求输入 token 上限（同时受摘要模型上下文限制）",
     "payment_enabled": "启用付费配额系统",
+    "billing_enabled": "启用 Credits 用量收费",
+    "billing_charge_failed_operations": "失败任务收费",
+    "billing_charge_failed_calls": "成功任务中的失败调用收费",
+    "billing_initial_reserve_credits": "初始预留 Credits",
+    "billing_reservation_ttl_seconds": "异常预留回收时限（秒）",
+    "payment_partial_refund_policy": "部分退款政策",
     "payment_order_expire_minutes": "订单过期时间（分钟）",
     "payment_default_currency": "默认货币",
     "stripe_enabled": "启用 Stripe 支付",
@@ -1698,6 +1953,15 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "notification_retry_initial_delay_seconds": "通知初始重试延迟（秒）",
     "notification_retry_backoff_factor": "通知重试退避倍数",
     "notification_rate_limit_seconds": "通知限流间隔（秒）",
+    "notification_poll_seconds": "通知恢复轮询间隔（秒）",
+    "notification_batch_size": "通知恢复批次大小",
+    "notification_send_timeout_seconds": "通知发送超时（秒）",
+    "notification_webhook_enabled": "启用 Webhook 通知",
+    "notification_webhook_timeout_seconds": "Webhook 超时（秒）",
+    "notification_webhook_response_max_bytes": "Webhook 最大响应字节数",
+    "notification_webhook_allowed_hosts": "Webhook 允许的域名（逗号分隔，空值允许公共域名）",
+    "notification_email_verification_ttl_seconds": "邮件验证有效期（秒）",
+    "notification_verification_max_attempts": "端点验证最大尝试次数",
     "webui_secret_key": "WebUI 密钥",
     "app_domain": "应用域名",
     "app_port": "应用端口",
@@ -1733,11 +1997,21 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "issue_assignee_confidence_threshold": "指派人置信度阈值",
     "issue_auto_assign_max": "最大指派人数",
     "issue_detect_duplicates": "检测重复 Issue",
+    "issue_relation_max_candidates": "Issue 关系候选上限",
+    "issue_relation_max_input_tokens": "Issue 关系完整请求输入 token 上限",
+    "issue_relation_candidate_max_comments": "Issue 候选最新评论上限",
+    "issue_relation_candidate_comment_max_chars": "Issue 候选单条评论字符上限",
+    "issue_relation_similarity_threshold": "Issue 关系候选相似度阈值",
+    "issue_relation_confidence_threshold": "Issue 关联及历史关系置信度阈值",
+    "issue_duplicate_confidence_threshold": "Issue 开放重复置信度阈值",
     "issue_suggest_assignees": "推荐指派人",
     "issue_suggest_milestones": "推荐里程碑",
     "issue_max_files_per_analysis": "单次分析最大文件数",
-    "max_concurrent_issues": "最大并发分析数",
+    "max_concurrent_issues": "Issue 服务执行并发",
     "issue_vector_store_rich_metadata": "向量存储包含 AI 分析元数据",
+    "issue_corpus_freshness_seconds": "Issue 语料同步间隔（秒）",
+    "issue_corpus_batch_size": "Issue 语料同步批次大小",
+    "issue_candidate_pool_multiplier": "Issue 候选召回倍数",
     "issue_include_comments": "分析时包含评论对话",
     "issue_vision_enabled": "Issue 分析读取图片（需模型支持图片多模态）",
     # Agent
@@ -1746,7 +2020,8 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_execution_backend": "Agent 执行后端",
     "agent_team_network_policy": "Agent 网络策略",
     "agent_team_repo_allowlist": "仓库白名单",
-    "agent_team_max_concurrent": "最大并发任务数",
+    "agent_team_max_concurrent": "Agent 服务执行并发",
+    "agent_team_subagent_concurrency": "子 Agent 并发运行槽位",
     "agent_team_min_priority": "最低 Issue 优先级",
     "agent_team_feasibility_keywords": "可行性关键词",
     "agent_team_draft_pr": "创建 Draft PR",
@@ -2216,6 +2491,15 @@ CORE_CONFIG_KEYS = frozenset(
         "notification_retry_initial_delay_seconds",
         "notification_retry_backoff_factor",
         "notification_rate_limit_seconds",
+        "notification_poll_seconds",
+        "notification_batch_size",
+        "notification_send_timeout_seconds",
+        "notification_webhook_enabled",
+        "notification_webhook_timeout_seconds",
+        "notification_webhook_response_max_bytes",
+        "notification_webhook_allowed_hosts",
+        "notification_email_verification_ttl_seconds",
+        "notification_verification_max_attempts",
         "webui_secret_key",
         "activity_cursor_signing_secret",
         "app_domain",
@@ -2241,6 +2525,8 @@ CORE_CONFIG_KEYS = frozenset(
 BASIC_CONFIG_KEYS = frozenset(
     {
         "max_concurrent_reviews",
+        "service_execution_lease_seconds",
+        "service_execution_poll_seconds",
         "review_timeout_seconds",
         "enable_auto_review",
         "enable_check_runs",

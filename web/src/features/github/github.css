@@ -1,0 +1,15 @@
+.github-connection { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; padding: 22px 0 28px; border-bottom: 1px solid var(--border); margin-bottom: 28px; }
+.github-connection-icon { display: grid; place-items: center; width: 50px; height: 50px; border-radius: 12px; color: var(--accent); background: var(--accent-soft); }
+.github-connection > div:first-of-type { flex: 1; }
+.github-connection h2 { margin-bottom: 5px; }
+.github-connection p { margin: 0; color: var(--muted); font-size: 13px; }
+.github-connection-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.github-installation { border: 1px solid var(--border); border-radius: 12px; padding: 23px; margin-bottom: 20px; }
+.github-installation > header { display: flex; align-items: center; gap: 15px; }
+.github-installation > header > div { flex: 1; }
+.github-installation h2 { margin: 0 0 3px; font-size: 16px; }
+.github-installation p { margin: 0; color: var(--muted); font-size: 12px; }
+.github-installation .wf-disclosure { margin-bottom: 0; }
+.github-repo { display: flex; justify-content: space-between; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.github-repo span:last-child { color: var(--muted); font-size: 12px; }
+@media (max-width: 760px) { .github-installation { padding: 18px; } .github-installation > header { flex-wrap: wrap; } .github-installation > header .button { margin-left: 35px; } }

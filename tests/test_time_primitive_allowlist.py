@@ -15,6 +15,10 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parents[1]
 PRODUCTION_ROOTS = (PROJECT_ROOT / "backend", PROJECT_ROOT / "updater" / "src")
+SPA_ROOT = PROJECT_ROOT / "web" / "src"
+# The shared browser wall-clock formatter: every rendered instant goes through
+# this component, which always formats with the server's application timezone.
+SHARED_TIME_FORMATTER = "web/src/components/workflow/Workflow.tsx"
 
 TIME_PRIMITIVE_ALLOWLIST = (
     {
@@ -26,7 +30,7 @@ TIME_PRIMITIVE_ALLOWLIST = (
     },
     {
         "file": "backend/services/payment/alipay_gateway.py",
-        "position": "backend/services/payment/alipay_gateway.py:608",
+        "position": "backend/services/payment/alipay_gateway.py:784",
         "primitive": "datetime.now(bj_tz)",
         "category": "fixed-protocol-timezone",
         "reason": "Alipay requires its timestamp in fixed UTC+08:00 protocol time.",
@@ -63,27 +67,21 @@ TIME_BOUNDARY_ALLOWLIST = TIME_PRIMITIVE_ALLOWLIST + (
 FROMTIMESTAMP_ALLOWLIST = (
     {
         "file": "backend/core/logging_bridge.py",
-        "position": "backend/core/logging_bridge.py:114",
+        "position": "backend/core/logging_bridge.py:142",
         "category": "stdlib-logrecord-boundary",
         "reason": "LogRecord.created is a Unix instant and is immediately made aware UTC.",
     },
     {
         "file": "backend/main.py",
-        "position": "backend/main.py:79",
+        "position": "backend/main.py:78",
         "category": "health-boundary",
         "reason": "The health payload converts its legacy numeric startup instant to aware UTC.",
     },
     {
-        "file": "backend/webui/routes/agent_team.py",
-        "position": "backend/webui/routes/agent_team.py:1391",
-        "category": "filesystem-metadata-boundary",
-        "reason": "Worktree mtime is filesystem metadata, converted to an aware UTC display value.",
-    },
-    {
-        "file": "backend/webui/routes/agent_team.py",
-        "position": "backend/webui/routes/agent_team.py:1625",
-        "category": "filesystem-metadata-boundary",
-        "reason": "Workspace mtime is filesystem metadata, converted to an aware UTC display value.",
+        "file": "backend/core/time_service.py",
+        "position": "backend/core/time_service.py:335",
+        "category": "shared-epoch-metadata-boundary",
+        "reason": "Shared converter normalizes finite protocol/filesystem epoch metadata to aware UTC; routes do not construct their own timestamps.",
     },
     {
         "file": "backend/services/activity_observability/conversation_service.py",
@@ -170,6 +168,20 @@ def _production_source() -> dict[str, str]:
     return files
 
 
+def _spa_source() -> dict[str, str]:
+    files: dict[str, str] = {}
+    for path in SPA_ROOT.rglob("*"):
+        if (
+            path.is_file()
+            and path.suffix in {".ts", ".tsx"}
+            and not path.stem.endswith(".test")
+        ):
+            files[path.relative_to(PROJECT_ROOT).as_posix()] = path.read_text(
+                encoding="utf-8"
+            )
+    return files
+
+
 def test_all_wall_clock_primitives_are_documented_allowlist_entries():
     actual = _primitive_calls()
     expected = {
@@ -233,20 +245,25 @@ def test_application_time_boundary_antipatterns_are_absent_or_explicitly_configu
     }
     assert all(".isoformat(" not in text for text in route_sources.values())
 
-    template_sources = {
-        path: text
-        for path, text in sources.items()
-        if path.startswith("backend/webui/templates/")
-    }
-    assert all("strftime(" not in text for text in template_sources.values())
-    assert all(
-        not re.search(r"\btoLocale(?:String|DateString|TimeString)\s*\(", text)
-        for text in template_sources.values()
+    # The Jinja templates are retired; the browser wall-clock boundary is now
+    # the SPA's shared <Timestamp> formatter: Intl.DateTimeFormat with an
+    # explicit application timezone, and no scattered date formatting.
+    spa_sources = _spa_source()
+    shared = spa_sources.get(SHARED_TIME_FORMATTER)
+    assert shared and "Intl.DateTimeFormat" in shared, (
+        "the shared browser time formatter must be present"
     )
-
-    intl_calls = []
-    for path, text in template_sources.items():
-        for match in re.finditer(r"Intl\.DateTimeFormat\s*\(", text):
-            intl_calls.append((path, text[match.start() : match.start() + 600]))
-    assert intl_calls, "the shared browser time formatter must be present"
-    assert all("timeZone" in snippet for _path, snippet in intl_calls)
+    for match in re.finditer(r"Intl\.DateTimeFormat\s*\(", shared):
+        assert "timeZone" in shared[match.start() : match.start() + 600]
+    scattered = [
+        path
+        for path, text in spa_sources.items()
+        if path != SHARED_TIME_FORMATTER
+        and re.search(
+            r"\bIntl\.DateTimeFormat\s*\(|\btoLocale(?:DateString|TimeString)\s*\(",
+            text,
+        )
+    ]
+    assert not scattered, (
+        f"date rendering must go through the shared Timestamp component: {scattered}"
+    )

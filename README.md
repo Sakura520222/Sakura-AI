@@ -2,371 +2,95 @@
 
 # 🌸 Sakura AI
 
-<img src="res/cover_1.png" alt="Sakura AI Cover" width="100%">
+<a href="res/cover-google.png"><img src="res/cover-google.png" alt="Sakura AI 封面" width="936" height="468"></a>
 
-> 基于 AI 的智能 GitHub Pull Request 代码审查与 Issue 分析机器人，具备主动探索代码库的能力
+GitHub PR 代码审查、Issue 分析与 Agent 修复
+
+[在线体验](https://ai.firefly520.top/) · [文档站](https://sakura520222.github.io/Sakura-AI/) · [快速开始](https://sakura520222.github.io/Sakura-AI/quick-start.html)
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-3.2.4-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.5-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Sakura520222/Sakura-AI)](https://github.com/Sakura520222/Sakura-AI/stargazers)
-[![Last Commit](https://img.shields.io/github/last-commit/Sakura520222/Sakura-AI)](https://github.com/Sakura520222/Sakura-AI/commits)
-[![Live Demo](https://img.shields.io/badge/🌐_免费体验-Online-success.svg)](https://ai.firefly520.top/)
-[![Android App](https://img.shields.io/badge/Android_App-🚧_开发中-orange.svg)](https://github.com/Sakura520222/Sakura-AI-APP)
 
 </div>
 
----
+Sakura AI 接入 GitHub 仓库，在 PR 和 Issue 中参与日常维护。审查时会按需查阅相关文件、搜索代码和追踪依赖；遇到需要修改的问题，可以委派给 Agent，生成 Draft PR 后继续审阅。
 
-## 官方服务
+可以直接使用[在线服务](https://ai.firefly520.top/)，注册后领取免费体验额度，也可以部署自己的实例。
 
-**官方服务平台**：[https://ai.firefly520.top/](https://ai.firefly520.top/)
+## 能做什么
 
-- **免费额度**：注册即赠免费体验额度，可立即使用 PR 审查、Issue 分析等核心功能
-- **完整功能**：体验全部功能，包括 PR 审查、Issue 分析、Agent 任务委派、仓库互助等
-- **无需部署**：开箱即用，无需自行搭建服务器和配置环境
+- 审查 PR，给出变更摘要、分类问题和行内评论；新提交到来后继续增量审查，并通过 Check Runs 展示进度。
+- 分析 Issue 的可行性与优先级，推荐标签，结合代码和截图调查问题，识别重复报告及关联 PR。
+- 从 Issue 或 PR 委派 Agent 修复任务，在独立工作区中修改代码、安装依赖、运行测试并创建 Draft PR，不自动合并。
+- 定期扫描仓库，将发现的代码质量与安全问题整理为报告 Issue。
+- 在 WebUI 中管理仓库、模型与任务，查看 AI 对话、工具调用和用量，并按需订阅邮件、Telegram 或 Webhook 通知。
 
-> 如果你想自建实例或进行二次开发，请参考下方的 [快速开始](#快速开始) 部分。
+支持多家 AI 提供商与自定义兼容端点，可为审查、摘要和 Agent 分别选择模型，配置回退链。Agent 支持仓库规则、Skills、MCP 与 Hooks；生产部署使用独立的 Linux 容器沙箱执行命令。
 
----
+功能细节与使用限制见[功能指南](https://sakura520222.github.io/Sakura-AI/features.html)。
 
-## 核心特性
+## 界面预览
 
-### 审查能力
-
-- **AI 推理模式** — 深度代码分析，主动调用工具查看项目结构与任意文件
-- **跨文件依赖理解** — 多轮对话理解模块间依赖，具备全域视野
-- **自适应审查策略** — 按 PR 规模自动选择快速 / 标准 / 深度模式
-- **大型 PR 精简审查** — diff 接近阈值时切 compact 模式，AI 按需查看变更
-- **结构化审查报告** — 整体评分 + 分类问题（严重 / 重要 / 优化）+ 折叠详情
-- **增量审查续跑** — 恢复上一轮 reviewer 完整消息历史，而非摘要注入
-- **运行中增量入队** — 审查中新提交入队合并，不并行启动新审查
-- **按需 diff 控制** — 不引入硬编码截断，靠工具按需读取与上下文压缩
-- **智能审查批准** — 按评分自动决策 APPROVE / REQUEST_CHANGES / COMMENT
-- **严格审查输出契约** — `<SAKURA_REVIEW>` 协议 + 字段校验 + 多轮自动修复 + 安全降级，全链路可观测
-- **PR 变更自动总结** — AI 生成并在 PR 更新时增量更新
-- **PR 依赖图生成** — AI / 静态双模式 Mermaid 图，增量叠加保留历史
-- **Token 消耗追踪** — 实时追踪所有 AI API 调用的 token 与成本
-- **新版实时监控** — 对话优先控制台，Session + Thread，Provider Attempt / 工具 / 压缩全链路投影，加密存储与审计解密
-- **一键撤回** — `/revoke` 一键撤回所有 AI 评论与 Review
-- **辅助模型支持** — 独立配置轻量模型处理摘要、标签等任务
-- **行内评论开关** — `enable_inline_comments` 控制 PR diff 行内评论
-- **可控自动审查** — `enable_auto_review` 控制 webhook 自动入队
-- **Check Runs 进度可视化** — 主 Check 5 步流程 + 副 Analysis / Findings，展示语义不阻塞合并
-- **外部 CI 失败注入** — 采集其他 CI（GitHub Actions / Codecov / lint App）失败作为不可信证据
-- **审查评论标签交互** — 报告含标签复选框，勾选自动应用 / 移除
-- **AI 生成 PR 描述** — Agent 创建 PR 时自动生成带元数据标记的描述
-
-### AI 工具与知识库
-
-- **AI 工具系统** — read_file / list_directory / search_in_files / get_git_info / list_commits / search_web / read_sakura_docs 等，按需调用
-- **跨文件代码搜索** — 定位函数 / 变量 / 类的所有使用位置
-- **Git 信息查询** — 仓库信息、分支列表、提交历史
-- **Web 搜索增强** — DuckDuckGo / Tavily
-- **URL 抓取** — 扩展审查所需外部上下文
-- **仓库级知识库（RAG）** — 向量语义检索项目文档
-- **PR 代码自动索引** — 语法感知分块 + 语义搜索精准定位
-- **项目记忆系统** — 基于 `.sakura/` 的自我反思与知识积累。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
-
-### 仓库扫描
-
-- **AI 全仓库扫描** — 定期全面扫描，发现代码质量与安全问题
-- **严格扫描输出契约** — `<SAKURA_SCAN>` 协议信封 + 多轮格式修复 + 安全降级
-- **实时扫描对话监控** — 扫描期间的 AI 对话与工具调用实时记录到活动观测，WebUI 活动页可查看
-- **自动创建 Issue** — AI 总结 + 趋势对比 + 严重性/类别矩阵 + 热点文件 + 折叠明细；自动关闭被取代的旧报告 Issue
-- **灵活扫描配置** — 间隔、冷却、Token 预算、并发等；扫描提示词 focus 在统一配置页 `strategy.scan` 节编辑
-- **扫描管理界面** — WebUI 查看列表、详情、统计
-- **扫描结果** — 通过 GitHub 报告 Issue 和 WebUI 查看
-
-### Issue 分析
-
-- **Issue 智能分析** — 自动分类、优先级、标签推荐、重复检测、关联 PR 发现
-- **图片多模态分析** — Issue 正文与评论中的截图经 GitHub 凭据安全下载，超过 5 MiB 时优先压缩至 500 KiB，再作为多模态输入交给 AI（需模型高级配置勾选"支持图片多模态"，并在统一配置页开启）
-- **严格 Issue 输出契约** — `<SAKURA_ISSUE_ANALYSIS>` 协议 + 多轮修复 + 安全降级
-- **Issue 自动打标** — 高置信度标签自动应用
-- **Issue 自动指派** — 指派给合适的仓库协作者
-- **Issue 标题改写** — 自动优化模糊标题
-- **分析评论发布** — 自动发布结果并报告状态
-- **PR-Issue 关联** — 解析 Issue 引用注入上下文
-- **语义 Issue 关联** — 向量相似度发现并关联相关 Issue
-
-### Agent 专家团队
-
-- **多入口任务创建** — 超级管理员手动启动、Issue 评论 `/agent` 委派、PR 评论 `/agent` 一键修复
-- **多分支并行工作区** — 每任务独立 Git worktree 隔离，同仓库多任务并行
-- **双 Agent 协作** — 全栈专家负责计划与修改，专业审查负责推送前复核
-- **上下文压缩与恢复** — 长任务自动压缩历史，持久化检查点支持失败续跑
-- **OS 级工具隔离** — Agent shell、搜索和依赖安装进入一次性非 root 容器；默认断网、只读根文件系统、丢弃 capabilities，并只挂载当前任务 worktree
-- **自动依赖与验证** — 在相同沙箱边界内检测安装 `pyproject.toml` / `requirements.txt` 依赖并运行项目测试，不再依赖高误报命令黑名单
-- **依赖安装容错** — 瞬时网络故障默认最多尝试 3 次，按 2、4 秒退避；永久错误不重试。最终失败会保留脱敏诊断并交给 Agent 修复或继续静态分析，明确报告无法运行的测试；可在统一配置页调整重试次数和等待时间
-- **Sakura 知识集成** — 浏览 `.sakura/` 知识与反思辅助修复
-- **Agent Skills 与内置 Ruff** — 从文件 / ZIP / GitHub 安装技能，内置 Ruff lint / format
-- **实时管理员干预** — WebUI Live View 注入指导意见
-- **任务取消支持** — 随时取消并安全释放工作区
-- **PR 创建闭环** — Draft PR + Sakura PR 审查 + 人工反馈迭代，不自动合并
-- **普通用户权限控制** — 仓库白名单 + 独立 Agent 配额
-- **GitHub App 授权中心** — 普通用户查看自己的安装与仓库访问范围，一键跳转 GitHub 管理/扩展授权
-
-### 仓库互助
-
-- **互助点星计划** — 授权后代表你为其他成员的展示仓库点星，互相引流
-- **GitHub App user-to-server 授权** — 加密密文存储 token，日志不打印原文
-- **展示仓库选择** — 成员选择公开仓库参与展示，AI 生成仓库摘要
-- **自动点星调度** — 随机间隔执行，受每用户 / 每仓库每日上限控制
-- **幂等与审计** — star / unstar / skip / fail 全部审计，同 (actor, target, action) 保留最终态
-- **手动点星** — 列表中手动点星，与自动共用幂等逻辑
-- **成员与权限治理** — 加入 / 退出 / 暂停 / 封禁，违规仓库可禁用
-- **安全校验** — 拒绝跨用户 state 复用，GitHub 账号必须与登录用户一致
-- **WebUI 管理页** — 成员 / 展示仓库 / 今日用量 / 功能开关；成员和仓库筛选、分页互不覆盖，搜索中的 `%`、`_` 按字面匹配
-
-### 管理与运维
-
-- **Setup Wizard** — 首次启动分步引导，支持断点续配
-- **系统核心配置管理** — 运行时修改基础设施配置（数据库、GitHub App、Telegram、域名等），审计记录；超级管理员可设置应用 IANA 时区（保存后重启）
-- **动态配置管理** — 普通 WebUI 配置修改即时生效；应用时区等重启键保存后按提示重启
-- **AI API 超时治理** — `ai_api_timeout_seconds` + `ai_api_total_timeout_seconds`
-- **用户级配置覆盖** — UserConfig → AppConfig → Settings 逐级回退
-- **AI Provider 注册表** — 内置 20+ 厂商，协议族感知模型发现与上下文窗口
-- **AI 账号持久化配置页** — 多账号 + 角色绑定 + 回退链，每模型独立覆盖能力
-- **多协议适配层** — OpenAI / Anthropic / Gemini 原生 / 兼容端点统一运行时
-- **跨协议故障转移** — 退避重试 + 跨厂商切换 + 上下文超限压缩
-- **GitHub App 仓库管理** — 管理员查看全局安装、索引与扫描状态
-- **安全中心与多因素认证** — TOTP / 恢复码 / Passkeys / 全局或单用户强制 MFA / 失败锁定
-- **SSE 实时推送** — 基于 Redis Pub/Sub 的多进程实时通信
-- **配额制访问控制** — 用户自注册 + UTC 日 / 周 / 月自动重置
-- **付费配额系统** — 套餐计划与兑换码 CRUD + 管理员手动充值
-- **外部支付与退款** — Stripe / Paddle / 支付宝 / NOWPayments / TRON USDT 直收
-- **法律页面** — 内置服务条款、隐私政策、退款政策、定价页
-- **管理员操作审计** — 完整操作日志
-- **WebUI 管理界面** — 按审查与分析、仓库、Agent、仓库互助、可观测性、计费、管理和设置组织入口；PR 审查页统一提供仓库与日期筛选，旧审查日志地址重定向至 PR 页面
-- **批量 Issue 索引** — 向量缓存刷新 + AI 元数据增强
-- **健康检查端点** — `/health` + Docker Compose 自动健康检测
-- **统一身份认证** — GitHub OAuth（`user:email`，优先 verified primary email）与 Passkey 共用内部 user ID；Telegram 不参与登录或权限判断
-- **可选通知渠道** — Telegram 作为统一公告投递的可选 Provider，与 Email/SMTP 可独立启停；个人设置支持一次性绑定/解绑 Telegram。公告通知双渠道均渲染 Markdown、显示公告类型并加粗标题，邮件发件昵称可配置（默认 Sakura-AI）。PR 审查、Issue 分析、扫描、MFA 和退款的 Telegram 专用业务消息已移除；本次变更未实现替代的业务事件通知层
-- **公告中心** — 超级管理员可一键保存并立即发布（已发布公告也可直接编辑并开启新发送轮次），用户支持未读、已读和全部已读；每轮广播带版本保护并保留历史正文与投递结果
-- **GitHub OAuth 登录** — 可直接注册/登录，不要求 Telegram 配置
-
-### 升级与兼容
-
-- **从 3.1.3 升级到 3.2.0**：升级后首次启动会自动迁移旧数据，全程幂等、无需手工操作——公告、通知投递、通知端点与外部身份等新表自动创建；旧 `telegram_users` 的 Telegram ID、GitHub 用户名与邮箱按下一条规则回填；原有用户 ID、角色、配额、业务数据和外键保持不变。Email/SMTP 通知为 3.2.0 新增（3.1.3 没有邮件配置项），如需启用请在「系统核心配置」页填写 SMTP 参数：465 端口选择「SSL/TLS（隐式 TLS）」，587 端口选择「STARTTLS」，发件昵称默认 Sakura-AI；导入旧配置备份时，旧字段名会自动映射到新键（如布尔 `smtp_tls` 映射为安全模式）。
-- 首次启动会自动、幂等迁移旧 `telegram_users` 身份数据：保留原始用户 ID、角色、配额、业务数据和外键，将旧 Telegram ID/ GitHub 用户名回填为通知端点/外部身份。Telegram-only 账号如需绑定 GitHub，请先由管理员在用户页面指定 GitHub 用户名，再使用 OAuth 登录认领原账号。
-- 用户备份兼容 v1/v2，旧字段会自动映射；新备份包含 identities、notification endpoints 和 email。配置恢复不会覆盖部署连接设置，SMTP 密码等敏感字段继续脱敏。
-
----
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <p>控制台概览</p>
+      <a href="docs/images/showcase/overview.jpg"><img src="docs/images/showcase/overview.jpg" alt="控制台概览：审查状态与运行趋势" width="468" height="296"></a>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <p>Agent 工作台</p>
+      <a href="docs/images/showcase/agent.jpg"><img src="docs/images/showcase/agent.jpg" alt="Agent 工作台：任务管理与执行入口" width="468" height="296"></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <p>AI 与模型</p>
+      <a href="docs/images/showcase/ai-settings.jpg"><img src="docs/images/showcase/ai-settings.jpg" alt="AI 与模型：账号、模型与调用配置" width="468" height="296"></a>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <p>审查配置</p>
+      <a href="docs/images/showcase/review-settings.jpg"><img src="docs/images/showcase/review-settings.jpg" alt="审查配置：分类设置与字段编辑" width="468" height="296"></a>
+    </td>
+  </tr>
+</table>
 
 ## 快速开始
 
-### 在线体验（最快）
+使用[在线服务](https://ai.firefly520.top/)无需准备服务器。自建完整实例需要 Linux x86_64/arm64、glibc ≥ 2.36、Docker 与作为 PID 1 运行的 systemd，推荐 Debian 12+ 或 Ubuntu 24.04+。
 
-访问 [https://ai.firefly520.top/](https://ai.firefly520.top/)，注册即赠免费额度，无需部署。
-
-### Docker 一键部署（推荐自建）
-
-**Linux 全量部署**（Web + MySQL + Redis + Host Updater + Agent sandboxd）：
+先阅读[部署要求](https://sakura520222.github.io/Sakura-AI/quick-start.html)，检查安装脚本内容并确认管理员权限，再执行：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --prod
 ```
 
-默认部署**正式（stable）频道**镜像；如需从首次部署起就使用**开发（development）频道**（develop 分支最新构建）：
+默认部署 stable 频道，包含 Web、MySQL、Redis、Host Updater 与 Agent 沙箱。完成后按脚本提示打开 `/setup`，使用本机私有文件中的验证 Token 初始化；Token 不会写入应用日志。
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/start.sh | sudo bash -s -- --channel=development --prod
-```
+其他安装方式、开发频道、升级与卸载见[部署指南](https://sakura520222.github.io/Sakura-AI/DEPLOYMENT.html)。Windows/macOS 源码开发见[开发指南](https://sakura520222.github.io/Sakura-AI/development.html)；仅运行 Web 容器不包含 Linux Agent 沙箱或 Host Updater。
 
-首次部署也可以在交互菜单「生产镜像部署」中选择频道；已部署后切换频道用菜单「切换镜像频道」。
+## 文档与开发
 
-`start.sh` 可以从任意位置或管道运行：首次执行会自动安置到 `/opt/sakura-ai`（可用 `SAKURA_INSTALL_ROOT` 覆盖），并按镜像频道下载生产 compose 文件（stable 来自 `main`，development 来自 `develop`；可用 `SAKURA_DIST_BASE_URL` 指定镜像源）；后续管理始终在 `/opt/sakura-ai` 下通过 `sudo ./start.sh` 完成。
+| 想了解什么 | 入口 |
+| --- | --- |
+| 功能与使用方式 | [功能指南](https://sakura520222.github.io/Sakura-AI/features.html) · [PR 审查](https://sakura520222.github.io/Sakura-AI/PR_FEATURES_GUIDE.html) · [Issue 分析](https://sakura520222.github.io/Sakura-AI/issue-analysis.html) |
+| 配置自己的实例 | [配置参考](https://sakura520222.github.io/Sakura-AI/CONFIGURATION.html) · [配置中心](https://sakura520222.github.io/Sakura-AI/configuration-center.html) |
+| 运行与扩展 Agent | [运行机制](https://sakura520222.github.io/Sakura-AI/AGENT_HARNESS_RUNTIME.html) · [仓库规则与 Skills](https://sakura520222.github.io/Sakura-AI/AGENT_REPOSITORY_CONTEXT.html) · [插件](https://sakura520222.github.io/Sakura-AI/AGENT_PLUGINS.html) |
+| 参与开发或接入客户端 | [开发指南](https://sakura520222.github.io/Sakura-AI/development.html) · [技术架构](https://sakura520222.github.io/Sakura-AI/ARCHITECTURE.html) · [API](https://sakura520222.github.io/Sakura-AI/api-v1-reference.html) |
 
-`sudo ./start.sh --prod` 会自动生成部署状态，解析当前 Release 的 Web、sandboxd 与 Agent runner 三个不可变镜像引用，先启动并验证独立 sandboxd，再启动 Web/MySQL/Redis，最后安装并启用 Host Updater 的 systemd unit。生产 binary 要求宿主机 PID 1 为可用的 systemd；不满足时脚本会明确失败，不会声称已配置重启自启。只有 sandboxd 持有 Docker socket；Web 与一次性 runner 均不持有。按 `Ctrl+C` 只退出进度查看，后台部署仍会继续。新版本会自动检查，但安装需超级管理员确认；稳定版更新以三镜像事务完成预检、拉取、sidecar 重建、Web 激活与失败回滚，Updater 不可用时不会退回 Web-only 更新。macOS、Windows 和仅容器部署不提供该 Linux OS 沙箱或 Host Updater；细节见[部署指南](docs/DEPLOYMENT.md)。
+后端使用 Python 3.14 与 FastAPI，前端使用 React 与 TypeScript，数据存储使用 MySQL、Redis 和 ChromaDB。完整目录可在[文档站](https://sakura520222.github.io/Sakura-AI/README.html)浏览，Markdown 原文保存在 [docs/](docs/)。
 
-更新激活前，Updater 会检查本地回滚镜像；部署配置只记录一个沙箱镜像 digest 时，会从已验证的运行时恢复完整沙箱镜像对，并在激活前确认两者均可用（缺失时尝试拉取）。
+欢迎提交代码、文档和问题反馈。贡献请从 `develop` 创建特性分支，PR 目标选择 `develop`，具体流程见[贡献指南](CONTRIBUTING.md)。另有 [Android 客户端](https://github.com/Sakura520222/Sakura-AI-APP)正在开发。
 
-三镜像更新成功、运行状态验证通过并结束回滚事务后，Host Updater 会尝试清理本地不再被任何容器引用的旧版 Sakura-AI 官方镜像。当前部署镜像、其他容器仍在使用的镜像和非 Sakura-AI 镜像不会被删除；清理结果记入更新任务日志，清理失败只产生警告，不影响已成功的更新。
+## 安全与许可
 
-安装完成后可验证宿主机重启自启状态：
+安全漏洞请通过 [GitHub 私密漏洞上报](https://github.com/Sakura520222/Sakura-AI/security/advisories/new)或 <sakura520222@outlook.com> 联系维护者，不要在公开 Issue 中披露细节。参阅[安全策略](SECURITY.md)。
 
-```bash
-sudo systemctl is-enabled sakura-ai-updater.service
-sudo systemctl is-active sakura-ai-updater.service
-sudo systemctl status sakura-ai-updater.service --no-pager
-```
-
-Host Updater 0.3.0 起通过机器可读 capabilities 声明三镜像事务能力；版本管理页同时显示构建 revision、Release 身份和协议版本。缺少所需能力的旧 Updater 会被阻止更新，即使 protocol version 相同。请先用当前 `start.sh` 执行 `sudo ./start.sh updater reinstall`，安装提供这些能力的 Release binary；development 回退到 stable asset 也必须通过同一检查。
-
-development 仅提供已经全部发布的 Web、Sandboxd、Runner 集合：CI 将完整镜像 digest 写入 Web OCI index 的 deployment manifest，最后推进 `edge`。Web 已是目标但 sandbox 漂移时，在版本管理中选择「检查并修复此部署」即可正常收敛，无需重装或改数据库。
-
-显式 `SAKURA_UPDATER_DEV=1` 的源码/dev 模式仍由手动 daemon 管理，不提供 systemd 重启自启保证。
-
-> **WebUI 更新后的 Updater 同步：** WebUI 的稳定版更新事务会一起更新 Web、sandboxd 和 Agent runner，但不会替换正在运行的 Host Updater 二进制。应用更新完成并确认 `/health` 已返回新版本后，可在 `/opt/sakura-ai` 执行以下命令，使 Updater 二进制也与当前 Release 保持一致：
->
-> ```bash
-> sudo ./start.sh updater reinstall
-> ```
->
-> `reinstall` 会先通过 updater 内部锁原子关闭新任务提交并确认没有活动任务，再在维护门禁后停止 systemd service、安装对应 Release 的 binary、重新启用并启动 unit，最后输出状态；安装失败时会尝试恢复原有 daemon。旧版 updater 若不支持原子维护门禁或 `service-install`，命令会 fail-closed，不会删除当前磁盘上的 binary，并明确报错，要求管理员先升级匹配的 updater release。单独执行 `install` 时仍保留 restart-required 语义：已运行 daemon 不会被 raw stop，需用 `reinstall` 完成安全迁移。安装器按部署状态选择具体 Sakura AI Release，但它本身不会强制检查应用健康状态。请把“`/health` 成功返回预期新版本”作为必须人工确认的前置条件；如果健康检查失败、不可用或版本不符，请勿执行。完整验证方法见[部署指南的 Host Updater 章节](docs/DEPLOYMENT.md#webui-更新后同步-host-updater)。
-
-卸载分两级：标准卸载保留数据库等 Docker 数据卷，可随时重新部署；显式 `--purge` 完全卸载会删除数据卷、全部镜像（Web/MySQL/Redis/sandboxd/Agent runner）和部署文件。对于 `/opt/sakura-ai` 等独立安装目录，完全卸载后只保留 `start.sh`，方便干净地重新部署；源码仓库不会删除源码。两种模式共用同一确认词 `UNINSTALL`：
-
-```bash
-sudo ./start.sh uninstall          # 标准卸载：保留数据，可重新部署
-sudo ./start.sh uninstall --purge  # 完全卸载：永久删除数据与镜像，独立目录仅保留 start.sh
-```
-
-**仅 Web 镜像**（MySQL/Redis 自备）：
-
-```bash
-docker run -d -p 8000:8000 \
-  -e DATABASE_URL=mysql+asyncmy://user:pass@host:3306/sakura_ai \
-  -e REDIS_URL=redis://host:6379/0 \
-  -v $(pwd)/config:/app/config \
-  ghcr.io/sakura520222/sakura-ai:latest
-```
-
-此方式不包含 Host Updater，只提供版本检查，不支持在 WebUI 中执行更新。
-
-`latest` 始终代表正式稳定版。开发版仅通过 WebUI 版本管理器的“开发版”通道按明确风险确认选择；开发构建由 GHCR 的不可变 `dev-...` tag 与 manifest digest 标识，`edge` 只是移动别名，不是部署目标。
-
-首次启动后访问 `http://localhost:8000/setup`。应用会在启动日志中打印一次性验证 Token，需在 `/setup/verify` 输入后才能进入向导（Token 每次启动重新生成）。`start.sh` 在前台等待的部署成功后会直接显示当前 Setup Token；也可在主菜单选择“查看容器当前日志”→“Web”重新查看：
-
-```bash
-# 也可在 /opt/sakura-ai 下直接跟踪 Web 容器日志
-docker compose --env-file .deploy/deployment.env --project-name sakura-ai \
-  -f docker/docker-compose.prod.yml logs -f --tail=200 web
-```
-
-主菜单的“查看往期运行日志”可读取持久化 DEBUG 日志；错误过滤等更多查看方式见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
-
-### 源码开发
-
-> 源码开发平台：Windows 11 x86_64、Linux x86_64/arm64（glibc ≥ 2.28，非 musl；Alpine 不支持）或 Apple Silicon macOS 14+。Intel Mac、macOS ≤13、musl/Alpine 与 glibc <2.28 因上游 onnxruntime 未发布对应 Python 3.14 wheel（且无 sdist）无法安装依赖，pip 方式同样受限。
-
-**uv 方式（推荐）**：
-
-```bash
-git clone https://github.com/Sakura520222/Sakura-AI.git
-cd Sakura-AI
-uv sync                # 自动创建 .venv 并安装全部依赖(含 updater)
-uv run python -m backend.main
-```
-
-`backend.main` 启动器会在没有显式部署模式、且不存在镜像构建标记时，自动将应用子进程识别为 `source`；无需为本地 `local` Agent 后端额外设置 `SAKURA_DEPLOY_MODE`。显式环境变量始终优先，镜像环境不会自动推断为源码。
-
-**传统 pip 方式（无 uv）**：
-
-```bash
-pip install -r requirements.txt
-pip install -e './updater[dev]'
-python -m backend.main
-```
-
-> 本地开发模式下，`backend/` 内的代码改动会在应用子进程内做模块级热重载（不重启进程）；`backend/main.py`、数据库模型等进程级模块的改动会提示手动重启。应用内重启请求（Setup 完成、管理员重启按钮）仍由监督循环整进程重新拉起。
-
-> 部署细节（镜像 Tag、固定版本、GitHub App 创建、数据库准备、Setup Wizard 全流程、Host Updater 守护进程、升级与密码轮换）详见 [部署指南](docs/DEPLOYMENT.md)。
-
----
-
-## 效果展示
-
-<div align="center">
-
-<img src="res/发送正在审查中和自动打标.png" width="1901" alt="审查进行中">
-
-<img src="res/Issues分析.png" width="1707" alt="Issue分析">
-
-<img src="res/WebUI.png" width="1707" alt="WebUI管理界面">
-
-</div>
-
----
-
-## 技术架构
-
-```
-GitHub (PR / Issue / OAuth)
-        │ Webhook / OAuth / API
-        ▼
-FastAPI Web Server ── Webhook Handler · PR 分析器 · 评论服务
-        │              WebUI (Jinja2 + HTMX + Alpine.js) · SSE 实时推送
-        ▼
-AI 审查引擎 ── read_file · list_dir · search_files · git_info · commits
-              search_web · RAG · 代码索引 · read_sakura_docs/memory
-        ▼
-数据存储 ── MySQL (业务) · Redis (队列/PubSub) · ChromaDB (向量)
-```
-
-**技术栈**：FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · 多协议 AI（OpenAI / Anthropic / Gemini / 兼容） · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
-
-完整架构图、数据流、代码结构与交互式知识图谱详见 [技术架构](docs/ARCHITECTURE.md)。
-
----
-
-## 开发指南
-
-```bash
-uv sync                              # 安装依赖(uv;传统 pip 方式:pip install -r requirements.txt 且 pip install -e './updater[dev]')
-uv run python -m backend.main        # 启动应用(pip 环境用 python -m backend.main)
-python run_ruff.py                   # 代码检查 + 修复 + 格式化
-python run_ruff.py --check           # 只读检查
-uv run python -m pytest -q           # 运行测试(pip 环境用 python -m pytest -q)
-tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG）
-```
-
-首次启动进入 Bootstrap 模式，终端会打印一次性验证 Token，在 `/setup/verify` 输入后访问 `http://localhost:8000/setup` 完成配置。调试 Setup Wizard 流程可用 `py scripts/dev_bootstrap.py`（隔离 dev 配置，跳过后台任务）。
-
-> 运行日志落盘在 `logs/app_*.log`（每次启动一个文件、500 MB 轮转、保留 10 天，自动脱敏密码与 Token）；Docker 部署的完整查看命令见[部署指南 · 查看运行日志](docs/DEPLOYMENT.md#八查看运行日志)。
-
-> Updater 是独立的 Python 3.14+ 包（`updater/`），有自己的 `pyproject.toml`、测试与 PyInstaller native 构建链，开发方式见 [updater 文档](updater/)。其发布二进制在 Bookworm（glibc 2.36）环境构建，宿主机需 glibc ≥ 2.36（Debian 12+/Ubuntu 24.04+）。
-
----
-
-## 文档
-
-完整文档索引见 [docs/README.md](docs/README.md)，常用入口：
-
-| 文档 | 说明 |
-|---|---|
-| [部署指南](docs/DEPLOYMENT.md) | Docker / 源码部署、GitHub App、Setup Wizard、Host Updater |
-| [配置参考](docs/CONFIGURATION.md) | 全部配置项的位置、键名与说明 |
-| [技术架构](docs/ARCHITECTURE.md) | 架构图、技术栈、代码结构 |
-| [Telegram Bot 集成](docs/TELEGRAM_SETUP.md) | 可选通知 Provider、绑定握手与命令参考 |
-| [审查协议规范](docs/PR_REVIEW_PROTOCOL.md) | `<SAKURA_REVIEW>` 协议、字段校验、修复降级 |
-| [安全与 MFA 指南](docs/SECURITY_MFA_GUIDE.md) | TOTP、恢复码、Passkeys、安全中心 |
-| [安全策略](SECURITY.md) | 漏洞报告流程、受支持版本与披露机制 |
-| [API v1 参考文档](docs/api-v1-reference.md) | RESTful API v1（移动端 OAuth、MFA、SSE、Billing） |
-| [贡献者约定](AGENTS.md) | 自动化代理与贡献者项目约定 |
-| [贡献指南](CONTRIBUTING.md) | 完整贡献流程、Gitflow 分支规范与开发设置 |
-
----
-
-## 贡献
-
-本项目使用标准 Gitflow 工作流：`main`（生产）← `release/*` / `hotfix/*`；`develop`（集成）← `feature/*`。详细规范请阅读 [贡献指南 (CONTRIBUTING.md)](CONTRIBUTING.md)。
-
-1. Fork 本项目
-2. 基于 `develop` 创建特性分支：`git checkout develop && git checkout -b feature/amazing-feature`
-3. 提交更改（英文 [Conventional Commits](https://www.conventionalcommits.org/)）：`git commit -m 'feat: add some amazing feature'`
-4. 推送并开启 PR，目标分支选择 `develop`
-
-发布与热修复由维护者执行：从 `develop` 创建 `release/x.y.z`（或从 `main` 创建 `hotfix/x.y.z`），合入 `main` 后自动发布 Release 并回合到 `develop`。自动化工作流会校验 PR 分支流向、运行 CI、清理已合并的临时分支。
-
----
-
-## 安全
-
-如果您发现了安全漏洞，请参阅我们的 [安全策略 (SECURITY.md)](SECURITY.md)，优先通过 [GitHub 私密漏洞上报](https://github.com/Sakura520222/Sakura-AI/security/advisories/new) 或发送邮件至 <sakura520222@outlook.com> 进行披露。请勿在公开 Issue 中讨论漏洞细节。
-
----
-
-## 许可证
-
-[GNU Affero General Public License v3.0 (AGPLv3)](LICENSE) — 自由使用、修改和分发，网络服务需提供源代码。
-
----
+本项目采用 [GNU AGPLv3](LICENSE)，允许使用、修改和分发；通过网络提供修改版服务时须按许可证提供对应源代码。
 
 ## Star History
 
@@ -377,15 +101,3 @@ tail -f "$(ls -t logs/app_*.log | head -n1)"  # 查看最新运行日志（DEBUG
    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI&type=Date" />
  </picture>
 </a>
-
----
-
-<div align="center">
-
-**Sakura AI** — 让代码审查更智能、更高效
-
-Made by [Sakura520222](https://github.com/Sakura520222)
-
-问题反馈：[Issues](https://github.com/Sakura520222/Sakura-AI/issues) · 邮箱：<Sakura520222@outlook.com>
-
-</div>

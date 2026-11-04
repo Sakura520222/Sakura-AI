@@ -4,6 +4,7 @@ import asyncio
 import subprocess
 import time
 import uuid
+from functools import wraps
 from typing import Any
 
 from loguru import logger
@@ -18,11 +19,15 @@ from backend.core.config import (
     get_user_dynamic_config,
 )
 from backend.core.github_app import GitHubAppClient
+from backend.core.log_context import (
+    invocation_log_fields,
+    task_logging,
+    update_log_context,
+)
 from backend.core.time_service import now_utc
 from backend.models.database import (
     CommentSeverity,
     CommentType,
-    PRIssueLink,
     PRReview,
     PRStatus,
     ReviewComment,
@@ -32,6 +37,16 @@ from backend.models.database import (
 from backend.services.ai_reviewer import AIReviewer
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.ai_task_deadline import AITaskDeadline
+from backend.services.ai_usage_service import finish_billing_operation
+from backend.services.billing_context import (
+    billable_payload,
+    billable_platform,
+    context_for_payload,
+    enrich_billing_source,
+    get_billing_context,
+    get_pending_billing_failure,
+    mark_registered_operation,
+)
 from backend.services.check_run_service import (
     CheckRunService,
     ReviewProgressSnapshot,
@@ -46,11 +61,57 @@ from backend.services.database_reset_runtime_service import (
 from backend.services.decision_engine import get_decision_engine
 from backend.services.label_service import label_service
 from backend.services.pr_analyzer import PRAnalysis, PRAnalyzer
+from backend.services.service_execution_capacity import (
+    ServiceExecutionLimiter,
+    current_service_execution_failure,
+)
+from backend.services.webhook_review_dispatch import (
+    delivery_worker,
+    detached_delivery_context,
+    prepare_delivery_dispatch,
+)
 
 settings = get_settings()
 
-# 审查并发控制信号量
-_review_semaphore: asyncio.Semaphore | None = None
+# The legacy helper name is retained, but capacity belongs to the shared DB.
+_review_semaphore = ServiceExecutionLimiter("pr_review")
+
+
+def _review_capacity_cleanup(function):
+    """Cover cancellation while queued, before the main worker try/finally."""
+
+    @wraps(function)
+    async def wrapped(self, pr_info, *args, **kwargs):
+        task_key = self._make_task_key(pr_info)
+        if task_key not in getattr(self, "_cancel_events", {}):
+            self._register_task(task_key)
+        cancel_event = self._cancel_events[task_key]
+        try:
+            return await function(self, pr_info, *args, **kwargs)
+        except asyncio.CancelledError:
+            # The running body owns its own terminal convergence. Only a wait
+            # cancelled before that body starts still owns this registry entry.
+            if self._cancel_events.get(task_key) is cancel_event:
+                await finish_billing_operation("cancelled")
+                current_task = asyncio.current_task()
+                if cancel_event.is_set() and (
+                    current_task is None or current_task.cancelling() == 0
+                ):
+                    return await self._cancel_and_cleanup(
+                        uuid.uuid4().hex[:8],
+                        task_key,
+                        None,
+                        None,
+                        "PR review cancelled while waiting for service capacity",
+                        pr_info=pr_info,
+                        head_sha=pr_info.get("head_sha"),
+                    )
+            raise
+        finally:
+            if self._cancel_events.get(task_key) is cancel_event:
+                self._unregister_task(task_key)
+
+    return wrapped
 
 
 def _reflection_is_admissible(
@@ -64,21 +125,14 @@ def _reflection_is_admissible(
     )
 
 
-async def _get_review_semaphore() -> asyncio.Semaphore:
-    """获取审查并发信号量（懒初始化，支持动态更新）"""
-    global _review_semaphore
-    if _review_semaphore is None:
-        max_concurrent = await _load_max_concurrent()
-        _review_semaphore = asyncio.Semaphore(max_concurrent)
-        logger.info("审查并发信号量初始化: 最大 {} 个并发任务", max_concurrent)
+async def _get_review_semaphore() -> ServiceExecutionLimiter:
+    """Return the shared service limiter; each acquisition reads current limits."""
     return _review_semaphore
 
 
 def reset_review_semaphore():
-    """重置审查信号量（配置更新时调用）"""
-    global _review_semaphore
-    _review_semaphore = None
-    logger.info("审查并发信号量已重置，下次任务将重新初始化")
+    """Compatibility hook: DB capacity reads fresh limits without replacing leases."""
+    logger.info("审查服务执行容量将在下次申请时读取最新配置")
 
 
 async def _load_max_concurrent() -> int:
@@ -281,9 +335,8 @@ class ReviewWorker:
                     len(ci_failures),
                 )
         except Exception as e:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"[{task_id}] 外部 CI 失败注入失败（不影响审查）: {e}",
-                exc_info=True,
             )
 
     def _register_task(self, task_key: str, force_new: bool = False) -> asyncio.Event:
@@ -483,6 +536,57 @@ class ReviewWorker:
         except Exception as exc:
             logger.debug("持久化 error_reference 失败: {}", exc)
 
+    async def _sync_pr_issue_relations(
+        self, repo, pr_info, context, task_id, task_key, deadline, execution
+    ):
+        from backend.services.issues.pr_link_sync import PRRelationSyncService
+        from backend.services.issues.pr_verifier import PRVerificationResult
+
+        event = self._cancel_events.get(task_key)
+        if event is not None and event.is_set():
+            raise ReviewCancelledError()
+        if deadline is not None and deadline.is_expired():
+            result = PRVerificationResult(False, failure="deadline")
+        else:
+            try:
+                enabled = await get_dynamic_config(
+                    "enable_semantic_issue_linking", fresh=True
+                )
+            except asyncio.CancelledError, ReviewCancelledError:
+                raise
+            except Exception as exc:
+                # Unknown auxiliary admission policy must not guess enabled or
+                # abort an otherwise available main review.
+                result = PRVerificationResult(
+                    False, failure=f"configuration:{type(exc).__name__}"
+                )
+            else:
+                if enabled:
+                    result = await PRRelationSyncService().synchronize(
+                        repo,
+                        pr_info["repo_owner"],
+                        pr_info["repo_name"],
+                        pr_info["pr_number"],
+                        cancel_event=event,
+                        deadline=deadline,
+                        context=getattr(execution, "invocation_context", None),
+                        observer=getattr(execution, "observer", None),
+                    )
+                else:
+                    result = PRVerificationResult(False, failure="disabled")
+        context["pr_issue_relation_status"] = (
+            "verified" if result.succeeded else result.failure
+        )
+        if result.succeeded:
+            context["semantically_linked_issues"] = result.relations
+        else:
+            logger.warning("[{}] PR relations unavailable: {}", task_id, result.failure)
+        return result
+
+    @task_logging("pr")
+    @delivery_worker("pr_review")
+    @billable_payload("pr_review")
+    @_review_capacity_cleanup
     async def process_review_task(
         self,
         pr_info: dict[str, Any],
@@ -490,12 +594,13 @@ class ReviewWorker:
         deadline: AITaskDeadline | None = None,
     ) -> str:
         """处理审查任务"""
+        if pr_info.get("_delivery_receipt_id"):
+            mark_registered_operation(get_billing_context().operation_id)
         task_deadline = deadline or AITaskDeadline.from_timeout(
             get_settings().review_timeout_seconds
         )
-        task_id = str(uuid.uuid4())[
-            :8
-        ]  # 日志追踪用短 ID，碰撞概率约 1/43亿，不用于持久化唯一键
+        task_id = str(uuid.uuid4())
+        update_log_context(task_id=task_id)
         task_key = self._make_task_key(pr_info)
         if task_key not in getattr(self, "_cancel_events", {}):
             self._register_task(task_key)
@@ -516,6 +621,7 @@ class ReviewWorker:
         ) -> None:
             """Best-effort finish; retain the status until the operation succeeds."""
             nonlocal execution_status, execution_target_status
+            await finish_billing_operation(status)
             if execution is None or execution_status == status:
                 return
             execution_target_status = status
@@ -536,7 +642,12 @@ class ReviewWorker:
 
         # 获取并发信号量，限制同时运行的审查任务数
         semaphore = await _get_review_semaphore()
-        async with semaphore:
+        capacity_scope = (
+            semaphore.slot(cancel_event=self._cancel_events[task_key])
+            if isinstance(semaphore, ServiceExecutionLimiter)
+            else semaphore
+        )
+        async with capacity_scope:
             try:
                 logger.info(
                     f"[{task_id}] 开始处理审查任务: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
@@ -590,6 +701,11 @@ class ReviewWorker:
                     task_type="pr",
                     task_id=None,
                 )
+                update_log_context(
+                    **invocation_log_fields(
+                        getattr(execution, "invocation_context", None)
+                    )
+                )
                 if getattr(execution, "merged", False):
                     logger.info(
                         "[{}] Trigger 已合并到正在运行的 Invocation {}，当前 Worker 不重复执行",
@@ -620,6 +736,9 @@ class ReviewWorker:
                             skipped = await PRReviewIncrementalQueueService().mark_skipped_for_pr(
                                 pr_info["repo_full_name"],
                                 int(pr_info["pr_number"]),
+                                operation_id=context_for_payload(
+                                    pr_info, "pr_review"
+                                ).operation_id,
                             )
                             if skipped:
                                 logger.info(
@@ -669,6 +788,7 @@ class ReviewWorker:
                 # synchronize webhook 会查不到 active review，enqueue 返回 None，
                 # 从而误触发第二个完整审查，造成并发 + 限流雪崩。
                 review_id = await self._create_review_record(analysis, pr_info, task_id)
+                enrich_billing_source(review_id=review_id)
 
                 # 提前获取用户输出语言：Check Run / 占位评论 / 审查上下文均依赖它。
                 # get_user_dynamic_config 带缓存，提前调用零成本。
@@ -963,9 +1083,8 @@ class ReviewWorker:
                             ", ".join(parts) or "空",
                         )
                 except Exception as e:
-                    logger.warning(
+                    logger.opt(exception=True).warning(
                         f"[{task_id}] .sakura/ 记忆上下文注入失败（不影响审查）: {e}",
-                        exc_info=True,
                     )
 
                 # 6.3 注入外部 CI 失败（由 check_run/workflow_job webhook 预先采集）
@@ -1005,112 +1124,18 @@ class ReviewWorker:
                             str(e),
                         )
 
-                # 6.6 语义 Issue 关联（如果启用）
-                if (
-                    hasattr(settings, "enable_semantic_issue_linking")
-                    and settings.enable_semantic_issue_linking
-                ):
-                    try:
-                        from backend.services.issue_embedding_service import (
-                            IssueEmbeddingService,
-                        )
-                        from backend.services.pr_issue_linker import PRIssueLinker
-
-                        issue_emb_service = IssueEmbeddingService()
-                        max_links = getattr(settings, "semantic_issue_max_links", 5)
-                        threshold = getattr(
-                            settings, "semantic_issue_similarity_threshold", 0.65
-                        )
-
-                        # 已显式引用的 issues（排除）
-                        explicit_numbers = context.get("linked_issue_numbers", [])
-                        # 排除 PR 自身编号（PR 在 GitHub 中也是 issue）
-                        explicit_numbers = list(
-                            set(explicit_numbers + [pr_info["pr_number"]])
-                        )
-
-                        related_issues = await issue_emb_service.search_related_issues(
-                            repo_owner=pr_info["repo_owner"],
-                            repo_name=pr_info["repo_name"],
-                            pr_title=pr_info.get("title", ""),
-                            pr_body=pr_info.get("body", ""),
-                            exclude_numbers=explicit_numbers,
-                            top_k=max_links,
-                            similarity_threshold=threshold,
-                        )
-
-                        if related_issues:
-                            # AI 验证：过滤误判的候选 issues
-                            # 构建变更文件列表（含 patch 摘要）
-                            file_list = ""
-                            if analysis and analysis.code_files:
-                                file_parts = []
-                                total_len = 0
-                                for f in analysis.code_files:
-                                    part = f"- {f.path} ({f.status})"
-                                    if f.patch:
-                                        part += f"\n```diff\n{f.patch}\n```"
-                                    file_parts.append(part)
-                                    total_len += len(part)
-                                    if total_len > 4000:
-                                        break
-                                file_list = "\n".join(file_parts)
-                            related_issues = (
-                                await issue_emb_service.verify_related_issues(
-                                    pr_title=pr_info.get("title", ""),
-                                    pr_body=pr_info.get("body", ""),
-                                    candidates=related_issues,
-                                    pr_summary=context.get("pr_summary", ""),
-                                    pr_files=file_list,
-                                )
-                            )
-
-                        if related_issues:
-                            # 更新 PR body（添加 "Resolves #xxx"）
-                            # 重新获取最新 PR body（PR Summary / Dependency Graph 可能已修改）
-                            semantic_linker = PRIssueLinker()
-
-                            latest_pr = await asyncio.to_thread(
-                                repo.get_pull, pr_info["pr_number"]
-                            )
-                            current_body = latest_pr.body or ""
-                            new_body = semantic_linker.build_updated_pr_body(
-                                current_body, related_issues
-                            )
-                            if new_body != current_body:
-                                await asyncio.to_thread(latest_pr.edit, body=new_body)
-
-                            # 注入上下文
-                            context["semantically_linked_issues"] = related_issues
-
-                            # 保存到数据库
-                            AsyncSession = get_async_session()
-                            async with AsyncSession() as db_session:
-                                for issue in related_issues:
-                                    link = PRIssueLink(
-                                        pr_id=pr_info["pr_number"],
-                                        repo_name=pr_info["repo_full_name"],
-                                        issue_number=issue["number"],
-                                        link_type="semantic",
-                                        reference_text=(f"Resolves #{issue['number']}"),
-                                        inference_reason=(
-                                            f"similarity: {issue['similarity']}"
-                                        ),
-                                    )
-                                    db_session.add(link)
-                                await db_session.commit()
-
-                            logger.info(
-                                f"[{task_id}] 语义关联了 {len(related_issues)} 个 Issues: "
-                                f"{[i['number'] for i in related_issues]}"
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            "[{}] 语义 Issue 关联失败（不影响审查）: {}",
-                            task_id,
-                            e,
-                            exc_info=True,
-                        )
+                # 6.6 Evidence-based semantic relations; successful empty sets
+                # retract previous machine links. Failures preserve prior state.
+                if not task_deadline.is_expired():
+                    await self._sync_pr_issue_relations(
+                        repo,
+                        pr_info,
+                        context,
+                        task_id,
+                        task_key,
+                        task_deadline,
+                        execution,
+                    )
 
                 # Cancel checkpoint: before AI review (critical — most expensive step)
                 if self._check_cancelled(task_key):
@@ -1535,6 +1560,9 @@ class ReviewWorker:
 
                 # 并行执行所有任务
                 results = await asyncio.gather(*tasks, return_exceptions=True)
+                pending_billing_failure = get_pending_billing_failure()
+                if pending_billing_failure is not None:
+                    raise pending_billing_failure
 
                 # 解析结果
                 review_result = results[0]
@@ -1734,6 +1762,10 @@ class ReviewWorker:
                         # _restore_incremental_activity_history 恢复完整历史，
                         # 历史摘要不再注入审查 prompt；此处仅供独立运行的反思
                         # 任务提供历史上下文，并在后台 task 内获取以免阻塞收尾。
+                        @billable_platform(
+                            "memory_reflection",
+                            "independent_repository_memory_maintenance",
+                        )
                         async def _reflect_with_history() -> None:
                             if task_deadline.is_expired():
                                 logger.info(
@@ -1811,11 +1843,10 @@ class ReviewWorker:
                 await _finish_execution("cancelled")
                 return task_id
             except Exception as e:
-                logger.error(
+                logger.opt(exception=True).error(
                     "[{}] 处理审查任务时出错: {}",
                     task_id,
                     str(e),
-                    exc_info=True,
                 )
 
                 if review_id:
@@ -1893,7 +1924,12 @@ class ReviewWorker:
             except asyncio.CancelledError:
                 # 外部取消：except Exception 不接 CancelledError，需单独收尾
                 # review 状态，防止僵尸。配置 deadline 不会走这里的硬取消路径。
-                execution_target_status = "cancelled"
+                # Capacity heartbeat loss also interrupts this await. Classify
+                # it before the immutable operation's terminal financial write;
+                # the slot context will then raise ServiceExecutionLeaseLost.
+                execution_target_status = (
+                    "failed" if current_service_execution_failure() else "cancelled"
+                )
                 if review_id:
                     try:
                         await self._update_review_status(review_id, PRStatus.FAILED)
@@ -1931,7 +1967,7 @@ class ReviewWorker:
                     )
                     if review_id:
                         await self._persist_error_reference(review_id, _error_reference)
-                await _finish_execution("cancelled")
+                await _finish_execution(execution_target_status)
                 raise
             finally:
                 if execution is not None and execution_status is None:
@@ -1973,9 +2009,8 @@ class ReviewWorker:
                 repo_owner=pr_info["repo_owner"],
             )
         except Exception as hist_exc:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"[{task_id}] 反思历史摘要获取失败（不影响反思）: {hist_exc}",
-                exc_info=True,
             )
             return None
 
@@ -2453,7 +2488,9 @@ class ReviewWorker:
             return decision, decision_reason, _publish_result
 
         except Exception as e:
-            logger.error("[{}] 决策引擎执行失败: {}", task_id, str(e), exc_info=True)
+            logger.opt(exception=True).error(
+                "[{}] 决策引擎执行失败: {}", task_id, str(e)
+            )
             # 出错时返回None，不影响审查完成
             return None, f"决策过程异常: {e!s}", None
 
@@ -2551,6 +2588,14 @@ def get_worker() -> ReviewWorker:
     return _worker_instance
 
 
+async def cancel_review_task_durably(task_key):
+    from backend.services.webhook_review_dispatch import cancel_queued_deliveries
+
+    cancelled = get_worker().cancel_task(task_key)
+    persisted = await cancel_queued_deliveries("pr_review", task_key)
+    return cancelled or bool(persisted)
+
+
 async def submit_review_task(pr_info: dict[str, Any]) -> str:
     """提交审查任务（从Webhook调用）
 
@@ -2558,13 +2603,18 @@ async def submit_review_task(pr_info: dict[str, Any]) -> str:
         str: Task key in format "owner/repo#pr_number", used for cancellation.
              The internal task_id (short UUID) is logged by process_review_task.
     """
+    context_for_payload(pr_info, "pr_review")
+    await prepare_delivery_dispatch(pr_info, "pr_review")
     ensure_background_admission("review")
     worker = get_worker()
     task_key = ReviewWorker._make_task_key(pr_info)
     worker._register_task(task_key, force_new=True)
 
     # 直接异步执行，并保留后台任务引用避免被 GC。
-    task = asyncio.create_task(_run_review_task_with_timeout(worker, pr_info, task_key))
+    with detached_delivery_context():
+        task = asyncio.create_task(
+            _run_review_task_with_timeout(worker, pr_info, task_key)
+        )
     try:
         register_background_task(task, "review")
     except DatabaseResetRuntimeAdmissionClosed:
@@ -2593,6 +2643,15 @@ async def _run_review_task_with_timeout(
     worker changes only the next AI request to final-only mode after expiry;
     explicit task cancellation still follows the existing cancellation path.
     """
+    from backend.services.pr_review_incremental_queue import (
+        PRReviewIncrementalQueueService,
+    )
+
+    queue_service = PRReviewIncrementalQueueService()
+    if pr_info.get("incremental_queue_ids") and not await queue_service.start_dispatch(
+        pr_info
+    ):
+        return "deduplicated_incremental"
     deadline = AITaskDeadline.from_timeout(get_settings().review_timeout_seconds)
     review_task = asyncio.create_task(
         worker.process_review_task(pr_info, deadline=deadline)
@@ -2605,60 +2664,142 @@ async def _run_review_task_with_timeout(
             await review_task
         except asyncio.CancelledError:
             pass
-        raise
-    try:
-        result = await review_task
-    except asyncio.CancelledError:
-        review_task.cancel()
-        try:
-            await review_task
-        except asyncio.CancelledError:
-            pass
-        raise
+        if pr_info.get("incremental_queue_ids"):
+            from backend.services.webhook_execution_service import (
+                compensate_unstarted_review,
+            )
 
-    # 兜底：非增量审查顺利完成后，若仍有 pending 增量（审查期间到达的新提交，
-    # 本次未消费），触发一个增量审查去消费。此时 process_review_task 的 finally
-    # 已 unregister task_key，触发新任务不会与当前任务的 cancel event 冲突。
+            await asyncio.shield(
+                compensate_unstarted_review(
+                    context_for_payload(pr_info, "pr_review").operation_id,
+                    get_async_session(),
+                )
+            )
+            await asyncio.shield(queue_service.finalize_for_operation(pr_info))
+        raise
     try:
-        await _drain_pending_incremental(pr_info)
-    except Exception as exc:
-        logger.warning("兜底消费 pending 增量失败: {}", exc)
+        try:
+            result = await review_task
+        except asyncio.CancelledError:
+            review_task.cancel()
+            try:
+                await review_task
+            except asyncio.CancelledError:
+                pass
+            raise
+    finally:
+        # Billing commits its real terminal outcome before converging the queue.
+        # Never replace a queued delivery with a new financial execution.
+        if pr_info.get("incremental_queue_ids"):
+            await queue_service.finalize_for_operation(pr_info)
+        try:
+            await _drain_pending_incremental(pr_info)
+        except Exception as exc:
+            logger.warning("兜底消费 pending 增量失败（保留入场身份供恢复）: {}", exc)
 
     return result
 
 
-async def _drain_pending_incremental(pr_info: dict[str, Any]) -> None:
-    """非增量审查完成后的兜底：触发增量审查消费残留 pending 增量。
+async def _drain_pending_incremental(pr_info: dict[str, Any]) -> bool:
+    """Run the next admitted increment, preserving its payer and execution ID.
 
-    首次/完整审查（opened/reopened/ready_for_review/full_review 等非 synchronize
-    事件）不会消费增量队列；若审查期间到达了新提交（synchronize 入队给本次 active
-    review），这些增量会残留 pending、本轮不被审查。这里在审查顺利结束后检查并
-    触发一个增量审查去消费，避免新提交被困在队列里。
-
-    增量审查（synchronize）自身已消费 pending，不在此兜底，避免循环；失败的审查
-    走 except 分支不触发，避免 compare 失败时反复触发。
+    Distinct deliveries execute sequentially rather than being charged to the
+    active review's payer. Only rows sharing an operation may be merged.
     """
-    if pr_info.get("action") == "synchronize":
-        return
 
     from backend.services.pr_review_incremental_queue import (
         PRReviewIncrementalQueueService,
     )
 
-    pending = await PRReviewIncrementalQueueService().list_pending(pr_info)
-    if not pending:
-        return
+    queue_service = PRReviewIncrementalQueueService()
+    while True:
+        pending = await queue_service.list_pending(pr_info)
+        resume_id = pr_info.get("incremental_resume_queue_id")
+        if resume_id is not None:
+            target = next((item for item in pending if item.id == resume_id), None)
+            if target is None:
+                return False
+            target_operation = (target.billing_context or {}).get("operation_id")
+            pending = [
+                item
+                for item in pending
+                if (item.billing_context or {}).get("operation_id") == target_operation
+            ]
+        current_operation = (pr_info.get("billing_context") or {}).get("operation_id")
+        # A financially incomplete execution remains for explicit recovery, without
+        # causing an immediate recursive retry or starving a later queued delivery.
+        if pr_info.get("incremental_queue_ids"):
+            pending = [
+                item
+                for item in pending
+                if item.id not in pr_info["incremental_queue_ids"]
+                and (item.billing_context or {}).get("operation_id")
+                != current_operation
+            ]
+        if not pending:
+            return False
 
-    drain_pr_info = {
-        **pr_info,
-        "action": "synchronize",
-        "before": pending[0].base_sha or pr_info.get("before"),
-        "after": pending[-1].head_sha,
-    }
-    logger.info(
-        "完整审查完成后发现 {} 条 pending 增量，触发增量审查消费: {}#{}",
-        len(pending),
-        pr_info.get("repo_full_name"),
-        pr_info.get("pr_number"),
-    )
-    await submit_review_task(drain_pr_info)
+        queued_context = getattr(pending[0], "billing_context", None)
+        queued_operation = (queued_context or {}).get("operation_id")
+        pending = [
+            item
+            for item in pending
+            if (getattr(item, "billing_context", None) or {}).get("operation_id")
+            == queued_operation
+        ]
+
+        drain_pr_info = {
+            **pr_info,
+            "action": "synchronize",
+            "before": pending[0].base_sha or pr_info.get("before"),
+            "after": pending[-1].head_sha,
+            "head_sha": pending[-1].head_sha,
+            "incremental_queue_ids": [int(item.id) for item in pending],
+        }
+        # Pre-migration rows without an execution carrier have explicit platform
+        # ownership. New rows reuse the exact already admitted financial identity.
+        drain_pr_info.pop("billing_context", None)
+        # The increment has its own durable queue fence and admitted operation.
+        # Never reuse the previous full review's delivery claim.
+        drain_pr_info.pop("_delivery_receipt_id", None)
+        drain_pr_info.pop("_delivery_owner_token", None)
+        queue_identity = ",".join(str(item.id) for item in pending)
+        drain_pr_info["delivery_id"] = (
+            getattr(pending[0], "delivery_id", None)
+            or f"incremental:{uuid.uuid5(uuid.NAMESPACE_URL, queue_identity)}"
+        )
+        # Payer fields belong to this queue admission, never the previous review.
+        drain_pr_info["billing_user_id"] = (
+            queued_context.get("user_id") if queued_context else None
+        )
+        drain_pr_info["billing_platform_reason"] = (
+            queued_context.get("platform_reason")
+            if queued_context
+            else "legacy_incremental_without_verified_payer"
+        )
+        if queued_context:
+            trigger_user_id = queued_context.get("source", {}).get(
+                "trigger_user_id", queued_context["user_id"]
+            )
+            drain_pr_info["user_id"] = trigger_user_id
+            drain_pr_info["trigger_user_id"] = trigger_user_id
+            if queued_context.get("source", {}).get("sender"):
+                drain_pr_info["sender"] = queued_context["source"]["sender"]
+            if queued_operation:
+                drain_pr_info["billing_context"] = queued_context
+        await queue_service.finalize_for_operation(drain_pr_info)
+        if not await queue_service.claim_dispatch(drain_pr_info):
+            remaining = await queue_service.list_pending(pr_info)
+            if not any(
+                item.id in drain_pr_info["incremental_queue_ids"] for item in remaining
+            ):
+                continue
+            return False
+        logger.info(
+            "完整审查完成后发现 {} 条 pending 增量，触发增量审查消费: {}#{}",
+            len(pending),
+            pr_info.get("repo_full_name"),
+            pr_info.get("pr_number"),
+        )
+        await submit_review_task(drain_pr_info)
+        return True

@@ -127,13 +127,38 @@ async def fetch_token_trend(
         ).label(f"bucket_{index}")
         for index in range(len(labels))
     ]
-    ledger_query = select(*bucket_columns).where(
+    ledger_filters = [
         AIUsageRecord.occurred_at >= boundaries[0],
         AIUsageRecord.occurred_at < boundaries[-1],
         AIUsageRecord.call_kind.in_(ACCOUNTED_CALL_KINDS),
+    ]
+    possible_shadow = or_(
+        AIUsageRecord.actual_call_id.is_not(None), AIUsageRecord.role == "late_actual"
     )
+    # The selected row can be outside the chart window, but must already exist
+    # when this aggregate is read. Keep chart aggregation in SQL.
+    ledger_query = select(
+        *bucket_columns,
+        select(func.max(AIUsageRecord.id)).scalar_subquery().label("_through_id"),
+        func.coalesce(func.sum(case((possible_shadow, 1), else_=0)), 0).label(
+            "_possible_shadows"
+        ),
+    ).where(*ledger_filters)
     row = (await db.execute(ledger_query)).one()
-    return [int(getattr(row, f"bucket_{index}") or 0) for index in range(len(labels))]
+    totals = [int(getattr(row, f"bucket_{index}") or 0) for index in range(len(labels))]
+    if row._possible_shadows:
+        from backend.services.billing_usage_evidence import reviewed_usage_shadows
+
+        async for record in reviewed_usage_shadows(
+            db, filters=ledger_filters, through_id=row._through_id
+        ):
+            for index in range(len(labels)):
+                if boundaries[index] <= record.occurred_at < boundaries[index + 1]:
+                    totals[index] -= (record.input_tokens or 0) + (
+                        record.output_tokens or 0
+                    )
+                    break
+    return totals
 
 
 async def fetch_review_trend(

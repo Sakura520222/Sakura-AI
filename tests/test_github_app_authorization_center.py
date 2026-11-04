@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,27 +12,40 @@ from typing import Any, Self
 import pytest
 import yaml
 from fastapi.routing import APIRoute
-from jinja2 import DictLoader, Environment, StrictUndefined
 
+from backend.api.v1 import github_app, repos, settings_webui
+from backend.api.v1.deps import (
+    require_api_admin,
+    require_api_auth,
+    require_api_super_admin,
+)
 from backend.core.config import (
     CORE_CONFIG_KEYS,
     Settings,
     get_all_db_config_keys,
 )
 from backend.services import github_user_authorization_service as service_module
+from backend.services import system_maintenance
 from backend.services.github_user_authorization_service import (
     GitHubUserAuthorizationService,
-    GitHubUserInstallation,
 )
 from backend.services.star_aid_github_service import GitHubCallResult
-from backend.services.system_config_service import SystemConfigValidationError
-from backend.webui.deps import require_admin, require_super_admin
-from backend.webui.routes import github_app, repos, star_aid, system_config
+from backend.services.system_config_service import (
+    SYSTEM_CONFIG_GROUPS,
+    SystemConfigValidationError,
+    system_config_service,
+)
+from backend.webui.deps import require_csrf_header
+from backend.webui.routes import star_aid
 
 
 def _route(router: Any, path: str, method: str = "GET") -> APIRoute:
     for route in router.routes:
-        if isinstance(route, APIRoute) and route.path == path and method in route.methods:
+        if (
+            isinstance(route, APIRoute)
+            and route.path == path
+            and method in route.methods
+        ):
             return route
     raise AssertionError(f"Route {method} {path} was not found")
 
@@ -48,27 +62,17 @@ class _JsonRequest:
         return self._payload
 
 
-class _FormRequest:
-    def __init__(self, form: dict) -> None:
-        self._form = form
-
-    async def form(self) -> dict:
-        return self._form
-
-
 def test_github_app_routes_are_available_to_every_authenticated_user() -> None:
     """The authorization center is user-scoped and must not require admin."""
-    for path in ("/github-app/", "/github-app/list-fragment"):
-        dependencies = _dependency_calls(_route(github_app.router, path))
-        assert github_app.require_auth in dependencies
-        assert require_admin not in dependencies
-        assert require_super_admin not in dependencies
+    dependencies = _dependency_calls(_route(github_app.router, "/github-app"))
+    assert require_api_auth in dependencies
+    assert require_api_admin not in dependencies
+    assert require_api_super_admin not in dependencies
 
 
 def test_admin_repository_routes_keep_their_admin_boundary() -> None:
-    for path in ("/repos/", "/repos/list-fragment"):
-        dependencies = _dependency_calls(_route(repos.router, path))
-        assert repos.require_admin in dependencies
+    dependencies = _dependency_calls(_route(repos.router, "/repos"))
+    assert require_api_admin in dependencies
 
 
 def test_user_authorization_app_slug_is_loaded_from_database() -> None:
@@ -76,13 +80,13 @@ def test_user_authorization_app_slug_is_loaded_from_database() -> None:
 
     assert key in CORE_CONFIG_KEYS
     assert key in get_all_db_config_keys()
-    assert system_config.system_config_service.validate_updates({key: ""}) == {key: ""}
+    assert system_config_service.validate_updates({key: ""}) == {key: ""}
 
 
 @pytest.mark.parametrize("invalid_slug", ["https://github.com/apps/my-app", "my app"])
 def test_user_authorization_app_slug_rejects_invalid_values(invalid_slug: str) -> None:
     with pytest.raises(SystemConfigValidationError) as caught:
-        system_config.system_config_service.validate_updates(
+        system_config_service.validate_updates(
             {"star_aid_github_app_slug": invalid_slug}
         )
 
@@ -92,54 +96,8 @@ def test_user_authorization_app_slug_rejects_invalid_values(invalid_slug: str) -
 def test_user_authorization_routes_do_not_accept_installation_ids() -> None:
     """GitHub user token scoping, rather than a client ID parameter, is authoritative."""
     paths = {route.path for route in github_app.router.routes}
-    assert paths == {"/github-app/", "/github-app/list-fragment"}
+    assert paths == {"/github-app"}
     assert all("installation_id" not in path for path in paths)
-
-
-def test_fragment_refresh_preserves_user_language_dependency() -> None:
-    dependencies = _dependency_calls(
-        _route(github_app.router, "/github-app/list-fragment")
-    )
-
-    assert github_app.get_user_preferences in dependencies
-
-
-@pytest.mark.asyncio
-async def test_fragment_refresh_passes_user_preferences_to_renderer(
-    monkeypatch,
-) -> None:
-    captured = {}
-
-    async def authorization_state(db: Any, user: dict) -> tuple[Any, bool, None]:
-        return None, False, None
-
-    async def install_url() -> None:
-        return None
-
-    def render_template(
-        template_name: str,
-        request: Any,
-        user_prefs: dict | None = None,
-        **context: Any,
-    ):
-        captured.update({"template": template_name, "prefs": user_prefs, **context})
-        return "rendered"
-
-    monkeypatch.setattr(github_app, "_authorization_state", authorization_state)
-    monkeypatch.setattr(github_app, "_get_install_url", install_url)
-    monkeypatch.setattr(github_app, "render_template", render_template)
-
-    result = await github_app.list_fragment(
-        request=SimpleNamespace(query_params={}),
-        db=SimpleNamespace(),
-        user={"user_id": 7, "sub": "alice", "role": "user"},
-        user_prefs={"language": "en", "items_per_page": 20},
-    )
-
-    assert result == "rendered"
-    assert captured["template"] == "components/github_app_list_fragment.html"
-    assert captured["prefs"] == {"language": "en", "items_per_page": 20}
-    assert captured["error_code"] is None
 
 
 class _Response:
@@ -202,7 +160,9 @@ class _AsyncClient:
                             "visibility": (
                                 "internal"
                                 if index == 8
-                                else "private" if index % 2 == 0 else "public"
+                                else "private"
+                                if index % 2 == 0
+                                else "public"
                             ),
                             "html_url": "https://github.com/alice/repo",
                             "raw_unconstrained_field": "must-not-render",
@@ -297,10 +257,14 @@ async def test_separate_app_without_slug_does_not_fall_back_to_review_app(
             return ("review-app", "Iv1.review")
 
     monkeypatch.setattr(github_app, "_app_slug", None)
-    monkeypatch.setattr(github_app, "get_settings", lambda: SimpleNamespace(
-        star_aid_github_app_slug="",
-        star_aid_github_app_client_id="Iv1.separate",
-    ))
+    monkeypatch.setattr(
+        github_app,
+        "get_settings",
+        lambda: SimpleNamespace(
+            star_aid_github_app_slug="",
+            star_aid_github_app_client_id="Iv1.separate",
+        ),
+    )
     monkeypatch.setattr(core_github_app, "GitHubAppClient", FakeMainApp)
 
     assert await github_app._get_install_url() is None
@@ -416,7 +380,9 @@ def _configure_valid_user(
     monkeypatch.setattr(
         service_module.credential_service,
         "get_effective_access_token",
-        lambda session, user_id: _await_value(("token", GitHubCallResult(success=True))),
+        lambda session, user_id: _await_value(
+            ("token", GitHubCallResult(success=True))
+        ),
     )
     return settings
 
@@ -481,7 +447,9 @@ async def test_user_installations_use_github_user_scope_and_dto_boundary(
     assert installation["permissions"] == {"metadata": True, "administration": False}
     assert installation["repositories"][-1]["visibility"] == "internal"
     assert installation["repositories"][-1]["private"] is True
-    assert all("raw_unconstrained_field" not in row for row in installation["repositories"])
+    assert all(
+        "raw_unconstrained_field" not in row for row in installation["repositories"]
+    )
 
 
 @pytest.mark.asyncio
@@ -785,150 +753,23 @@ async def test_github_401_does_not_commit_replaced_credential_revocation(
     assert authorization.error_code == "credential_replaced"
 
 
-def test_authorization_template_is_parseable_and_has_no_operations_actions() -> None:
-    template_root = Path(__file__).resolve().parents[1] / "backend/webui/templates"
-    fragment = (
-        template_root / "components/github_app_list_fragment.html"
-    ).read_text(encoding="utf-8")
-    Environment().parse(fragment)
-
-    assert "data-github-app-repository-filter" in fragment
-    assert "loop.index0 >= 6" in fragment
-    assert "data-github-app-toggle-repositories" in fragment
-    assert "const expanded = toggle?.dataset.expanded === 'true';" in fragment
-    assert "!expanded && !query" in fragment
-    assert "if (!row.classList.contains('hidden')) visible++;" in fragment
-    assert "row.classList.toggle('hidden', !matches || isCollapsedExtra);" in fragment
-    assert "repo.visibility == 'internal'" in fragment
-    assert "/repos/" not in fragment
-    assert "triggerIndex" not in fragment
-    assert "triggerScan" not in fragment
-
-
-def test_error_authorization_renders_failure_not_connected_state() -> None:
-    template_root = Path(__file__).resolve().parents[1] / "backend/webui/templates"
-    environment = Environment(
-        loader=DictLoader({
-            "components/github_app_list_fragment.html": (
-                template_root / "components/github_app_list_fragment.html"
-            ).read_text(encoding="utf-8")
-        }),
-        autoescape=True,
-    )
-    authorization = service_module.GitHubUserAuthorization(
-        status="error", github_username="alice", error_code="github_request_failed"
-    )
-
-    output = environment.get_template(
-        "components/github_app_list_fragment.html"
-    ).render(
-        authorization=authorization,
-        authorization_url=None,
-        install_url=None,
-        error_code=None,
-        _=lambda key, **_kwargs: key,
-    )
-
-    assert "github_app.request_failed" in output
-    assert "github_app.connected" not in output
-
-
 def test_github_app_translations_cover_internal_repository_label() -> None:
     translation_root = (
         Path(__file__).resolve().parents[1] / "backend/webui/translations"
     )
+    source_pair = '["内部","Internal"]'
+    compiled = json.loads(
+        (Path(__file__).resolve().parents[1] / "web/src/app/messages.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert compiled[source_pair] == ["内部", "Internal"]
 
-    for filename in ("en.yaml", "zh-CN.yaml"):
+    for filename, label in (("zh-CN.yaml", "内部"), ("en.yaml", "Internal")):
         payload = yaml.safe_load(
             (translation_root / filename).read_text(encoding="utf-8")
         )
-        assert payload["github_app"]["internal"]
-
-
-def test_connected_authorization_template_renders_with_strict_variables() -> None:
-    template_root = Path(__file__).resolve().parents[1] / "backend/webui/templates"
-    environment = Environment(
-        loader=DictLoader({
-            "base.html": (
-                "{% block content %}{% endblock %}"
-                "{% block extra_scripts %}{% endblock %}"
-            ),
-            "github_app.html": (template_root / "github_app.html").read_text(
-                encoding="utf-8"
-            ),
-            "components/github_app_list_fragment.html": (
-                template_root / "components/github_app_list_fragment.html"
-            ).read_text(encoding="utf-8"),
-        }),
-        undefined=StrictUndefined,
-        autoescape=True,
-    )
-    authorization = service_module.GitHubUserAuthorization(
-        status="connected",
-        github_username="alice",
-        installations=[
-            GitHubUserInstallation(
-                installation_id=1001,
-                account_login="alice",
-                account_type="User",
-                manage_url="https://github.com/settings/installations/1001",
-                repositories=[
-                    {
-                        "id": 1,
-                        "full_name": "alice/private",
-                        "name": "private",
-                        "private": True,
-                        "visibility": "private",
-                        "html_url": "https://github.com/alice/private",
-                    },
-                    {
-                        "id": 2,
-                        "full_name": "alice/public",
-                        "name": "public",
-                        "private": False,
-                        "visibility": "public",
-                        "html_url": "https://github.com/alice/public",
-                    },
-                    {
-                        "id": 3,
-                        "full_name": "alice/internal",
-                        "name": "internal",
-                        "private": True,
-                        "visibility": "internal",
-                        "html_url": "https://github.com/alice/internal",
-                    },
-                ],
-            )
-        ],
-    )
-
-    output = environment.get_template("github_app.html").render(
-        request=SimpleNamespace(query_params={}),
-        current_user=SimpleNamespace(role="user"),
-        active_page="github_app",
-        authorization=authorization,
-        authorization_url="/star-aid/auth/start",
-        install_url="https://github.com/apps/sakura-ai/installations/new",
-        error_code=None,
-        _=lambda key, **_kwargs: key,
-    )
-
-    assert "alice/private" in output
-    assert "github_app.internal" in output
-    assert "github_app.manage_authorization" in output
-
-
-def test_sidebar_exposes_github_app_to_authenticated_users() -> None:
-    from backend.webui.deps import get_templates
-
-    template = get_templates().get_template("components/sidebar.html")
-    for role in ("user", "admin", "super_admin"):
-        rendered = template.render(
-            active_page="github_app",
-            current_user={"role": role},
-            settings=type("SettingsStub", (), {"payment_enabled": False})(),
-        )
-        assert 'href="/github-app/"' in rendered
+        assert label in payload["webui_v2"].values()
 
 
 def test_system_config_translations_cover_shared_user_authorization_app() -> None:
@@ -956,15 +797,14 @@ def test_system_config_translations_cover_shared_user_authorization_app() -> Non
 
 def test_github_app_slug_fetch_endpoint_keeps_admin_and_csrf_boundaries() -> None:
     route = _route(
-        system_config.router,
-        "/system-config/github-app-slug",
+        settings_webui.router,
+        "/webui/system/github-app-slug",
         method="POST",
     )
     calls = _dependency_calls(route)
 
-    assert system_config.require_super_admin in calls
-    assert system_config.get_user_preferences in calls
-    assert system_config.require_csrf_header in calls
+    assert require_api_super_admin in calls
+    assert require_csrf_header in calls
 
 
 @pytest.mark.asyncio
@@ -975,7 +815,7 @@ async def test_github_app_slug_fetch_reuses_review_app_identity(
         assert client_id == "Iv1.review"
         return "review-app", None
 
-    monkeypatch.setattr(system_config, "_resolve_review_github_app_slug", resolve)
+    monkeypatch.setattr(system_maintenance, "_resolve_review_github_app_slug", resolve)
     languages = []
 
     def make_translation_func(language: str):
@@ -983,13 +823,13 @@ async def test_github_app_slug_fetch_reuses_review_app_identity(
         return lambda key: f"{language}:{key}"
 
     monkeypatch.setattr(
-        system_config, "detect_language", lambda user_prefs: user_prefs["language"]
+        system_maintenance, "detect_language", lambda user_prefs: user_prefs["language"]
     )
     monkeypatch.setattr(
-        system_config, "make_translation_func", make_translation_func
+        system_maintenance, "make_translation_func", make_translation_func
     )
 
-    result = await system_config.fetch_github_app_slug(
+    result = await system_maintenance.fetch_github_app_slug(
         _JsonRequest({"clientId": "Iv1.review"}),
         _user={"user_id": 1, "sub": "alice"},
         user_prefs={"language": "en"},
@@ -1008,9 +848,9 @@ async def test_github_app_slug_fetch_rejects_separate_app_without_guessing(
     async def resolve(client_id: str) -> tuple[str | None, str | None]:
         return None, "github_app_slug_requires_manual_entry"
 
-    monkeypatch.setattr(system_config, "_resolve_review_github_app_slug", resolve)
+    monkeypatch.setattr(system_maintenance, "_resolve_review_github_app_slug", resolve)
 
-    result = await system_config.fetch_github_app_slug(
+    result = await system_maintenance.fetch_github_app_slug(
         _JsonRequest({"clientId": "Iv1.separate"}),
         _user={"user_id": 1, "sub": "alice"},
         user_prefs={"language": "en"},
@@ -1019,22 +859,6 @@ async def test_github_app_slug_fetch_rejects_separate_app_without_guessing(
     assert result["success"] is False
     assert result["error_code"] == "github_app_slug_requires_manual_entry"
     assert "slug" not in result
-
-
-def test_system_config_slug_field_has_dedicated_auto_fetch_button() -> None:
-    template = (
-        Path(__file__).resolve().parents[1]
-        / "backend/webui/templates/system_config.html"
-    ).read_text(encoding="utf-8")
-
-    assert 'x-ref="githubAppSlugInput"' in template
-    assert "fetchGithubAppSlug($refs.githubAppSlugInput)" in template
-    assert template.count("fetchGithubAppSlug(") >= 2
-    assert 'name="star_aid_github_app_slug_changed"' in template
-    assert (
-        'x-on:input="$refs.star_aid_github_app_slug_changed.value = \'true\'"'
-        in template
-    )
 
 
 def test_user_authorization_discovery_timeout_is_independently_configurable() -> None:
@@ -1052,74 +876,7 @@ def test_user_authorization_discovery_timeout_is_independently_configurable() ->
     assert constraints == {"ge": 1.0, "le": 120.0}
     assert key in CORE_CONFIG_KEYS
     assert key in get_all_db_config_keys()
-    assert key in system_config._SYSTEM_TYPED_VALUE_KEYS
     star_aid_app_group = next(
-        group
-        for group in system_config.SYSTEM_CONFIG_GROUPS
-        if group["id"] == "star_aid_app"
+        group for group in SYSTEM_CONFIG_GROUPS if group["id"] == "star_aid_app"
     )
     assert key in star_aid_app_group["keys"]
-
-
-@pytest.mark.asyncio
-async def test_system_config_slug_can_be_explicitly_cleared(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    key = "star_aid_github_app_slug"
-
-    class FakeConfigService:
-        def __init__(self) -> None:
-            self.validated: list[dict[str, str]] = []
-            self.applied: list[dict[str, dict[str, str]]] = []
-            self.save_calls = 0
-
-        def validate_updates(self, updates: dict[str, str]) -> dict[str, str]:
-            self.validated.append(dict(updates))
-            return dict(updates)
-
-        async def save_configs(self, db: Any, updates: dict[str, str]):
-            self.save_calls += 1
-            assert updates == {key: ""}
-            return ({key: {"old": "old-app", "new": "", "raw_new": ""}}, False)
-
-        async def apply_live_settings(self, changed: dict) -> None:
-            self.applied.append(changed)
-
-        def build_audit_log(self, changed: dict) -> dict:
-            return changed
-
-    service = FakeConfigService()
-    admin_logs = []
-
-    async def log_admin_action(*args: Any, **kwargs: Any) -> None:
-        admin_logs.append((args, kwargs))
-
-    redirects = []
-
-    def toast_redirect(path: str, toast_key: str, *args: Any, **kwargs: Any):
-        redirects.append(toast_key)
-        return SimpleNamespace(path=path, toast_key=toast_key)
-
-    monkeypatch.setattr(system_config, "system_config_service", service)
-    monkeypatch.setattr(system_config, "log_admin_action", log_admin_action)
-    monkeypatch.setattr(system_config, "toast_redirect", toast_redirect)
-
-    cleared = await system_config.save_system_config(
-        request=_FormRequest({key: "", f"{key}_changed": "true"}),
-        db=SimpleNamespace(),
-        user={"user_id": 1, "sub": "alice"},
-        csrf_token="valid",
-    )
-    untouched = await system_config.save_system_config(
-        request=_FormRequest({key: "", f"{key}_changed": "false"}),
-        db=SimpleNamespace(),
-        user={"user_id": 1, "sub": "alice"},
-        csrf_token="valid",
-    )
-
-    assert cleared.toast_key == "system_config.saved"
-    assert untouched.toast_key == "toast.config_no_change"
-    assert service.validated == [{key: ""}, {}]
-    assert service.save_calls == 1
-    assert service.applied == [{key: {"old": "old-app", "new": "", "raw_new": ""}}]
-    assert len(admin_logs) == 1

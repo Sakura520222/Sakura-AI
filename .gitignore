@@ -61,9 +61,11 @@ docker/ssl/
 .coverage
 htmlcov/
 .pytest_cache/
+/test-results/
 
 # Config (contains sensitive database credentials)
 config/connection.json
+config/.setup-token*
 .sakura/dev/
 
 # Temporary files
@@ -75,8 +77,16 @@ deploy_key
 deploy.py
 .deploy_state.json
 .claude/
-CLAUDE.md
 node_modules/
+web/test-results/
+web/playwright-report/
+web/*.tsbuildinfo
+web/bundle-report.md
+web/artifacts/
+web/.dist-cache/
+web/.dist-current.json
+web/.dist.lock
+web/.webui-stage-*/
 workplace/
 Skills/
 .venv/
@@ -99,3 +109,5 @@ updater/build/.pyinstaller/
 .deploy/*
 !.deploy/deployment.env.example
 .codex/
+docs/.vitepress/dist/
+docs/.vitepress/cache/

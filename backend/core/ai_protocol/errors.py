@@ -79,6 +79,8 @@ class AIError(Exception):
         provider: str = "",
         model: str = "",
         cause: BaseException | None = None,
+        usage: Any = None,
+        usage_complete: bool = True,
     ):
         super().__init__(message)
         self.category = category
@@ -86,6 +88,8 @@ class AIError(Exception):
         self.provider = provider
         self.model = model
         self.__cause__ = cause
+        self.usage = usage
+        self.usage_complete = usage_complete
 
     @property
     def is_terminal(self) -> bool:

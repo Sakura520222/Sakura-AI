@@ -1,5 +1,13 @@
 # Sakura AI Dockerfile.dockerignore — 构建上下文为仓库根目录
 node_modules/
+**/node_modules/
+web/.dist-cache/
+web/.dist-current.json
+web/.dist.lock
+web/.webui-stage-*/
+web/artifacts/
+web/test-results/
+web/playwright-report/
 frontend/
 .venv/
 .git/

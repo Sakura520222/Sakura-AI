@@ -89,10 +89,14 @@ READ_FILE_TOOL = {
         "name": "read_file",
         "description": (
             "读取指定文件的内容，用于理解代码实现细节。"
+            "file_path 必须指向单个文件，不接受目录路径：要在某个目录或整个仓库"
+            "中搜索关键词请改用 search_in_files；要浏览目录结构请使用"
+            " list_directory。\n"
             "支持四种模式：\n"
             "1. 完整读取：仅指定file_path\n"
             "2. 行范围读取：指定start_line和end_line\n"
-            "3. 全文件搜索：指定search_pattern，返回匹配行及上下文\n"
+            "3. 全文件搜索：指定search_pattern，返回匹配行及上下文"
+            "（仅限单个文件内搜索）\n"
             "4. 范围内搜索：同时指定start_line、end_line和search_pattern，"
             "仅在指定行范围内搜索，上下文也不会越过范围边界\n"
             "返回内容始终包含行号，方便定位；返回的行号以本次读取到的当前分支/提交"
@@ -109,7 +113,12 @@ READ_FILE_TOOL = {
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "要读取的文件路径（相对于项目根目录）",
+                    "description": (
+                        "要读取的文件路径（相对于项目根目录）。"
+                        "必须是单个文件而非目录；在目录或整个仓库中搜索关键词"
+                        "请改用 search_in_files，浏览目录结构请使用"
+                        " list_directory。"
+                    ),
                 },
                 "start_line": {
                     "type": "integer",
@@ -143,8 +152,10 @@ READ_FILE_TOOL = {
                 "search_pattern": {
                     "type": "string",
                     "description": (
-                        "在文件中搜索包含此文本的行（简单文本匹配，非正则），"
+                        "在该文件中搜索包含此文本的行（简单文本匹配，非正则），"
                         "返回所有匹配行及其周围的上下文行，带行号。"
+                        "仅限当前 file_path 单个文件内搜索；要搜索目录或整个仓库"
+                        "请改用 search_in_files。"
                         "单独使用时搜索整个文件；与 start_line/end_line 一起"
                         "使用时仅在指定行范围内搜索。"
                     ),
@@ -173,7 +184,10 @@ LIST_DIRECTORY_TOOL = {
     "type": "function",
     "function": {
         "name": "list_directory",
-        "description": "列出指定目录下的文件和子目录",
+        "description": (
+            "列出指定目录下的文件和子目录，用于浏览目录结构。"
+            "如果要搜索目录内文件内容，请改用 search_in_files。"
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -316,7 +330,11 @@ SEARCH_IN_FILES_TOOL = {
     "type": "function",
     "function": {
         "name": "search_in_files",
-        "description": "在仓库中跨文件搜索指定关键词，返回所有匹配的文件和行内容。类似于 grep 搜索。",
+        "description": (
+            "在仓库中跨文件搜索指定关键词，返回所有匹配的文件和行内容。"
+            "类似于 grep 搜索。适用于在整个仓库或某个目录范围内查找关键词；"
+            "目录级/仓库级搜索应使用本工具，不要把目录路径传给 read_file。"
+        ),
         "parameters": {
             "type": "object",
             "properties": {

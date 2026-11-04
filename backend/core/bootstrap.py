@@ -193,26 +193,61 @@ def clear_bootstrap_cache():
 # Setup Wizard Token 安全防护
 # =============================================================================
 
-# 进程级 Token（每次启动重新生成，不持久化）
+# 进程级 Token（每次启动重新生成；仅供本机管理员读取的私有交接文件）
 _setup_token: str | None = None
+_setup_token_file: Path | None = None
 
 # Cookie 名称
 _COOKIE_NAME = "setup_verified"
 
 
+def _create_setup_token_tempfile(directory: Path) -> tuple[int, str]:
+    if os.name == "nt":
+        from backend.core.windows_private_file import create_private_tempfile
+
+        return create_private_tempfile(directory, prefix=".setup-token-")
+    return tempfile.mkstemp(prefix=".setup-token-", dir=directory)
+
+
+def _remove_setup_token_file(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("无法清理 Setup Token 私有文件 {}；请在本机清理该文件。", path)
+
+
 def generate_setup_token() -> None:
-    """生成 Setup Token 并醒目打印到日志。
+    """Generate a token and hand it to the local operator outside log sinks.
 
     仅在 bootstrap 模式启动时调用。每次启动生成新 Token，
     旧 Token 在进程退出后自然失效。
     """
-    global _setup_token
-    _setup_token = secrets.token_urlsafe(32)
-    logger.info("=" * 60)
-    logger.info("Setup Wizard 已启动 — 请使用以下 Token 完成首次部署验证：")
-    logger.info(f"  Token: {_setup_token}")
-    logger.info("请从日志中复制此 Token，在浏览器 /setup/verify 页面输入。")
-    logger.info("=" * 60)
+    global _setup_token, _setup_token_file
+    token = secrets.token_urlsafe(32)
+    token_path = get_connection_config_path().parent / ".setup-token"
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    # Restrict access at creation on both platforms. Atomic replacement does
+    # not follow an existing destination symlink or broaden the private ACL.
+    fd, temporary = _create_setup_token_tempfile(token_path.parent)
+    try:
+        stream = os.fdopen(fd, "w", encoding="utf-8")
+        fd = None  # stream now owns the descriptor, including write failures.
+        with stream:
+            stream.write(token + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, token_path)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        _remove_setup_token_file(Path(temporary))
+    _setup_token = token
+    _setup_token_file = token_path
+    logger.info(
+        "Setup Wizard 已启动：请在本机读取 {}，或使用 start.sh 查看 Setup Token；"
+        "在 /setup/verify 输入。凭据不会写入日志。",
+        token_path,
+    )
 
 
 def get_setup_token() -> str | None:
@@ -229,8 +264,13 @@ def validate_setup_token(submitted: str) -> bool:
 
 def clear_setup_token() -> None:
     """清除内存中的 Token。Setup 完成后调用。"""
-    global _setup_token
+    global _setup_token, _setup_token_file
     _setup_token = None
+    path, _setup_token_file = _setup_token_file, None
+    if path is not None:
+        # Completion has already committed configuration/admin state. A scanner
+        # holding the inert handoff file must not suppress success or restart.
+        _remove_setup_token_file(path)
 
 
 def _has_valid_setup_cookie(scope: dict) -> bool:
@@ -381,9 +421,28 @@ class BootstrapMiddleware:
 
         path = scope["path"]
 
+        if path == "/app/setup" or path.startswith("/app/assets/"):
+            await self.app(scope, receive, send)
+            return
+
         # 根路径重定向到 /setup
         if path == "/":
             await RedirectResponse(url="/setup", status_code=302)(scope, receive, send)
+            return
+
+        # API clients use the same bootstrap credential as the wizard. Keep
+        # Setup APIs reachable during bootstrap without opening other APIs.
+        if path == "/api/v1/setup" or path.startswith("/api/v1/setup/"):
+            from starlette.datastructures import Headers
+
+            token = Headers(scope=scope).get("x-setup-token", "")
+            if not (_has_valid_setup_cookie(scope) or validate_setup_token(token)):
+                await JSONResponse(
+                    {"success": False, "error": "Setup authorization required"},
+                    status_code=403,
+                )(scope, receive, send)
+                return
+            await self.app(scope, receive, send)
             return
 
         # Setup Wizard 路径分层处理

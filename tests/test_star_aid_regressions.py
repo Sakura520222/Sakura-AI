@@ -1,16 +1,11 @@
 """Star Aid regression tests for completion gaps."""
 
-import subprocess
 from datetime import UTC, datetime
-from html.parser import HTMLParser
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-from jinja2 import Environment
 from sqlalchemy.dialects import mysql
-from starlette.datastructures import QueryParams
 
+from backend.api.v1 import community
 from backend.core.github_app import GitHubAppClient
 from backend.services import star_aid_github_service as github_service
 from backend.services import star_aid_service
@@ -85,9 +80,11 @@ async def test_list_user_public_repositories_reads_all_pages(monkeypatch):
             self._page = page
             self.headers = (
                 {"link": '<https://api.github.com/user/repos?page=2>; rel="next"'}
-                if page == 1 else (
+                if page == 1
+                else (
                     {"link": '<https://api.github.com/user/repos?page=3>; rel="next"'}
-                    if page == 2 else {}
+                    if page == 2
+                    else {}
                 )
             )
 
@@ -219,6 +216,36 @@ async def test_auth_callback_setup_install_with_code_redirects_to_dashboard(
 
     assert resp.status_code == 302
     assert resp.headers["location"] == "/"
+
+
+@pytest.mark.asyncio
+async def test_community_manual_star_reauthentication_keeps_auth_start_flow(
+    monkeypatch,
+):
+    """The SPA adapter returns users to the mounted GitHub authorization route."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    monkeypatch.setattr(
+        community.star_aid_service, "is_feature_enabled", AsyncMock(return_value=True)
+    )
+
+    monkeypatch.setattr(
+        community.star_aid_service,
+        "perform_star",
+        AsyncMock(return_value={"reauth_required": True}),
+    )
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    response = await community.manual_star_route(
+        14, user={"user_id": 7, "role": "user"}, db=db
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == (
+        "/star-aid/auth/start?intent=manual_star&repo_id=14&return_to=/star-aid/"
+    )
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -481,33 +508,6 @@ def test_admin_repository_query_normalizes_untrusted_values():
     }
 
 
-def test_public_repository_search_attribute_does_not_create_event_handlers():
-    class ArticleParser(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.attributes = None
-
-        def handle_starttag(self, tag, attrs):
-            if tag == "article" and self.attributes is None:
-                self.attributes = dict(attrs)
-
-    source = Path("backend/webui/templates/star_aid/index.html").read_text()
-    article = next(line for line in source.splitlines() if "<article x-show=" in line)
-    rendered = Environment(autoescape=True).from_string(article).render(
-        repo={
-            "full_name": "owner/repo",
-            "description": "description onmouseover=alert(1) tail",
-            "primary_language": "Python",
-        }
-    )
-    parser = ArticleParser()
-    parser.feed(rendered)
-
-    assert set(parser.attributes) == {"x-show", "class"}
-    assert "onmouseover=alert(1)" in parser.attributes["x-show"]
-    assert ".includes(publicSearch.toLowerCase())" in parser.attributes["x-show"]
-
-
 def test_admin_repository_search_treats_like_wildcards_as_literals():
     for term, expected in (("_", r"%\_%"), ("%", r"%\%%"), (r"a\b", r"%a\\b%")):
         query = star_aid_service._normalize_admin_repository_query(q=term)
@@ -515,156 +515,6 @@ def test_admin_repository_search_treats_like_wildcards_as_literals():
         compiled = condition.compile(dialect=mysql.dialect())
         assert list(compiled.params.values()) == [expected] * 3
         assert compiled.string.count("ESCAPE") == 3
-
-
-def test_admin_pagination_links_keep_both_filter_states():
-    source = Path("backend/webui/templates/star_aid/index.html").read_text()
-    admin_markup = source.split('{% if state.is_admin %}', 1)[1].split('{% endif %}\n    </section>', 1)[0]
-    state = SimpleNamespace(
-        admin_repository_page={
-            "items": [], "q": "my_repo", "status": "disabled", "sort": "name",
-            "order": "asc", "page": 2, "page_size": 10, "pages": 3, "total": 25,
-        },
-        admin_member_page={
-            "q": "ali%", "status": "active", "page": 2, "page_size": 20,
-            "pages": 3, "all_total": 45,
-        },
-        admin_repositories=[], admin_members=[], is_admin=True,
-    )
-    rendered = Environment(autoescape=True).from_string(admin_markup).render(
-        state=state, request=SimpleNamespace(query_params=QueryParams({})),
-        _=lambda key, **kwargs: key, csrf_token="test",
-    )
-
-    class LinkParser(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.links = []
-
-        def handle_starttag(self, tag, attrs):
-            if tag == "a":
-                self.links.append(dict(attrs))
-
-    parser = LinkParser()
-    parser.feed(rendered)
-    pagination = [link for link in parser.links if "page=" in link.get("href", "")]
-    assert len(pagination) == 4
-    for link in pagination:
-        params = QueryParams(link["href"].split("?", 1)[1])
-        assert params["member_q"] == "ali%"
-        assert params["member_status"] == "active"
-        assert params["q"] == "my_repo"
-        assert params["status"] == "disabled"
-        assert params["sort"] == "name"
-        assert params["order"] == "asc"
-
-
-def test_member_filter_submission_keeps_repository_state():
-    source = Path("backend/webui/templates/star_aid/index.html").read_text()
-    admin_markup = source.split('{% if state.is_admin %}', 1)[1].split('{% endif %}\n    </section>', 1)[0]
-    state = SimpleNamespace(
-        admin_repository_page={
-            "items": [], "q": "my_repo", "status": "disabled", "sort": "name",
-            "order": "asc", "page": 3, "page_size": 10, "pages": 3, "total": 25,
-        },
-        admin_member_page={
-            "q": "ali", "status": "active", "page": 2, "page_size": 20,
-            "pages": 2, "all_total": 30,
-        },
-        admin_repositories=[], admin_members=[], is_admin=True,
-    )
-    rendered = Environment(autoescape=True).from_string(admin_markup).render(
-        state=state, request=SimpleNamespace(query_params=QueryParams({})),
-        _=lambda key, **kwargs: key, csrf_token="test",
-    )
-
-    class InputParser(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.in_member_form = False
-            self.inputs = {}
-
-        def handle_starttag(self, tag, attrs):
-            attributes = dict(attrs)
-            if tag == "form" and attributes.get("method") == "get":
-                self.in_member_form = True
-            if tag == "input" and self.in_member_form:
-                self.inputs[attributes.get("name")] = attributes.get("value")
-
-        def handle_endtag(self, tag):
-            if tag == "form":
-                self.in_member_form = False
-
-    parser = InputParser()
-    parser.feed(rendered)
-    assert {key: parser.inputs.get(key) for key in ("q", "status", "sort", "order", "page", "page_size")} == {
-        "q": "my_repo", "status": "disabled", "sort": "name", "order": "asc", "page": "3", "page_size": "10",
-    }
-
-
-def test_admin_filter_navigation_preserves_other_panel_params():
-    script = Path("backend/webui/templates/star_aid/index.html").read_text().split("<script>", 1)[1].split("</script>", 1)[0]
-    program = r"""
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
-const script = fs.readFileSync(0, 'utf8');
-const mode = process.argv[1];
-const listeners = {};
-const location = { href: 'https://example.test/star-aid/?member_q=alice&member_status=active&member_page=3&member_page_size=50&q=old&status=all&page=4' };
-global.window = { location };
-const currentResults = { replaceWith: () => {} };
-const currentPanel = { querySelector: selector => ({
-    '#star-aid-admin-repository-results': currentResults,
-    'summary': { textContent: '' },
-    '[name="page"]': { value: '1' },
-})[selector] };
-const nextPanel = { querySelector: selector => ({
-    '#star-aid-admin-repository-results': {},
-    'summary': { textContent: 'repositories' },
-    '[name="page"]': { value: '1' },
-})[selector] };
-global.document = {
-    addEventListener: (name, callback) => { listeners[name] = callback; },
-    querySelector: selector => selector === '#star-aid-admin-repositories' ? currentPanel : null,
-};
-global.history = { replaceState: (_state, _title, url) => { location.href = url; } };
-global.fetch = async (url) => {
-    requested.push(url);
-    return { ok: true, text: async () => '<div></div>' };
-};
-global.DOMParser = class { parseFromString() { return { querySelector: () => nextPanel }; } };
-const requested = [];
-vm.runInThisContext(script);
-const form = {
-    action: 'https://example.test/star-aid/',
-    elements: [['page', '1'], ['q', 'new'], ['status', 'disabled'], ['sort', 'stars'], ['order', 'desc'], ['page_size', '20']],
-    querySelector: () => ({ value: '1' }),
-};
-global.FormData = class { constructor(form) { return form.elements; } };
-listeners.submit({ target: { closest: selector => selector === '#star-aid-admin-repository-filters' ? form : null }, preventDefault() {} });
-setTimeout(() => {
-    const url = new URL(requested[0]);
-    for (const [key, value] of Object.entries({ member_q: 'alice', member_status: 'active', member_page: '3', member_page_size: '50', q: 'new' })) {
-        assert.equal(url.searchParams.get(key), value);
-    }
-    const hidden = Object.fromEntries(['q', 'status', 'sort', 'order', 'page', 'page_size'].map(key => [key, { value: key === 'q' ? 'old' : '' }]));
-    const memberForm = { querySelector: selector => hidden[/\[name="([^"]+)"\]/.exec(selector)[1]] };
-    listeners.submit({ target: { closest: selector => selector === '#star-aid-admin-member-filters' ? memberForm : null } });
-    assert.equal(hidden.q.value, 'new');
-    assert.equal(hidden.status.value, 'disabled');
-    const pageLink = { href: 'https://example.test/star-aid/?q=new&status=disabled&page=2' };
-    listeners.click({ target: { closest: selector => selector === '[data-admin-repository-page]' ? pageLink : null }, preventDefault() {} });
-    const pageUrl = new URL(requested[1]);
-    assert.equal(pageUrl.searchParams.get('member_q'), 'alice');
-    assert.equal(pageUrl.searchParams.get('member_page'), '3');
-    console.log('ok');
-}, 0);
-"""
-    result = subprocess.run(
-        ["node", "-e", program], input=script, text=True, capture_output=True, check=False
-    )
-    assert result.returncode == 0, result.stderr
 
 
 def test_admin_repository_filters_cover_search_and_each_status():
@@ -756,49 +606,16 @@ async def test_admin_repository_page_applies_sort_and_pagination():
     assert "LIMIT" in rendered and "OFFSET" in rendered
 
 
-def test_star_aid_template_refreshes_only_the_repository_list():
-    """筛选只替换仓库列表 DOM，不触发整页导航。"""
-    template = (
-        Path(__file__).resolve().parents[1]
-        / "backend/webui/templates/star_aid/index.html"
-    ).read_text(encoding="utf-8")
-
-    assert 'name="page_size"' in template
-    assert 'data-admin-repository-search' in template
-    assert template.count('data-admin-repository-filter class=') == 4
-    assert "setTimeout(() => refreshFromForm(form), 350)" in template
-    assert "currentResults.replaceWith(nextResults)" in template
-    assert "currentPanel.replaceWith(nextPanel)" not in template
-    assert 'id="star-aid-admin-repository-results"' in template
-    assert 'id="star-aid-admin-repositories"' in template
-    assert 'id="star-aid-admin-repositories" class="rounded-lg border border-gray-200 dark:border-gray-700" open' not in template
-    assert 'name="member_q"' in template
-    assert 'name="member_status"' in template
-    assert 'name="member_page_size"' in template
-    assert "star_aid.bulk_actions_later" in template
-    assert "data-admin-repository-page" in template
-    assert "{{ _('common.search') }}" not in template
-    assert ">Sakura AI</p>" not in template
-
-
-def test_star_aid_template_posts_selected_repository_names_to_expected_field():
-    """编辑展示仓库时，复选框字段必须匹配路由的 repo_full_names 参数。"""
-    template = (
-        Path(__file__).resolve().parents[1]
-        / "backend/webui/templates/star_aid/index.html"
-    ).read_text(encoding="utf-8")
-
-    assert 'name="repo_full_names"' in template
-    assert 'name="repositories"' not in template
-
-
 @pytest.mark.asyncio
 async def test_admin_member_page_filters_counts_and_clamps_page():
     from types import SimpleNamespace
 
     member = SimpleNamespace(
-        user_id=9, github_username="alice", status="active",
-        daily_star_used=2, daily_star_limit=20,
+        user_id=9,
+        github_username="alice",
+        status="active",
+        daily_star_used=2,
+        daily_star_limit=20,
     )
 
     class Result:
@@ -827,8 +644,11 @@ async def test_admin_member_page_filters_counts_and_clamps_page():
 
     session = Session()
     page = await star_aid_service.get_admin_member_page(
-        session, member_q="ali%_", member_status="active",
-        member_page=99, member_page_size=20,
+        session,
+        member_q="ali%_",
+        member_status="active",
+        member_page=99,
+        member_page_size=20,
     )
     assert page["total"] == 21
     assert page["all_total"] == 43
@@ -837,63 +657,3 @@ async def test_admin_member_page_filters_counts_and_clamps_page():
     assert "LIKE" in str(session.statements[0])
     assert "LIMIT" in str(session.statements[2])
     assert "OFFSET" in str(session.statements[2])
-
-
-def test_star_aid_template_is_parseable():
-    from jinja2 import Environment
-
-    template = (
-        Path(__file__).resolve().parents[1]
-        / "backend/webui/templates/star_aid/index.html"
-    ).read_text(encoding="utf-8")
-    Environment().parse(template)
-
-
-def test_admin_page_renders_empty_filtered_member_and_repository_panels():
-    from types import SimpleNamespace
-
-    from jinja2 import DictLoader, Environment, StrictUndefined
-
-    template = (
-        Path(__file__).resolve().parents[1]
-        / "backend/webui/templates/star_aid/index.html"
-    ).read_text(encoding="utf-8")
-    environment = Environment(
-        loader=DictLoader({
-            "base.html": "{% block content %}{% endblock %}{% block extra_scripts %}{% endblock %}",
-            "star_aid/index.html": template,
-        }),
-        undefined=StrictUndefined,
-        autoescape=True,
-    )
-    state = {
-        "feature_enabled": True,
-        "member": None,
-        "credential_status": "authorized",
-        "daily_star_used": 0,
-        "daily_star_limit": 20,
-        "available_repos": [],
-        "displayed_repos": [],
-        "public_repos": [],
-        "is_admin": True,
-        "admin_members": [],
-        "admin_member_page": {
-            "items": [], "q": "", "status": "all", "total": 0,
-            "all_total": 0, "page": 1, "pages": 1, "page_size": 20,
-        },
-        "admin_repositories": [],
-        "admin_repository_page": {
-            "items": [], "q": "", "status": "all", "sort": "stars",
-            "order": "desc", "total": 0, "page": 1, "pages": 1,
-            "page_size": 20,
-        },
-    }
-    output = environment.get_template("star_aid/index.html").render(
-        state=state,
-        request=SimpleNamespace(query_params={}),
-        csrf_token="test",
-        _=lambda key, **_kwargs: key,
-    )
-    assert 'name="member_status"' in output
-    assert 'id="star-aid-admin-repository-results"' in output
-    assert 'id="star-aid-admin-repositories"' in output

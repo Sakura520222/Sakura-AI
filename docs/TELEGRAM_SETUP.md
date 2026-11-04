@@ -1,8 +1,8 @@
 # 🤖 Telegram Bot 集成指南
 
-> Telegram 仅作为统一公告投递的可选 Provider 和一次性绑定入口。账号登录、GitHub 身份、角色权限、配额、仓库和系统配置均在 WebUI 中管理。
+> Telegram 是[统一通知中心](NOTIFICATION_CENTER.md)的可选 Provider 和一次性私聊绑定入口，支持按偏好投递业务事件及公告。账号登录、GitHub 身份、角色权限、配额、仓库和系统配置均在 WebUI 中管理。
 
-← [文档索引](README.md) · [README](../README.md)
+← [文档索引](README.md) · [README](https://github.com/Sakura520222/Sakura-AI#readme)
 
 ---
 
@@ -73,7 +73,7 @@ Telegram Bot 不提供用户、管理员、仓库、配额或审查命令。需�
 
 用户在 WebUI 个人设置中绑定的私聊目标存储为 `NotificationEndpoint`。公告投递通过 `NotificationService` 解析已启用的端点，并由 `TelegramNotificationProvider` 发送到绑定的 Telegram 私聊。投递结果保留在公告投递记录中，发送失败不会改变账号权限。
 
-PR 审查、Issue 分析、扫描、MFA 和退款的 Telegram 专用业务消息已移除。本次变更未实现替代的业务事件通知层；PR/Issue 和扫描结果仍通过 GitHub 与 WebUI 查看。
+旧 Telegram 专用业务链路保持移除。PR 审查、Issue 分析、扫描、Agent、安全、配额、支付及退款现通过统一持久化事件和订阅规则投递；业务代码无需读取 chat ID 或调用 Bot。请在个人设置中为已验证的私聊端点配置需要接收的事件。完整结果仍可通过 GitHub 与 WebUI 查看。
 
 ## 🛡️ 安全建议
 

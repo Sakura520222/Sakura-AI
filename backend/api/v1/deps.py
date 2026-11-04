@@ -66,12 +66,12 @@ async def get_api_current_user(
     if not is_access_token_payload(payload):
         raise HTTPException(status_code=401, detail="凭证无效或已过期")
 
-    # Cookie mode refreshes claims; Bearer/query-token clients stay stateless.
-    if token_from_cookie:
-        refreshed_payload = await refresh_login_claims(payload)
-        if refreshed_payload is None:
-            raise HTTPException(status_code=401, detail="凭证无效或已过期")
-        payload = refreshed_payload
+    # Every access-token transport must obey live account state and roles.
+    # Only response-cookie renewal remains exclusive to cookie sessions.
+    refreshed_payload = await refresh_login_claims(payload)
+    if refreshed_payload is None:
+        raise HTTPException(status_code=401, detail="凭证无效或已过期")
+    payload = refreshed_payload
 
     user_id = payload.get("user_id")
     if not user_id:
@@ -116,3 +116,19 @@ async def require_api_super_admin(request: Request) -> dict:
     if user["role"] != "super_admin":
         raise HTTPException(status_code=403, detail="权限不足")
     return user
+
+
+async def require_cookie_csrf(request: Request) -> None:
+    """Cookie-authenticated API writes require CSRF, including legacy APIs."""
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return
+    authorization = request.headers.get("authorization", "")
+    # Match authentication: an empty Bearer suffix falls back to the cookie.
+    if authorization.startswith("Bearer ") and authorization[7:]:
+        return
+    if request.cookies.get(WEBUI_TOKEN_COOKIE_NAME):
+        from backend.webui.deps import validate_csrf_token
+
+        token = request.headers.get("x-csrf-token", "")
+        if not token or not validate_csrf_token(token):
+            raise HTTPException(status_code=403, detail="CSRF verification failed")

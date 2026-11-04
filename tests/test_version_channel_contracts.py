@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from starlette.requests import Request
 
-import backend.webui.routes.version as version_routes
+import backend.api.v1.version as version_routes
 
 ROOT = Path(__file__).parents[1]
 
@@ -32,35 +32,6 @@ def test_backend_channel_switch_confirmation_defaults_to_false_and_accepts_bool(
     )
     assert parsed is True
     assert error is None
-
-
-def test_template_uses_tabs_safe_dom_and_target_snapshot():
-    template = (ROOT / "backend/webui/templates/version_manager.html").read_text(
-        encoding="utf-8"
-    )
-    assert 'role="tablist"' in template
-    assert 'role="tabpanel"' in template
-    assert "/version/images" in template
-    assert "textContent" in template
-    assert "selectedRegistryTarget" in template
-    assert "confirm_channel_switch" in template
-    assert "registry-panel-other" in template
-    assert "CURRENT_BUILD_CHANNEL" in template
-    assert "version_manager.current_channel" in template
-    assert "version_manager.current_revision" in template
-    assert "currentChannelTarget" in template
-    assert "operationTarget" in template
-    assert "CURRENT_BUILD_CHANNEL !== image.channel" in template
-    assert "const candidate" in template
-    assert "registryEmpty:" in template
-    assert "registry_unavailable:" in template
-    assert "stale_catalog:" in template
-    assert "channel_head_unavailable:" in template
-    assert "developmentRisk:" in template
-    assert "channelSwitchRisk:" in template
-    assert "build.channel" in template
-    assert "build.revision" in template
-    assert "readinessChecks.innerHTML" not in template
 
 
 @pytest.mark.asyncio
@@ -201,34 +172,12 @@ async def test_manual_check_force_refreshes_current_stable_channel(monkeypatch):
     assert body["data"]["update_available"] is False
 
 
-def test_all_channel_readiness_checks_are_localized_in_both_languages():
-    template = (ROOT / "backend/webui/templates/version_manager.html").read_text(
-        encoding="utf-8"
-    )
-    translations = [
-        (ROOT / "backend/webui/translations/zh-CN.yaml").read_text(encoding="utf-8"),
-        (ROOT / "backend/webui/translations/en.yaml").read_text(encoding="utf-8"),
-    ]
-    labels = {
-        "target_identity_valid": "check_target_identity_valid",
-        "target_channel_head": "check_target_channel_head",
-        "channel_switch_confirmed": "check_channel_switch_confirmed",
-        "registry_digest_matches": "check_registry_digest_matches",
-        "already_current": "check_already_current",
-    }
-    for check_name, translation_key in labels.items():
-        assert f"{check_name}:" in template
-        assert f"version_manager.{translation_key}" in template
-        for locale in translations:
-            assert f"  {translation_key}:" in locale
-
-
 def test_image_route_is_super_admin_and_no_store():
-    source = (ROOT / "backend/webui/routes/version.py").read_text(encoding="utf-8")
-    start = source.index('@router.get("/version/images")')
-    end = source.index('@router.post("/version/check")', start)
+    source = (ROOT / "backend/api/v1/version.py").read_text(encoding="utf-8")
+    start = source.index('@router.get("/images")')
+    end = source.index('@router.post("/check")', start)
     section = source[start:end]
-    assert "require_super_admin" in section
+    assert "super_admin" in section
     assert "no-store" in section
     assert "registry_unavailable" in section
 

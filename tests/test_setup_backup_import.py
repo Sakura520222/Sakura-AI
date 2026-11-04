@@ -175,7 +175,23 @@ async def test_save_step_hides_unexpected_exception_details(monkeypatch):
         "success": False,
         "message": "保存失败，请检查输入或服务日志",
     }
+    assert response.status_code == 500
     assert secret.encode() not in response.body
+
+
+@pytest.mark.asyncio
+async def test_save_step_reports_failing_field_without_exception_details(monkeypatch):
+    monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
+
+    response = await setup_route.save_step(
+        _Request({"values": {"LOG_LEVEL": "not-a-level"}})
+    )
+
+    payload = _response_json(response)
+    assert response.status_code == 400
+    assert payload == {"success": False, "message": "配置校验失败: LOG_LEVEL"}
+    # 异常携带的具体原因（如 "日志级别无效"）不得回传客户端，仅记录服务端日志。
+    assert "日志级别无效" not in response.body.decode()
 
 
 @pytest.mark.asyncio
@@ -199,7 +215,7 @@ async def test_setup_complete_revalidates_backup_and_passes_parsed_sections(
         )
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 400
     call = complete.await_args
     assert "CONFIG_BACKUP" not in call.args[0]
     assert call.args[0]["DATABASE_URL"].startswith("mysql+asyncmy://override:")
@@ -234,6 +250,36 @@ async def test_setup_complete_rejects_invalid_backup_before_service_call(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_setup_complete_rejects_backup_without_echoing_details(monkeypatch):
+    monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
+    complete = AsyncMock()
+    monkeypatch.setattr(setup_route.setup_service, "complete_setup", complete)
+    document = json.loads(_setup_backup_content())
+    # 构造重复键：校验消息会插值配置键名，响应不得回传这些细节。
+    global_section = document["sections"][GLOBAL_SECTION]
+    global_section["configs"].append(dict(global_section["configs"][0]))
+    global_section["count"] = len(global_section["configs"])
+
+    response = await setup_route.complete_setup(
+        _Request(
+            {
+                "ADMIN_GITHUB_USERNAME": "admin",
+                "ADMIN_TELEGRAM_ID": "123",
+                "CONFIG_BACKUP": json.dumps(document, ensure_ascii=False),
+            }
+        )
+    )
+
+    assert response.status_code == 400
+    assert _response_json(response) == {
+        "success": False,
+        "message": "备份文件无效",
+    }
+    assert "database_url" not in response.body.decode()
+    complete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_complete_setup_restores_backup_before_explicit_setup_values(monkeypatch):
     service = SetupService()
     database_url = "mysql+asyncmy://backup:secret@db/sakura"
@@ -251,9 +297,7 @@ async def test_complete_setup_restores_backup_before_explicit_setup_values(monke
                 None,
             ),
             BackupRecord("github_oauth_client_id", "backup-client-id", None),
-            BackupRecord(
-                "github_oauth_client_secret", "backup-client-secret", None
-            ),
+            BackupRecord("github_oauth_client_secret", "backup-client-secret", None),
             BackupRecord(
                 "github_oauth_redirect_uri",
                 "https://backup.example.test/auth/callback",
@@ -392,17 +436,6 @@ async def test_restore_failure_does_not_mark_setup_completed(monkeypatch):
     mark_completed.assert_not_awaited()
 
 
-def test_setup_template_submits_backup_only_with_final_completion():
-    source = setup_route.templates.env.loader.get_source(
-        setup_route.templates.env,
-        "setup_wizard.html",
-    )[0]
-
-    assert "/setup/api/backup/inspect" in source
-    assert "map.CONFIG_BACKUP = this.backupContent" in source
-    assert "map.EMBEDDING_API_KEY = this.form.embedding_api_key" in source
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "oauth_values",
@@ -428,7 +461,9 @@ async def test_complete_setup_requires_usable_github_oauth_before_side_effects(
     monkeypatch.setattr(service, "restore_backup_for_setup", restore_backup)
     monkeypatch.setattr(service, "save_configs_to_db", save_configs)
     monkeypatch.setattr(service, "create_admin_user", create_admin)
-    monkeypatch.setattr("backend.core.setup_service.mark_setup_completed", mark_completed)
+    monkeypatch.setattr(
+        "backend.core.setup_service.mark_setup_completed", mark_completed
+    )
 
     result = await service.complete_setup(
         {
@@ -469,7 +504,9 @@ async def test_complete_setup_accepts_persisted_runtime_oauth_values(monkeypatch
     monkeypatch.setattr(service, "init_database", AsyncMock())
     monkeypatch.setattr(service, "save_configs_to_db", save_configs)
     monkeypatch.setattr(service, "create_admin_user", AsyncMock())
-    monkeypatch.setattr("backend.core.setup_service.mark_setup_completed", lambda *_: None)
+    monkeypatch.setattr(
+        "backend.core.setup_service.mark_setup_completed", lambda *_: None
+    )
 
     result = await service.complete_setup(
         {

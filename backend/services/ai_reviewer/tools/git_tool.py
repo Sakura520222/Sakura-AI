@@ -121,7 +121,7 @@ class GitToolHandler:
             return info
 
         except Exception as e:
-            logger.error(f"获取仓库信息时发生错误: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"获取仓库信息时发生错误: {e}")
             return {
                 "error": f"获取仓库信息失败: {e}",
             }
@@ -191,7 +191,7 @@ class GitToolHandler:
             }
 
         except Exception as e:
-            logger.error(f"获取提交历史时发生错误: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"获取提交历史时发生错误: {e}")
             return {
                 "branch": branch or "unknown",
                 "error": f"获取提交历史失败: {e}",

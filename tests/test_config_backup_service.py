@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
 from fastapi.routing import APIRoute
 
+from backend.api.v1 import settings_webui
+from backend.api.v1.deps import require_api_super_admin
 from backend.core import config_sections
 from backend.core.config_section_defaults import (
     LABEL_SECTION_DEFAULTS,
@@ -37,9 +39,7 @@ from backend.services.system_config_service import (
     SYSTEM_CONFIG_GROUPS,
     SYSTEM_CONFIG_KEYS,
 )
-from backend.webui.deps import require_csrf, require_super_admin
-from backend.webui.routes import config as config_routes
-from backend.webui.routes.config import router
+from backend.webui.deps import require_csrf_header
 
 
 def _ai_account_record(
@@ -563,28 +563,7 @@ class _ScalarResult:
         return self._rows
 
 
-class _FakeSession:
-    def __init__(self, rows: list[AppConfig]):
-        self.rows = rows
-        self.added: list[AppConfig] = []
-        self.deleted: list[AppConfig] = []
-        self.committed = False
-        self.rolled_back = False
-
-    async def execute(self, _query):
-        return _ScalarResult(self.rows)
-
-    def add(self, row: AppConfig) -> None:
-        self.added.append(row)
-
-    async def delete(self, row: AppConfig) -> None:
-        self.deleted.append(row)
-
-    async def commit(self) -> None:
-        self.committed = True
-
-    async def rollback(self) -> None:
-        self.rolled_back = True
+from tests.config_sqlite_session import SQLiteConfigSession as _FakeSession
 
 
 @pytest.mark.asyncio
@@ -691,7 +670,8 @@ async def test_runtime_restore_rejects_database_url_with_setup_guidance():
 
 
 @pytest.mark.asyncio
-async def test_runtime_restore_protects_connection_anchor_when_backup_omits_it():
+@pytest.mark.parametrize("include_redis", [True, False])
+async def test_runtime_restore_protects_both_connection_anchors(include_redis):
     database = AppConfig(
         key_name="database_url",
         key_value="mysql+asyncmy://current/db",
@@ -705,6 +685,8 @@ async def test_runtime_restore_protects_connection_anchor_when_backup_omits_it()
     session = _FakeSession([database, redis])
     sections = {
         SYSTEM_SECTION: [BackupRecord("redis_url", "redis://new:6379/0", "redis_url")]
+        if include_redis
+        else []
     }
 
     result = await restore_config_backup(
@@ -713,62 +695,16 @@ async def test_runtime_restore_protects_connection_anchor_when_backup_omits_it()
         allow_database_url=False,
     )
 
-    assert result.updated == 1
+    assert result.updated == 0
     assert session.deleted == []
     assert database.key_value == "mysql+asyncmy://current/db"
-
-
-class _BackupUpload:
-    filename = "backup.json"
-
-    async def read(self, _limit):
-        return b"backup"
-
-    async def close(self):
-        return None
-
-
-@pytest.mark.asyncio
-async def test_runtime_backup_route_passes_database_url_guard(monkeypatch):
-    sections = {
-        SYSTEM_SECTION: [
-            BackupRecord(
-                "database_url",
-                "mysql+asyncmy://new/db",
-                "database_url",
-            )
-        ]
-    }
-    restore = AsyncMock(
-        side_effect=ConfigBackupError("database_url restore database_url through Setup")
-    )
-    monkeypatch.setattr(config_routes, "parse_config_backup", lambda _content: sections)
-    monkeypatch.setattr(config_routes, "restore_config_backup", restore)
-    monkeypatch.setattr(config_routes, "detect_language", lambda: "en")
-    monkeypatch.setattr(
-        config_routes,
-        "toast_redirect",
-        lambda *_args, **kwargs: kwargs,
-    )
-
-    db = object()
-    result = await config_routes.upload_config_backup(
-        _BackupUpload(),
-        db=db,
-        user={"user_id": 1, "sub": "admin"},
-        csrf_token="csrf",
-    )
-
-    restore.assert_awaited_once_with(
-        db,
-        sections,
-        allow_database_url=False,
-    )
-    assert "Setup" in result["reason"]
+    assert redis.key_value == "redis://old:6379/0"
+    assert "redis_url" not in result.imported_values
+    assert "redis_url" not in result.deleted_keys
 
 
 def _route(path: str, method: str) -> APIRoute:
-    for route in router.routes:
+    for route in settings_webui.router.routes:
         if (
             isinstance(route, APIRoute)
             and route.path == path
@@ -785,21 +721,21 @@ def _dependency_calls(route: APIRoute) -> list[object]:
 @pytest.mark.parametrize(
     ("path", "method"),
     [
-        ("/config/backup", "GET"),
-        ("/config/backup/export/{scope}", "POST"),
-        ("/config/backup/import", "POST"),
+        ("/webui/backup", "GET"),
+        ("/webui/backup/export/{scope}", "POST"),
+        ("/webui/backup/import", "POST"),
     ],
 )
 def test_config_backup_routes_require_super_admin(path: str, method: str):
-    assert require_super_admin in _dependency_calls(_route(path, method))
+    assert require_api_super_admin in _dependency_calls(_route(path, method))
 
 
 @pytest.mark.parametrize(
     "path",
-    ["/config/backup/export/{scope}", "/config/backup/import"],
+    ["/webui/backup/export/{scope}", "/webui/backup/import"],
 )
 def test_config_backup_mutations_require_form_csrf(path: str):
-    assert require_csrf in _dependency_calls(_route(path, "POST"))
+    assert require_csrf_header in _dependency_calls(_route(path, "POST"))
 
 
 @pytest.mark.asyncio
@@ -816,10 +752,10 @@ async def test_download_response_is_attachment_and_never_cached(monkeypatch):
     async def fake_log(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(config_routes, "export_config_backup", fake_export)
-    monkeypatch.setattr(config_routes, "log_admin_action", fake_log)
+    monkeypatch.setattr(settings_webui, "export_config_backup", fake_export)
+    monkeypatch.setattr(settings_webui, "log_admin_action", fake_log)
 
-    response = await config_routes.download_config_backup(
+    response = await settings_webui.download_config_backup(
         "global",
         db=object(),
         user={"user_id": 1, "sub": "root"},

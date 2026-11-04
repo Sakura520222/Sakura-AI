@@ -1,0 +1,20 @@
+:root {
+  --vp-c-brand-1: #bf4e86;
+  --vp-c-brand-2: #d9679c;
+  --vp-c-brand-3: #e88caf;
+  --vp-c-brand-soft: rgba(217, 103, 156, 0.13);
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(120deg, #d14f91 10%, #e7a5bb 85%);
+}
+
+.dark {
+  --vp-c-brand-1: #f0a0c2;
+  --vp-c-brand-2: #e17fa8;
+  --vp-c-brand-3: #cf638f;
+  --vp-c-brand-soft: rgba(217, 103, 156, 0.18);
+}
+
+.VPHome .VPHero .image-container .image-bg {
+  background-image: linear-gradient(120deg, #f8c8de 10%, #e99bbf 90%);
+  filter: blur(48px);
+}

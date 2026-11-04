@@ -48,7 +48,6 @@ from backend.webui.auth import (
     decode_access_token,
 )
 from backend.webui.deps import (
-    error_page,
     is_webui_request,
     toast_redirect,
 )
@@ -220,6 +219,7 @@ async def lifespan(app: FastAPI):
         telegram_task = None
         redis_listener_task = None
         app.state.announcement_recovery_task = None
+        app.state.webhook_review_recovery_task = None
         outbox_dispatcher = None
         scan_scheduler = None
         quota_reset_scheduler = None
@@ -341,6 +341,24 @@ async def lifespan(app: FastAPI):
                     logger.warning(f"⚠️ 知识提取配置自检失败: {e}")
 
                 if _should_start_background_tasks(settings):
+                    from backend.services.config_runtime import (
+                        config_runtime_sync,
+                        register_scan_scheduler,
+                    )
+
+                    register_scan_scheduler(None)
+                    create_registered_background_task(
+                        config_runtime_sync.run(), "configuration_sync"
+                    )
+                    from backend.services.webhook_review_dispatch import (
+                        resume_queued_deliveries,
+                    )
+
+                    app.state.webhook_review_recovery_task = (
+                        create_registered_background_task(
+                            resume_queued_deliveries(), "webhook.review_recovery"
+                        )
+                    )
                     # Telegram is an optional notification provider.  A missing
                     # token must never prevent GitHub OAuth, Passkey, or the
                     # WebUI from starting.
@@ -366,13 +384,13 @@ async def lifespan(app: FastAPI):
                     # it after the optional Telegram task so its first event-loop
                     # turn observes the provider registry and Bot setup.
                     try:
-                        from backend.services.announcement_service import (
-                            recover_pending_announcement_deliveries,
+                        from backend.services.notification_service import (
+                            notification_service,
                         )
 
                         app.state.announcement_recovery_task = (
                             create_registered_background_task(
-                                recover_pending_announcement_deliveries(),
+                                notification_service.run_event_dispatcher(),
                                 "announcement.recovery",
                             )
                         )
@@ -476,6 +494,11 @@ async def lifespan(app: FastAPI):
 
                         scan_scheduler = ScanScheduler()
                         scan_scheduler.start()
+                        from backend.services.config_runtime import (
+                            register_scan_scheduler,
+                        )
+
+                        register_scan_scheduler(scan_scheduler)
                         app.state.scan_scheduler = scan_scheduler
                         existing_supervisor.register_scheduler(scan_scheduler)
                     except Exception as e:
@@ -523,8 +546,21 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("🔧 Bootstrap 模式：仅 Setup Wizard 可用")
             logger.info("请访问 /setup 完成初始配置")
-            # 生成 Setup Token：用户需从日志中获取 Token 才能访问 Setup Wizard
+            # Generate the private local Setup credential (never log its value).
             generate_setup_token()
+
+        # Warm the version-matched frontend before serving the first page.
+        # API/workers remain available if GitHub is temporarily unavailable;
+        # page requests retry the same artifact with a bounded backoff.
+        from backend.core.webui_distribution import (
+            WebUIDistributionError,
+            get_distribution,
+        )
+
+        try:
+            await get_distribution(settings.sakura_update_repo)
+        except WebUIDistributionError as exc:
+            logger.warning("前端预构建资源暂不可用，页面访问时将重试: {}", str(exc))
 
         # 记录启动完成时间
         _startup_finished_instant_utc = startup_clock.now_utc()
@@ -594,6 +630,9 @@ async def lifespan(app: FastAPI):
         # backwards-compatible monkeypatches in isolated lifespan tests.
     finally:
         if runtime_context_token is not None:
+            from backend.services.config_runtime import register_scan_scheduler
+
+            register_scan_scheduler(None)
             reset_runtime_supervisor(runtime_context_token)
 
 
@@ -656,6 +695,10 @@ app.add_middleware(BootstrapMiddleware)
 # Deliver queued WebUI session renewals on the final response.
 app.add_middleware(WebUITokenRenewalMiddleware)
 
+from backend.core.log_context import RequestLogContextMiddleware
+
+app.add_middleware(RequestLogContextMiddleware)
+
 
 # 健康检查
 @app.get("/health")
@@ -672,7 +715,13 @@ async def health():
 
 
 # 注册路由
-app.include_router(setup_router)
+from fastapi import APIRouter
+
+setup_data_router = APIRouter()
+setup_data_router.routes.extend(
+    route for route in setup_router.routes if "/api/" in route.path
+)
+app.include_router(setup_data_router)
 app.include_router(webhook.router, prefix="/api/webhook", tags=["Webhook"])
 app.include_router(webui_router)
 app.include_router(api_v1_router, prefix="/api/v1", tags=["API v1"])
@@ -743,22 +792,20 @@ def _get_webui_error_user(request: Request) -> dict | None:
 @app.exception_handler(HTTPException)
 async def auth_exception_handler(request: Request, exc: HTTPException):
     if exc.status_code == 401 and is_webui_request(request):
-        response = RedirectResponse(url="/auth/login", status_code=302)
+        response = RedirectResponse(url="/app/login", status_code=302)
         # A rejected cookie must not bounce between login and the dashboard.
         response.delete_cookie(WEBUI_TOKEN_COOKIE_NAME)
         return response
     if exc.status_code == 428 and is_webui_request(request):
         return RedirectResponse(
-            url="/settings/?_toast=MFA%20enrollment%20required&_toast_type=error",
+            url="/app/security",
             status_code=302,
         )
     if is_webui_request(request):
-        return error_page(
-            request,
-            status_code=exc.status_code,
-            title="请求无法完成",
-            message=str(exc.detail),
-            user=_get_webui_error_user(request),
+        return RedirectResponse(
+            f"/app/error?status={exc.status_code}",
+            status_code=302,
+            headers={"Cache-Control": "no-store"},
         )
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
@@ -811,11 +858,15 @@ def _run_serve(args: argparse.Namespace) -> int:
         start_reload_watcher(Path(__file__).resolve().parent.parent)
         logger.info("代码热重载已开启（模块级 reload，进程不重启）")
 
+    if args.log_level is not None:
+        settings.log_level = args.log_level.upper()
     config = uvicorn.Config(
         "backend.main:app",
         host=args.host,
         port=args.port if args.port is not None else settings.app_port,
-        log_level=(args.log_level or settings.log_level).lower(),
+        # Admission stays open at the bridge; both sinks enforce the live level.
+        # Otherwise a startup WARNING threshold permanently drops later DEBUG.
+        log_level="debug",
         log_config=None,
         timeout_graceful_shutdown=15,
     )
