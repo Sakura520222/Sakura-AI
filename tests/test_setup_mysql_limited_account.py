@@ -61,10 +61,13 @@ async def native_database():
                 text("CREATE USER :account@'%' IDENTIFIED BY :password"),
                 {"account": account, "password": "isolated-test-password"},
             )
-            # Ordinary schema privileges only: deliberately no TRIGGER.
+            # Ordinary schema privileges only — deliberately no TRIGGER/SUPER.
+            # REFERENCES is part of normal table creation here: the ORM schema
+            # declares foreign keys, and MySQL checks REFERENCES for them.
             await connection.execute(
                 text(
-                    "GRANT CREATE, ALTER, INDEX, DROP, SELECT, INSERT, UPDATE, DELETE "
+                    "GRANT CREATE, ALTER, INDEX, DROP, REFERENCES, "
+                    "SELECT, INSERT, UPDATE, DELETE "
                     f"ON {database}.* TO :account@'%'"
                 ),
                 {"account": account},
