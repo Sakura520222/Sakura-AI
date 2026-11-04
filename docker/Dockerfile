@@ -5,7 +5,7 @@ ARG SAKURA_BUILD_REVISION=unknown
 ARG SAKURA_BUILD_CREATED=1970-01-01T00:00:00Z
 
 # Build the WebUI once; the runtime image never needs a Node.js service.
-FROM node:24-bookworm-slim AS web-builder
+FROM node:26-bookworm-slim AS web-builder
 ARG SAKURA_BUILD_VERSION=unknown
 ARG SAKURA_BUILD_REVISION=unknown
 ARG SAKURA_WEBUI_PREBUILT=0
