@@ -275,7 +275,7 @@ jobs:
               "temperature": 0.3,
               "reasoning_effort": "high",
               "max_tokens": 32000,
-              "stream": False,
+              "stream": True,
           }
           body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
           url = f"{base_url}/chat/completions"
@@ -284,13 +284,58 @@ jobs:
               "Authorization": f"Bearer {api_key}",
               "Content-Type": "application/json",
               "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
-              "Accept": "application/json, text/plain, */*",
+              "Accept": "text/event-stream",
               "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
               "Cache-Control": "no-cache",
               "Pragma": "no-cache",
               "Origin": "https://api.firefly520.top",
               "Referer": "https://api.firefly520.top/",
           }
+
+          def read_completion(response) -> str:
+              # 逐行消费 SSE，及时接收上游数据，避免非流式响应在代理层等待完整生成。
+              # 每次尝试独立收集，断流后不得把前一次的片段拼进重试结果。
+              parts: list[str] = []
+              event_lines: list[str] = []
+              finish_reason: str | None = None
+              for raw_line in response:
+                  line = raw_line.decode("utf-8").rstrip("\r\n")
+                  if line.startswith(":"):
+                      continue  # SSE 心跳
+                  if line:
+                      field, _, value = line.partition(":")
+                      if field == "data":
+                          event_lines.append(value.removeprefix(" "))
+                      continue
+                  if not event_lines:
+                      continue
+                  event = "\n".join(event_lines)
+                  event_lines.clear()
+                  if event == "[DONE]":
+                      if finish_reason != "stop":
+                          raise RuntimeError("AI 流未正常完成")
+                      content = "".join(parts)
+                      if not content.strip():
+                          raise RuntimeError("AI 流未返回正文")
+                      return content
+                  chunk = json.loads(event)
+                  if not isinstance(chunk, dict) or "error" in chunk:
+                      raise RuntimeError("AI 流返回错误事件")
+                  for choice in chunk.get("choices") or []:
+                      if choice.get("index", 0) != 0:
+                          continue
+                      delta = choice.get("delta") or {}
+                      text = delta.get("content")
+                      if text is not None:
+                          if not isinstance(text, str):
+                              raise RuntimeError("AI 流正文格式无效")
+                          parts.append(text)
+                      reason = choice.get("finish_reason")
+                      if reason is not None:
+                          if reason != "stop":
+                              raise RuntimeError("AI 流提前终止，正文不完整")
+                          finish_reason = reason
+              raise RuntimeError("AI 流在 [DONE] 前断开，正文不完整")
 
           # 4. 请求（最多重试 2 次，指数退避；HTTP 错误读取响应体，便于从日志定位拒绝原因）
           last_err: Exception | None = None
@@ -300,10 +345,11 @@ jobs:
                   req = urllib.request.Request(
                       url, data=body, headers=headers, method="POST"
                   )
-                  # 等待模型完成，不设置客户端超时，也不降级为提交列表。
+                  # 不设置客户端超时；流式接收，避免代理等待完整响应而返回 524。
+                  print(f"AI 流式请求 {attempt + 1}/3", flush=True)
                   with urllib.request.urlopen(req) as resp:
-                      data = json.loads(resp.read().decode("utf-8"))
-                  content = data["choices"][0]["message"]["content"]
+                      print("已开始接收 AI 流式响应", flush=True)
+                      content = read_completion(resp)
                   break
               except urllib.error.HTTPError as e:
                   try:

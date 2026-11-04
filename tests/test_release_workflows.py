@@ -649,9 +649,34 @@ def test_release_notes_require_ai_success_without_a_client_timeout():
     assert "e.read()" in ai_text
 
 
+def _sse_event(data: dict | str) -> bytes:
+    payload = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
+    return f"data: {payload}\n\n".encode()
+
+
 def _release_notes_response(content: str) -> io.BytesIO:
     return io.BytesIO(
-        json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+        _sse_event({"choices": [{"index": 0, "delta": {"content": content}}]})
+        + _sse_event({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+        + _sse_event("[DONE]")
+    )
+
+
+def _release_notes_content() -> str:
+    return json.dumps(
+        {
+            "summary_zh": "维护版本。\n\n修复发布说明。",
+            "summary_en": "Maintenance release.\n\nFix release notes.",
+            "groups": [
+                {
+                    "type": "fix",
+                    "title_zh": "问题修复",
+                    "title_en": "Bug Fixes",
+                    "items": [{"zh": "保留完整说明", "en": "Preserve complete notes"}],
+                }
+            ],
+        },
+        ensure_ascii=False,
     )
 
 
@@ -694,23 +719,9 @@ def test_release_notes_retry_network_failure_then_publish_ai_content(
     release_notes_execution,
 ):
     run, request, sleep, notes = release_notes_execution
-    content = json.dumps(
-        {
-            "summary_zh": "维护版本。\n\n修复发布说明。",
-            "summary_en": "Maintenance release.\n\nFix release notes.",
-            "groups": [
-                {
-                    "type": "fix",
-                    "title_zh": "问题修复",
-                    "title_en": "Bug Fixes",
-                    "items": [{"zh": "保留完整说明", "en": "Preserve complete notes"}],
-                }
-            ],
-        }
-    )
     request.side_effect = [
         URLError("connection reset"),
-        _release_notes_response(content),
+        _release_notes_response(_release_notes_content()),
     ]
 
     run()
@@ -722,6 +733,113 @@ def test_release_notes_retry_network_failure_then_publish_ai_content(
     assert "保留完整说明" in result
     assert "Preserve complete notes" in result
     assert "<summary>English Changelog</summary>" in result
+
+
+def test_release_notes_stream_ignores_heartbeats_reasoning_and_usage(
+    release_notes_execution,
+):
+    run, request, _, notes = release_notes_execution
+    content = _release_notes_content()
+    midpoint = len(content) // 2
+    request.return_value = io.BytesIO(
+        b": keepalive\r\n\r\n"
+        + _sse_event({"choices": [{"index": 0, "delta": {"role": "assistant"}}]})
+        + _sse_event(
+            {
+                "choices": [
+                    {"index": 0, "delta": {"reasoning_content": "private reasoning"}}
+                ]
+            }
+        )
+        + _sse_event(
+            {
+                "choices": [
+                    {"index": 1, "delta": {"content": "ignore this alternative"}},
+                    {"index": 0, "delta": {"content": content[:midpoint]}},
+                ]
+            }
+        )
+        + b": still generating\n\n"
+        + _sse_event(
+            {"choices": [{"index": 0, "delta": {"content": content[midpoint:]}}]}
+        )
+        + _sse_event({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+        + _sse_event({"choices": [], "usage": {"completion_tokens": 120}})
+        + _sse_event("[DONE]")
+    )
+
+    run()
+
+    assert request.call_count == 1
+    sent = request.call_args.args[0]
+    assert json.loads(sent.data)["stream"] is True
+    assert sent.get_header("Accept") == "text/event-stream"
+    result = notes.read_text(encoding="utf-8")
+    assert "保留完整说明" in result
+    assert "private reasoning" not in result
+    assert "ignore this alternative" not in result
+
+
+def test_release_notes_disconnected_stream_discards_partial_before_retry(
+    release_notes_execution,
+):
+    class DisconnectedStream(io.BytesIO):
+        def __next__(self):
+            try:
+                return super().__next__()
+            except StopIteration:
+                raise ConnectionResetError("stream disconnected") from None
+
+    run, request, sleep, notes = release_notes_execution
+    request.side_effect = [
+        DisconnectedStream(
+            _sse_event({"choices": [{"index": 0, "delta": {"content": '{"partial":'}}]})
+        ),
+        _release_notes_response(_release_notes_content()),
+    ]
+
+    run()
+
+    assert request.call_count == 2
+    sleep.assert_called_once()
+    result = notes.read_text(encoding="utf-8")
+    assert "保留完整说明" in result
+    assert "partial" not in result
+
+
+@pytest.mark.parametrize(
+    "terminal",
+    [
+        b'event: error\ndata: {"error": {"message": "upstream failed"}}\n\n',
+        _sse_event({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}),
+        _sse_event("[DONE]"),
+        _sse_event({"choices": [{"index": 0, "delta": {}, "finish_reason": "length"}]})
+        + _sse_event("[DONE]"),
+        _sse_event(
+            {"choices": [{"index": 0, "delta": {}, "finish_reason": "content_filter"}]}
+        )
+        + _sse_event("[DONE]"),
+    ],
+    ids=["error-event", "missing-done", "missing-stop", "length", "content-filter"],
+)
+def test_release_notes_incomplete_or_failed_stream_never_publishes(
+    release_notes_execution, terminal
+):
+    run, request, _, notes = release_notes_execution
+    stream = (
+        _sse_event(
+            {"choices": [{"index": 0, "delta": {"content": _release_notes_content()}}]}
+        )
+        + terminal
+    )
+    request.side_effect = [io.BytesIO(stream) for _ in range(3)]
+
+    with pytest.raises(SystemExit) as exc:
+        run()
+
+    assert exc.value.code == 1
+    assert request.call_count == 3
+    assert not notes.exists()
 
 
 def test_release_notes_exhausted_network_errors_fail_publication(
