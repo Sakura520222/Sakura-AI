@@ -710,7 +710,7 @@ jobs:
       contents: write
     uses: ./.github/workflows/webui-build.yml
     with:
-      source_ref: refs/tags/v${{ needs.generate-release.outputs.version }}
+      source_revision: refs/tags/v${{ needs.generate-release.outputs.version }}
       release_tag: v${{ needs.generate-release.outputs.version }}
 
   build-and-upload-assets:

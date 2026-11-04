@@ -224,12 +224,14 @@ def test_release_workflow_keeps_single_owner_and_source_asset_cleanup_contract()
     # The allowed second release writer must stay driven by the release
     # pipeline itself: pinned to the immutable tag with a matching
     # release_tag so webui-build.yml never invents its own version.
+    # webui-build's input is `source_revision` (immutable SHA/tag contract);
+    # updater-build/docker-publish/sandbox-publish keep their own `source_ref`.
     webui = jobs["publish-webui-assets"]
     assert webui["needs"] == "generate-release"
     assert webui["if"] == "needs.generate-release.result == 'success'"
     assert webui["uses"] == "./.github/workflows/webui-build.yml"
     assert webui["with"] == {
-        "source_ref": "refs/tags/v${{ needs.generate-release.outputs.version }}",
+        "source_revision": "refs/tags/v${{ needs.generate-release.outputs.version }}",
         "release_tag": "v${{ needs.generate-release.outputs.version }}",
     }
     assert "runs-on" not in webui

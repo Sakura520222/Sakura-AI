@@ -279,7 +279,14 @@ async def save_step(body: SaveStepRequest):
     except DatabaseSetupError as exc:
         return _database_response(exc.report)
     except ValueError as exc:
-        return error_response(str(exc), status_code=400)
+        # Validation messages are fixed literals from the shared Setup
+        # validators; read args[0] directly so exception stringification never
+        # reaches the response. / 校验消息来自共享 Setup 校验器的固定文案，
+        # 直接读 args[0]，避免异常对象字符串化进入响应。
+        return error_response(
+            exc.args[0] if exc.args and isinstance(exc.args[0], str) else "配置校验失败",
+            status_code=400,
+        )
     except Exception:
         logger.exception("Setup 配置保存失败 / setup save failed")
         return error_response("配置保存失败，请稍后重试", status_code=500)

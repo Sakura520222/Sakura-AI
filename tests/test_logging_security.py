@@ -88,6 +88,71 @@ def test_credentials_are_redacted_without_erasing_diagnostics(payload):
     )
 
 
+def test_hostile_floods_keep_redaction_output_exact():
+    """Poly RedoS regressions: every adversarial flood family stays exact."""
+    # Pure letter flood against the userinfo pattern: must not match or stall.
+    flood = "a" * 200000
+    assert sanitize_text(flood) == flood
+
+    # Mixed scheme-alphabet floods (letters alternating with the other
+    # scheme-run characters) are rejected in one linear pass as well.
+    for seed in ("a.", "0a", "-a", "a:"):
+        mixed_flood = seed * 100000
+        assert sanitize_text(mixed_flood) == mixed_flood
+
+    # Anchor floods without a completing @ fail per anchor, not per start
+    # position, so the whole text survives unchanged.
+    anchor_flood = ("a://" + "b" * 100) * 1000
+    assert sanitize_text(anchor_flood) == anchor_flood
+    no_at_flood = ("a://b:" + "c" * 100) * 1000
+    assert sanitize_text(no_at_flood) == no_at_flood
+
+    # Repeated complete credentials keep redacting across the flood.
+    credential_flood = ("https://user:secret-value@" + "x" * 50) * 1000
+    assert sanitize_text(credential_flood) == (
+        "https://user:***@" + "x" * 50
+    ) * 1000
+
+    # Case-insensitive scheme matching is preserved, including Python's extra
+    # IGNORECASE foldings for [a-z] (U+017F and U+212A).
+    assert sanitize_text("HTTPS://user:secret-value@host/3") == (
+        "HTTPS://user:***@host/3"
+    )
+    folded = "\u017f\u212a://user:secret-value@host/3"
+    assert sanitize_text(folded) == "\u017f\u212a://user:***@host/3"
+
+    # Dangling BEGIN markers without any END marker: no complete pair, so the
+    # original text must be preserved unchanged.
+    dangling = "-----BEGIN PRIVATE KEY-----" * 5000
+    assert sanitize_text(dangling) == dangling
+
+    # Dangling BEGIN markers with long label bodies stay linear as well.
+    long_dangling = ("-----BEGIN PRIVATE KEY-----" + "y" * 1000) * 200
+    assert sanitize_text(long_dangling) == long_dangling
+
+    # A complete block is replaced by *** while surrounding text survives.
+    secret = "embedded-private-payload"
+    block = (
+        f"pre -----BEGIN RSA PRIVATE KEY-----\n{secret}\n"
+        "-----END RSA PRIVATE KEY----- post"
+    )
+    assert sanitize_text(block) == "pre *** post"
+
+    # A complete pair is redacted even when a later BEGIN never closes, and
+    # the unclosed marker is preserved, matching the old non-greedy behavior.
+    paired_and_dangling = (
+        "-----BEGIN PRIVATE KEY-----a-----END PRIVATE KEY-----"
+        "keep-----BEGIN PRIVATE KEY-----tail"
+    )
+    assert sanitize_text(paired_and_dangling) == (
+        "***keep-----BEGIN PRIVATE KEY-----tail"
+    )
+
+    # Long scheme runs still reach the userinfo match.
+    long_scheme = "a" * 200 + "://user:secret-value@host/3"
+    assert sanitize_text(long_scheme) == "a" * 200 + "://user:***@host/3"
+
+
 @pytest.mark.parametrize(
     "uri,expected",
     [
