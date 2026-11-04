@@ -15,7 +15,7 @@ dependencies = [
     # Web框架
     "fastapi>=0.143.2,<1.0.0",
     "starlette>=1.10.0,<2.0.0",
-    "uvicorn[standard]>=0.53.0",
+    "uvicorn[standard]>=0.54.0",
     "python-multipart>=0.0.32",
 
     # GitHub集成
