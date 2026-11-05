@@ -570,7 +570,7 @@ sudo ./start.sh uninstall
 
 命令会要求输入 `UNINSTALL`。自动化环境必须显式传入 `--yes`，不会因为 stdin 非交互而默认确认。
 
-**保留数据重新安装**：使用生产部署入口，例如 `sudo ./start.sh --prod --channel=development`，不要用菜单「更新镜像 / 切换镜像频道」代替安装；这些更新入口要求可用的 Host Updater 和可验证的当前容器。旧的开发镜像三项 pin 仍完整且身份一致时，生产部署会复用它们，所以 `--channel=development` 不等于强制拉取频道最新构建。若明确要在已卸载实例上安装最新开发版，应先备份 `.deploy/deployment.env`，仅移除其中的 `SAKURA_AI_IMAGE=` 行，再执行上述生产部署命令；脚本会从完整 development deployment manifest 重新解析三项镜像。保留数据库密码、项目名、连接配置与其余部署字段，保持文件 root-owned、`0600`，不要为此执行 `--purge`。部署完成后会自动安装并启动 updater。
+**保留数据重新安装**：卸载 Host Updater 后，使用生产部署入口，例如 `sudo ./start.sh --prod --channel=development`。仅停止服务或删除服务容器、仍保留 Host Updater 和部署信息时，可直接用菜单 [10] 更新并启动服务：Updater 从已保存的 digest 和本地镜像构建标签验证当前频道与回滚目标，不要求先启动旧版本。运行中的容器仍使用实际运行身份校验。开发频道更新会重新解析完整 deployment manifest，不会把已安装的旧镜像当作最新目标。生产部署入口则会复用仍完整且身份一致的三项 pin；若在已卸载实例上重新安装最新开发版，应先备份 `.deploy/deployment.env`，仅移除其中的 `SAKURA_AI_IMAGE=` 行，再执行上述生产部署命令。保留数据库密码、项目名、连接配置与其余部署字段，保持文件 root-owned、`0600`，不要为此执行 `--purge`。部署完成后会自动安装并启动 updater。
 
 完全清理必须显式使用 `--purge` 并输入 `UNINSTALL`：
 

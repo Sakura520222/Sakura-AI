@@ -362,6 +362,94 @@ class DeploymentStateProvider:
         )
         return running_digest
 
+    async def _stopped_container_image(self) -> tuple[bool, str | None]:
+        """Prove stopped/absent state without treating Docker failures as absence."""
+
+        stdout, _ = await self._run_docker_command([
+            "docker", "container", "ls", "--all", "--no-trunc",
+            "--filter", f"name=^/{re.escape(self.web_container)}$", "--format={{.ID}}",
+        ])
+        identifiers = stdout.split()
+        if not identifiers:
+            return True, None
+        if len(identifiers) != 1 or not re.fullmatch(r"[0-9a-f]{64}", identifiers[0]):
+            raise DeploymentError("cannot determine current container state")
+        stdout, _ = await self._run_docker_command([
+            "docker", "container", "inspect", "--format={{json .}}", identifiers[0],
+        ])
+        try:
+            container = json.loads(stdout)
+            state = container["State"]
+            if container["Name"] != "/" + self.web_container or type(state["Running"]) is not bool:
+                raise ValueError("unexpected container identity/state")
+            if state["Running"]:
+                return False, None
+            if state["Status"] not in {"created", "exited", "dead"}:
+                raise ValueError("container is not stopped")
+            image_id = container["Image"]
+            if not isinstance(image_id, str) or not _REGISTRY_DIGEST_RE.fullmatch(image_id):
+                raise ValueError("invalid stopped container image")
+        except (ValueError, KeyError, TypeError) as exc:
+            raise DeploymentError("cannot verify stopped container state") from exc
+        return True, image_id
+
+    async def _stopped_image_identity(self, image: str | None, image_id: str | None) -> dict[str, Any]:
+        """Verify the persisted rollback image independently of a live Web app."""
+
+        from sakura_ai_updater.contract import REPOSITORIES
+        from sakura_ai_updater.registry import (
+            RegistryTargetError,
+            parse_development_target,
+            parse_stable_target,
+        )
+
+        if self.read_deploy_mode() != "image" or not image or "@" not in image:
+            raise DeploymentError("stopped updates require a digest-pinned deployment image")
+        repository, tagged = _registry_image_ref(image)
+        if repository != REPOSITORIES["web"]:
+            raise DeploymentError("stopped deployment repository is not trusted")
+        digest = image.rsplit("@", 1)[1]
+        metadata = await self._inspect_image_metadata(image)
+        self._select_registry_digest(metadata, expected_repository=repository,
+                                     expected_tag=tagged, expected_digest=digest)
+        # A surviving stopped container must agree with the persisted baseline.
+        # Do not use a changed env file to conceal a different installed image.
+        if image_id is not None and metadata.get("Id") != image_id:
+            raise DeploymentError("stopped container does not match deployment image")
+        config = metadata.get("Config")
+        labels = config.get("Labels") if isinstance(config, dict) else None
+        if not isinstance(labels, dict):
+            raise DeploymentError("stopped deployment image has no build labels")
+        version = labels.get("org.opencontainers.image.version")
+        revision = labels.get("org.opencontainers.image.revision")
+        channel = labels.get("com.sakura-ai.build.channel")
+        if (not isinstance(version, str) or _parse_version(version) is None
+            or not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision)
+            or not isinstance(channel, str) or channel not in {"stable", "development"}
+            or labels.get("com.sakura-ai.component") != "web"):
+            raise DeploymentError("stopped deployment image build identity is invalid")
+        target = {"channel": channel, "version": version, "revision": revision,
+                  "tag": tagged.rsplit(":", 1)[1], "digest": digest}
+        try:
+            # A pinned alias is also immutable; its labels supply the build
+            # identity. Canonical tags must additionally agree with those labels.
+            if channel == "development" and target["tag"] != "edge":
+                parse_development_target(target)
+            elif channel == "stable" and target["tag"] != "latest":
+                parse_stable_target(target)
+        except RegistryTargetError as exc:
+            raise DeploymentError("stopped deployment tag and build labels disagree") from exc
+        return {
+            "current_version": version, "current_channel": channel,
+            "current_revision": revision, "from_digest": digest,
+            "running_container_digest": None, "identity_source": "stopped_image",
+        }
+
+    async def capture_rollback_digest(self) -> str:
+        """Revalidate the installed baseline for either live or stopped updates."""
+
+        return (await self.current_state())["from_digest"]
+
     async def materialize_current_anchor(self, *, persist: bool = True) -> str:
         """Pin a mutable ``:latest`` deployment to its running tag and digest.
 
@@ -468,15 +556,24 @@ class DeploymentStateProvider:
     async def current_state(self) -> dict[str, Any]:
         """Current selected and running identities, without mutating state."""
         image = self.read_image_ref()
-        running_digest = await self.capture_from_digest()
         build = await self.resolve_current_build()
+        version = await self.resolve_current_version()
+        identity = None
+        if not build and version is None:
+            stopped, image_id = await self._stopped_container_image()
+            if stopped:
+                identity = await self._stopped_image_identity(image, image_id)
+        if identity is None:
+            running_digest = await self.capture_from_digest()
+            identity = {
+                "current_version": version, "current_channel": build.get("channel"),
+                "current_revision": build.get("revision"), "from_digest": running_digest,
+                "running_container_digest": running_digest, "identity_source": "running",
+            }
         return {
-            "current_version": await self.resolve_current_version(),
-            "current_channel": build.get("channel"),
-            "current_revision": build.get("revision"),
-            "current_image": image, "from_image": image, "from_digest": running_digest,
+            **identity,
+            "current_image": image, "from_image": image,
             "deployment_mode": self.read_deploy_mode(),
-            "running_container_digest": running_digest,
             **self.sandbox_image_refs(),
             "sandbox_runtime": await self.sandbox_runtime_identity(),
         }

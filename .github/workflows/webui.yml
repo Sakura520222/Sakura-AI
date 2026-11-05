@@ -19,7 +19,7 @@ jobs:
       contents: write
     uses: ./.github/workflows/webui-build.yml
     with:
-      source_ref: ${{ github.sha }}
+      source_revision: ${{ github.sha }}
 
   frontend:
     runs-on: ubuntu-latest
