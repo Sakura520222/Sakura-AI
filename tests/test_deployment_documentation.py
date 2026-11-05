@@ -40,5 +40,9 @@ def test_updater_sync_documents_health_as_a_manual_prerequisite() -> None:
     for text in (readme_zh, readme_en):
         assert "https://sakura520222.github.io/Sakura-AI/DEPLOYMENT.html" in text
     assert "它本身**不提供应用健康门禁**" in guide
-    assert "管理员重新安装 updater binary 前必须手动完成的检查" in guide
+    assert (
+        "直接使用 WebUI 更新时，确认上述响应中的 `version` 等于目标版本后，可手动同步 updater"
+        in guide
+    )
+    assert "通过 `start.sh` 更新则会在应用更新前自动同步宿主 updater" in guide
     assert "无需查询 `/health`" in guide
