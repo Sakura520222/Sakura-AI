@@ -31,7 +31,7 @@ npm run build --prefix docs
 
 Classic pip development uses `requirements-dev.txt`, which includes runtime requirements, the editable updater with its test extras, and the SQLite test driver. Keep its development dependencies aligned with the `pyproject.toml` dev group; the pip CI job installs this same manifest.
 
-The `docs/` directory doubles as the VitePress documentation site source (Node 22, dependencies locked in `docs/package-lock.json`). `.github/workflows/docs-pages.yml` runs the build check for PRs targeting `develop`/`main` and deploys GitHub Pages automatically on pushes to `main` (site base `/Sakura-AI/`). Site conventions — sidebar maintenance in `docs/.vitepress/config.mjs`, `srcExclude` entries, and full GitHub URLs for links to repository-root files — are documented in `docs/DOCS_MAINTENANCE.md`.
+The `docs/` directory doubles as the VitePress documentation site source (Node 22, dependencies locked in `docs/package-lock.json`). `.github/workflows/docs-pages.yml` only checks builds for PRs and pushes to `develop`/`main`. Cloudflare Pages project `sakura-ai-docs` automatically deploys pushes to `develop` at `https://sakura-ai.pyabunny.com/`, using `docs` as its root and `npm ci --no-audit --no-fund && npm run build -- --base /` as its build command. Do not enable a duplicate GitHub Pages deployment. Site conventions — sidebar maintenance in `docs/.vitepress/config.mjs`, `srcExclude` entries, and full GitHub URLs for links to repository-root files — are documented in `docs/DOCS_MAINTENANCE.md`.
 
 ## Coding Style and Testing
 
