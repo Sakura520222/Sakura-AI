@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import io
+import json
 from pathlib import Path
+from unittest.mock import Mock
+from urllib.error import URLError
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).parents[1]
@@ -224,12 +229,14 @@ def test_release_workflow_keeps_single_owner_and_source_asset_cleanup_contract()
     # The allowed second release writer must stay driven by the release
     # pipeline itself: pinned to the immutable tag with a matching
     # release_tag so webui-build.yml never invents its own version.
+    # webui-build's input is `source_revision` (immutable SHA/tag contract);
+    # updater-build/docker-publish/sandbox-publish keep their own `source_ref`.
     webui = jobs["publish-webui-assets"]
     assert webui["needs"] == "generate-release"
     assert webui["if"] == "needs.generate-release.result == 'success'"
     assert webui["uses"] == "./.github/workflows/webui-build.yml"
     assert webui["with"] == {
-        "source_ref": "refs/tags/v${{ needs.generate-release.outputs.version }}",
+        "source_revision": "refs/tags/v${{ needs.generate-release.outputs.version }}",
         "release_tag": "v${{ needs.generate-release.outputs.version }}",
     }
     assert "runs-on" not in webui
@@ -579,13 +586,12 @@ def test_publish_update_manifest_waits_for_release_assets_and_stable_image():
     assert "--platform linux/amd64" in smoke_text
 
 
-def test_release_notes_contract_collects_facts_and_deterministic_fallback():
-    """Release Notes 生成契约：事实信号单一来源 + 新章节 + 降级路径确定性规则。"""
+def test_release_notes_require_ai_success_without_a_client_timeout():
+    """AI failure must stop publication instead of publishing commit titles."""
     release, _ = _load(RELEASE_PATH)
     job = release["jobs"]["generate-release"]
 
-    # 事实信号收集步骤是两条路径的单一输入源：排除 merge commit、按标题去重
-    # （main↔develop 回流会产生同名不同 SHA 的提交，曾导致 v3.1.3 降级输出重复）。
+    # main↔develop 回流会产生同名不同 SHA 的提交，仍须排除 merge 并按标题去重。
     facts = next(
         step for step in job["steps"] if step.get("name") == "收集变更事实信号"
     )
@@ -612,6 +618,15 @@ def test_release_notes_contract_collects_facts_and_deterministic_fallback():
         step for step in job["steps"] if step.get("name") == "AI 生成 Release 说明"
     )
     ai_text = ai_step["run"]
+    assert not ai_step.get("continue-on-error", False)
+    assert "if" not in ai_step
+    assert "timeout-minutes" not in ai_step
+    assert "timeout-minutes" not in job
+    assert "timeout=" not in ai_text
+    assert "fail_fallback" not in ai_text
+    assert not any(
+        step.get("name", "").startswith("生成 Release 描述") for step in job["steps"]
+    )
     # AI 只消费收集好的事实信号，不得自行 git log
     assert "git log" not in ai_text
     # 版本定位并入 summary 两段结构，不引入独立 version_note 字段
@@ -633,22 +648,241 @@ def test_release_notes_contract_collects_facts_and_deterministic_fallback():
     # HTTP 错误须读取响应体，让 4xx 的真实拒绝原因可从日志定位
     assert "e.read()" in ai_text
 
-    fallback = next(
-        step
-        for step in job["steps"]
-        if step.get("name", "").startswith("生成 Release 描述")
+
+def _sse_event(data: dict | str) -> bytes:
+    payload = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
+    return f"data: {payload}\n\n".encode()
+
+
+def _release_notes_response(content: str) -> io.BytesIO:
+    return io.BytesIO(
+        _sse_event({"choices": [{"index": 0, "delta": {"content": content}}]})
+        + _sse_event({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+        + _sse_event("[DONE]")
     )
-    fallback_text = fallback["run"]
-    # 降级路径复用去重后的提交列表与变更清单，只输出确定性规则，绝不让 bash 推测
-    assert "git log" not in fallback_text
-    assert "subjects.txt" in fallback_text
-    assert "changed_paths.txt" in fallback_text
-    assert "BREAKING" in fallback_text
-    # 路径规则覆盖依赖 / Docker / 数据库结构三类事实
-    assert "requirements" in fallback_text
-    assert "docker-compose" in fallback_text
-    assert "backend/models" in fallback_text
-    assert "### 升级提示 / Upgrade Notes" in fallback_text
+
+
+def _release_notes_content() -> str:
+    return json.dumps(
+        {
+            "summary_zh": "维护版本。\n\n修复发布说明。",
+            "summary_en": "Maintenance release.\n\nFix release notes.",
+            "groups": [
+                {
+                    "type": "fix",
+                    "title_zh": "问题修复",
+                    "title_en": "Bug Fixes",
+                    "items": [{"zh": "保留完整说明", "en": "Preserve complete notes"}],
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
+@pytest.fixture
+def release_notes_execution(monkeypatch, tmp_path):
+    release, _ = _load(RELEASE_PATH)
+    step = next(
+        step
+        for step in release["jobs"]["generate-release"]["steps"]
+        if step.get("name") == "AI 生成 Release 说明"
+    )
+    script = step["run"].partition("<<'PY'\n")[2].rsplit("\nPY", 1)[0]
+    assert script
+    facts_dir = tmp_path / "release_facts"
+    facts_dir.mkdir()
+    (facts_dir / "subjects.txt").write_text("fix: preserve release notes\n")
+    for name, value in {
+        "LLM_BASE_URL": "https://example.invalid/v1",
+        "LLM_API_KEY": "test-key",
+        "LLM_MODEL": "test-model",
+        "VERSION": "3.2.5",
+        "DATE": "2026-11-05",
+        "RUNNER_TEMP": str(tmp_path),
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.chdir(tmp_path)
+    request = Mock()
+    sleep = Mock()
+    monkeypatch.setattr("urllib.request.urlopen", request)
+    monkeypatch.setattr("time.sleep", sleep)
+
+    def run():
+        # Execute the repository-owned workflow code with mocked network I/O.
+        exec(compile(script, str(RELEASE_PATH), "exec"), {"__name__": "__main__"})  # noqa: S102
+
+    return run, request, sleep, tmp_path / "release_notes.txt"
+
+
+def test_release_notes_retry_network_failure_then_publish_ai_content(
+    release_notes_execution,
+):
+    run, request, sleep, notes = release_notes_execution
+    request.side_effect = [
+        URLError("connection reset"),
+        _release_notes_response(_release_notes_content()),
+    ]
+
+    run()
+
+    assert request.call_count == 2
+    assert all(not call.kwargs for call in request.call_args_list)
+    sleep.assert_called_once()
+    result = notes.read_text(encoding="utf-8")
+    assert "保留完整说明" in result
+    assert "Preserve complete notes" in result
+    assert "<summary>English Changelog</summary>" in result
+
+
+def test_release_notes_stream_ignores_heartbeats_reasoning_and_usage(
+    release_notes_execution,
+):
+    run, request, _, notes = release_notes_execution
+    content = _release_notes_content()
+    midpoint = len(content) // 2
+    request.return_value = io.BytesIO(
+        b": keepalive\r\n\r\n"
+        + _sse_event({"choices": [{"index": 0, "delta": {"role": "assistant"}}]})
+        + _sse_event(
+            {
+                "choices": [
+                    {"index": 0, "delta": {"reasoning_content": "private reasoning"}}
+                ]
+            }
+        )
+        + _sse_event(
+            {
+                "choices": [
+                    {"index": 1, "delta": {"content": "ignore this alternative"}},
+                    {"index": 0, "delta": {"content": content[:midpoint]}},
+                ]
+            }
+        )
+        + b": still generating\n\n"
+        + _sse_event(
+            {"choices": [{"index": 0, "delta": {"content": content[midpoint:]}}]}
+        )
+        + _sse_event({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+        + _sse_event({"choices": [], "usage": {"completion_tokens": 120}})
+        + _sse_event("[DONE]")
+    )
+
+    run()
+
+    assert request.call_count == 1
+    sent = request.call_args.args[0]
+    assert json.loads(sent.data)["stream"] is True
+    assert sent.get_header("Accept") == "text/event-stream"
+    result = notes.read_text(encoding="utf-8")
+    assert "保留完整说明" in result
+    assert "private reasoning" not in result
+    assert "ignore this alternative" not in result
+
+
+def test_release_notes_disconnected_stream_discards_partial_before_retry(
+    release_notes_execution,
+):
+    class DisconnectedStream(io.BytesIO):
+        def __next__(self):
+            try:
+                return super().__next__()
+            except StopIteration:
+                raise ConnectionResetError("stream disconnected") from None
+
+    run, request, sleep, notes = release_notes_execution
+    request.side_effect = [
+        DisconnectedStream(
+            _sse_event({"choices": [{"index": 0, "delta": {"content": '{"partial":'}}]})
+        ),
+        _release_notes_response(_release_notes_content()),
+    ]
+
+    run()
+
+    assert request.call_count == 2
+    sleep.assert_called_once()
+    result = notes.read_text(encoding="utf-8")
+    assert "保留完整说明" in result
+    assert "partial" not in result
+
+
+@pytest.mark.parametrize(
+    "terminal",
+    [
+        b'event: error\ndata: {"error": {"message": "upstream failed"}}\n\n',
+        _sse_event({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}),
+        _sse_event("[DONE]"),
+        _sse_event({"choices": [{"index": 0, "delta": {}, "finish_reason": "length"}]})
+        + _sse_event("[DONE]"),
+        _sse_event(
+            {"choices": [{"index": 0, "delta": {}, "finish_reason": "content_filter"}]}
+        )
+        + _sse_event("[DONE]"),
+    ],
+    ids=["error-event", "missing-done", "missing-stop", "length", "content-filter"],
+)
+def test_release_notes_incomplete_or_failed_stream_never_publishes(
+    release_notes_execution, terminal
+):
+    run, request, _, notes = release_notes_execution
+    stream = (
+        _sse_event(
+            {"choices": [{"index": 0, "delta": {"content": _release_notes_content()}}]}
+        )
+        + terminal
+    )
+    request.side_effect = [io.BytesIO(stream) for _ in range(3)]
+
+    with pytest.raises(SystemExit) as exc:
+        run()
+
+    assert exc.value.code == 1
+    assert request.call_count == 3
+    assert not notes.exists()
+
+
+def test_release_notes_exhausted_network_errors_fail_publication(
+    release_notes_execution,
+):
+    run, request, sleep, notes = release_notes_execution
+    request.side_effect = URLError("connection reset")
+
+    with pytest.raises(SystemExit) as exc:
+        run()
+
+    assert exc.value.code == 1
+    assert request.call_count == 3
+    assert sleep.call_count == 2
+    assert not notes.exists()
+
+
+@pytest.mark.parametrize("content", ["not JSON", '{"summary_zh": "摘要"}'])
+def test_release_notes_invalid_ai_content_fails_publication(
+    release_notes_execution, content
+):
+    run, request, _, notes = release_notes_execution
+    request.return_value = _release_notes_response(content)
+
+    with pytest.raises(SystemExit) as exc:
+        run()
+
+    assert exc.value.code == 1
+    assert not notes.exists()
+
+
+def test_release_notes_missing_credentials_fails_before_request(
+    release_notes_execution, monkeypatch
+):
+    run, request, _, notes = release_notes_execution
+    monkeypatch.delenv("LLM_API_KEY")
+
+    with pytest.raises(SystemExit) as exc:
+        run()
+
+    assert exc.value.code == 1
+    request.assert_not_called()
+    assert not notes.exists()
 
 
 def test_ci_keeps_main_job_and_adds_independent_updater_quality():

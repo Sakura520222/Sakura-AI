@@ -1,6 +1,7 @@
 """Repository community actions over the existing membership and GitHub services."""
 
 from typing import Literal
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
@@ -182,8 +183,21 @@ async def manual_star_route(repo_id: int, *, user: dict, db: AsyncSession):
     )
     await db.commit()
     if result.get("reauth_required"):
+        # Build the redirect from a constant path plus urlencode so the target
+        # origin is fixed by construction; safe="/" keeps "/" literal, matching
+        # the previous literal query string (RFC 3986 allows "/" in queries).
+        # 由常量路径 + urlencode 构造重定向，目标源在构造上即固定；safe="/"
+        # 保持 "/" 原样输出，与原先的字面查询串一致（RFC 3986 允许 query 含 "/"）。
         return RedirectResponse(
-            f"/star-aid/auth/start?intent=manual_star&repo_id={repo_id}&return_to=/star-aid/",
+            "/star-aid/auth/start?"
+            + urlencode(
+                {
+                    "intent": "manual_star",
+                    "repo_id": int(repo_id),
+                    "return_to": "/star-aid/",
+                },
+                safe="/",
+            ),
             status_code=302,
         )
 

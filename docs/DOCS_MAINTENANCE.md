@@ -1,6 +1,6 @@
 # 文档维护说明
 
-本仓库使用 VitePress 和 GitHub Pages 构建文档站；**Markdown 原文仍保存在 `docs/`，无需复制到其他仓库。**
+本仓库使用 VitePress 构建文档站，由 Cloudflare Pages 托管；**Markdown 原文仍保存在 `docs/`，无需复制到其他仓库。**
 
 ## 目录原则
 
@@ -33,12 +33,16 @@ npm run build --prefix docs
 2. 如需在侧边栏公开新文档，更新 `docs/.vitepress/config.mjs` 中的 `sidebar`。
 3. 检查所有相对链接、图片路径、标题锚点；链接到仓库根目录（如 `AGENTS.md`）时使用 GitHub 完整 URL。GitHub 与文档站共用的章节入口可添加显式 HTML 锚点，并保留原有标题，避免依赖两个平台不同的标题 slug。
 4. 提交目标为 `develop` 的 PR，并通过文档站构建检查。
-5. 随正式 `release/*` 分支合入 `main` 后，工作流自动部署 GitHub Pages。
+5. 推送到 `develop` 后，Cloudflare Pages 的 Git 集成自动构建并部署文档。`main` 的改动通过 Gitflow 同步到 `develop` 后进入同一发布流程。
 
-构建检查按事件和 ref 分组，正式 Pages 部署使用独立并发组；PR 检查不会替换等待中的正式部署。
+GitHub 的 `.github/workflows/docs-pages.yml` 仅执行构建检查，按事件和 ref 分组；不启用或部署 GitHub Pages。
 
-## GitHub Pages 首次启用
+## Cloudflare Pages 配置
 
-仓库管理员需在 `Settings → Pages → Build and deployment → Source` 选择 **GitHub Actions**。正式站点默认地址为 <https://sakura520222.github.io/Sakura-AI/>；站点由 `main` 分支的 `.github/workflows/docs-pages.yml` 自动构建部署。
+项目 `sakura-ai-docs` 连接本仓库，生产分支为 `develop`，自动生产部署已启用。正式站点为 <https://sakura-ai.pyabunny.com/>，默认域名为 <https://sakura-ai-docs.pages.dev/>。
 
-文档导航的 `base: '/Sakura-AI/'` 对应仓库项目站点路径。以后如绑定自定义域名，需同时修改此 base、配置 Pages 自定义域名和 DNS，并检查站内资源路径。
+- 根目录：`docs`
+- 构建命令：`npm ci --no-audit --no-fund && npm run build -- --base /`
+- 输出目录：`.vitepress/dist`
+
+Cloudflare 的构建参数 `--base /` 覆盖配置中历史保留的 `/Sakura-AI/` 子路径；GitHub 构建检查使用同一参数。排查未发布的新提交时，先确认其已进入 `develop`，再检查 Cloudflare 项目的部署记录。

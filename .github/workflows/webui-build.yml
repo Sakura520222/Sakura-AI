@@ -3,7 +3,7 @@ name: Build and publish prebuilt WebUI
 on:
   workflow_call:
     inputs:
-      source_ref:
+      source_revision:
         required: true
         type: string
       release_tag:
@@ -26,9 +26,29 @@ jobs:
       revision: ${{ steps.identity.outputs.revision }}
       version: ${{ steps.identity.outputs.version }}
     steps:
+      - name: Validate the requested revision is immutable
+        run: |
+          case "$SOURCE_REVISION" in
+            refs/tags/*) ;;
+            *)
+              [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]] || {
+                echo "source_revision must be a 40-char commit SHA or refs/tags/* (got: $SOURCE_REVISION)" >&2
+                exit 1
+              }
+              ;;
+          esac
+        env:
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+      # The contract of this reusable workflow is an immutable revision (SHA or
+      # tag) supplied by trusted callers; the guard above rejects anything else
+      # before any checked-out code can execute, which also keeps the npm cache
+      # below safe from untrusted-tree poisoning.
+      # 本可复用工作流的契约是只接受可信调用方传入的不可变修订（SHA 或 tag）；
+      # 上面的守卫在任何检出代码执行前拒绝其它值，保证下方 npm 缓存不会被
+      # 不可信源码树污染。
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ inputs.source_revision }}
       - uses: actions/setup-node@v7
         with:
           node-version: '24'

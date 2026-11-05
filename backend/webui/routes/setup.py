@@ -5,6 +5,8 @@ SPA 迁移后本模块仅保留路径含 ``/api/`` 的数据端点（backend/mai
 ``inspect_config_backup`` 与 ``complete_setup`` 亦被 backend/api/v1/setup.py 复用。
 """
 
+from collections.abc import Mapping
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
@@ -45,6 +47,24 @@ _AI_CONFIG_MIGRATION = {
 def _legacy_ai_migration_response() -> JSONResponse:
     """明确告知旧 Setup AI API 的迁移入口，不触发旧 supplier 流程。"""
     return JSONResponse(_AI_CONFIG_MIGRATION, status_code=410)
+
+
+def _config_validation_message(values: object) -> str:
+    """构造不含异常细节的配置校验失败提示，并定位首个失败字段。
+
+    ValueError 消息不直接回传客户端；对请求值逐键复用同一纯校验路径，
+    找出失败字段名帮助用户定位需要修正的配置项，异常细节留在服务端日志。
+    """
+    if isinstance(values, Mapping):
+        for env_key, env_value in values.items():
+            # 与批量校验一致：非字符串键与 None 值会被校验路径跳过。
+            if not isinstance(env_key, str) or env_value is None:
+                continue
+            try:
+                setup_service.validate_config_values({env_key: env_value})
+            except ValueError:
+                return f"配置校验失败: {env_key}"
+    return "配置校验失败"
 
 
 @router.get("/api/state")
@@ -161,8 +181,11 @@ async def inspect_config_backup(request: Request):
             }
         )
     except ConfigBackupError as exc:
+        # 异常消息可能插值备份文件内容（配置键名等），不回传客户端；
+        # 具体原因记录在服务端日志，与下方未知异常分支同一处理策略。
+        logger.warning("Setup 备份校验失败: {}", exc)
         return JSONResponse(
-            {"success": False, "message": f"备份文件无效: {exc}"},
+            {"success": False, "message": "备份文件无效"},
             status_code=400,
         )
     except Exception as exc:
@@ -233,7 +256,11 @@ async def save_step(request: Request):
     except DatabaseSetupError as exc:
         return JSONResponse(exc.report, status_code=setup_database_status(exc.report))
     except ValueError as exc:
-        return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
+        logger.warning("Setup 配置校验失败: {}", exc)
+        return JSONResponse(
+            {"success": False, "message": _config_validation_message(values)},
+            status_code=400,
+        )
     except Exception:
         logger.exception("保存配置失败")
         return JSONResponse(
@@ -267,8 +294,10 @@ async def complete_setup(request: Request):
             # 完成时重新校验浏览器保留的原始内容，不能依赖预检结果。
             backup_sections = parse_config_backup(backup_content.encode("utf-8"))
         except ConfigBackupError as exc:
+            # 同 inspect_config_backup：异常消息不回传客户端，细节留在服务端日志。
+            logger.warning("Setup 备份校验失败: {}", exc)
             return JSONResponse(
-                {"success": False, "message": f"备份文件无效: {exc}"},
+                {"success": False, "message": "备份文件无效"},
                 status_code=400,
             )
 
