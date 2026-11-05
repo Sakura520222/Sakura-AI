@@ -355,8 +355,8 @@ class PaddleGateway(PaymentGateway):
         try:
             from paddle_billing import Client, Environment, Options
             from paddle_billing.Entities.Shared import Action, AdjustmentType
-            from paddle_billing.Resources.Adjustments.Operations import CreateAdjustment
-            from paddle_billing.Resources.Adjustments.Operations.Create import (
+            from paddle_billing.Resources.Adjustments.Operations import (
+                CreateAdjustment,
                 CreateAdjustmentItem,
             )
 

@@ -1687,15 +1687,15 @@ wheels = [
 
 [[package]]
 name = "paddle-python-sdk"
-version = "1.15.0"
+version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/00/f2/b924002397c449cdcd1d0e39bbbb3791f7aed55a9df7802c3515c3d39029/paddle_python_sdk-1.15.0.tar.gz", hash = "sha256:2349490dd21754fab0f96b605109a38f208a1778be07121e881eacef02c87c79", size = 187424, upload-time = "2026-07-28T15:38:24.088Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/87/55/9b4a6773ea12814411d51e8cee85101241c1260fac369c016b52f9d9470e/paddle_python_sdk-1.17.0.tar.gz", hash = "sha256:5d62b3f33c99cbf04f2a0c16bc4bcd644ec347721e202f6ca955458816cbd5ad", size = 213969, upload-time = "2026-11-04T16:17:39.273Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/c8/2d8c93128a650d7e0a3fa6e410aaf681668bc91f2e172ccb7714fb40a66c/paddle_python_sdk-1.15.0-py3-none-any.whl", hash = "sha256:3250f3bcb6a4106c03512958533d25cca6a2c572e33004013dd6131b10329f06", size = 514761, upload-time = "2026-07-28T15:38:22.52Z" },
+    { url = "https://files.pythonhosted.org/packages/97/31/ab1fd66b6aa96483952d66d91756c2f3f8158e8762a4d41c50fdfe3329fa/paddle_python_sdk-1.17.0-py3-none-any.whl", hash = "sha256:9e500519603446d4a95490382bfbc039130e5f6f405c817d3994eca1d8bf2a58", size = 577351, upload-time = "2026-11-04T16:17:37.809Z" },
 ]
 
 [[package]]
@@ -2565,7 +2565,7 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mcp", specifier = ">=2.3.0,<3.0.0" },
     { name = "openai", specifier = ">=3.41.0" },
-    { name = "paddle-python-sdk", specifier = ">=1.15.0" },
+    { name = "paddle-python-sdk", specifier = ">=1.16.1" },
     { name = "pillow", specifier = ">=13.0.0" },
     { name = "pydantic", specifier = ">=2.14.2" },
     { name = "pydantic-settings", specifier = ">=2.16.1" },

@@ -861,3 +861,15 @@ DEFINER 的长期存续仍须由 DBA 保证；运行账号无权核实 mysql.use
 - 最新全仓 6608 passed、273 skipped；原生 MySQL 8 passed，
   Schema/Setup/Issue 存储定向回归 75 passed，中英文浏览器流程及 Ruff 通过。
   本地服务已加载修复，未部署到生产。
+
+## 2026-11-05 PR #722：Paddle SDK 退款兼容
+
+- 锁定并使用真实 `paddle-python-sdk==1.17.0`，复现既有退款导入错误：
+  `CreateAdjustmentItem` 从 `Adjustments.Operations` 导出，不在其 `Create` 包导出。
+- `test_paddle_sdk_compatibility.py` 的四个用例在修复前全部失败，修复后通过；
+  覆盖全额/部分退款、approved/pending_approval、真实 SDK 请求序列化和响应解析。
+  仅拦截 HTTP 发送及部分退款的交易查询，没有请求真实 Paddle 服务。
+- 联合 `test_paddle_gateway.py`、`test_billing_paddle_refund_lifecycle.py`、
+  `test_review_paddle_currency_bounds.py`：41 passed。Ruff 与 diff 检查通过。
+- No database, pricing or balance changes. All gateway responses are offline fixtures;
+  this evidence does not represent a real payment or refund.

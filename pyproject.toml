@@ -64,7 +64,7 @@ dependencies = [
 
     # 支付网关
     "stripe>=15.6.1",
-    "paddle-python-sdk>=1.15.0",
+    "paddle-python-sdk>=1.16.1",
 
     # WebUI
     "python-jose[cryptography]>=3.5.0",
