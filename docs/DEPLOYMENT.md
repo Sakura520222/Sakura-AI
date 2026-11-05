@@ -481,6 +481,14 @@ sudo ./start.sh updater reinstall
 
 如果 systemd 不可用，生产 `install`、`reinstall` 和生产启动都会明确失败；不会回退到手动 daemon 后宣称下次重启能够自启。显式 `SAKURA_UPDATER_DEV=1` 的源码/dev 模式继续使用手动 daemon，重启后需要管理员再次执行 `sudo env SAKURA_UPDATER_DEV=1 ./start.sh updater start`。卸载使用 `sudo ./start.sh updater uninstall`，会在删除 binary 前清理 service；没有 unit 的旧手动安装仍可安全重复卸载。若 unit 残留但 binary 已缺失，脚本会保守失败，需恢复匹配 release 后再清理。
 
+### start.sh 更新前自动同步 Host Updater
+
+通过脚本菜单更新镜像或确认切换频道后，`start.sh` 会先查询最新稳定 Release，并同时检查已安装 binary 的 `--identity` 和正在运行的 daemon 身份。比较使用 `build_release`、`build_revision` 与协议能力，不能只比较可能保持不变的 `updater_version`。旧版或缺少有效发布身份的 binary 会通过既有维护门禁、SHA256 校验和原子安装流程升级到刚刚查询的具体 Release；已经安装了更新构建时不会降级。binary 已更新但 daemon 仍运行旧构建时，只重启已安装的 updater。确认运行身份与磁盘构建一致后才提交三镜像更新。Release 查询、下载、校验或维护门禁失败时，本次应用更新会停止，原有应用容器继续运行。
+
+自动同步适用于 stable 和 development 镜像频道，宿主 updater 仍从稳定 Release 获取，不改变应用频道。显式 `SAKURA_UPDATER_DEV=1` 的源码运行保留开发者指定的 updater，不自动替换。手动 `updater install/reinstall` 仍按下文的部署版本选择安装包。
+
+Updater 默认启动等待为 **180 秒**，覆盖开始监听 IPC socket 前恢复中断事务、启动 sandboxd 和收敛 Web 的时间；`start.sh` 会显式传入这一默认值，使已有发布 binary 也生效。需要时可用 `./start.sh updater start --startup-timeout 300` 覆盖。systemd 的 `TimeoutStartSec` 随启动等待自动增加余量，进程停止的 SIGTERM 宽限仍为 5 秒。
+
 ### WebUI 更新后同步 Host Updater
 
 WebUI 版本管理器的稳定版事务会更新 Web、sandboxd 与 Agent runner，但不会替换或重启宿主机上的 Host Updater 二进制。预检中的“Updater 文件可用”只验证目标 Release 包含当前架构对应的 updater binary 与 `SHA256SUMS`，不代表更新任务会安装该 binary。因此，三镜像事务成功后，正在运行的 updater 仍可能是更新前的版本。
@@ -492,7 +500,7 @@ cd /opt/sakura-ai
 curl --fail --silent --show-error http://localhost:8000/health
 ```
 
-只有人工确认上述响应中的 `version` 等于 WebUI 更新的目标版本后，才能重新安装 updater：
+直接使用 WebUI 更新时，确认上述响应中的 `version` 等于目标版本后，可手动同步 updater：
 
 ```bash
 sudo ./start.sh updater reinstall
@@ -502,7 +510,7 @@ sudo curl --fail --silent --show-error \
   http://updater/v1/health
 ```
 
-`install` 不会直接下载 `latest` updater，而是根据部署状态解析具体 Sakura AI 版本，优先下载同一 Release 的架构资产。它本身**不提供应用健康门禁**：当 `deployment.env` 已包含具体的 `SAKURA_AI_IMAGE=:vX.Y.Z`，或完整固定的 `:dev-<UTC timestamp>-vX.Y.Z-<40 位 SHA>@sha256:...` 引用时，安装器可以直接采用其中的版本，无需查询 `/health`，也不需要宿主源码。因此，初装时可以在 Web 尚未运行前安装 updater；但应用更新后同步 updater 时，“`/health` 成功返回预期目标版本”仍是管理员重新安装 updater binary 前必须手动完成的检查。三镜像应用更新本身则由当前 updater 事务执行 health 与 rollback 门禁。
+手动 `install` 根据部署状态解析具体 Sakura AI 版本，优先下载同一 Release 的架构资产。它本身**不提供应用健康门禁**：当 `deployment.env` 已包含具体的 `SAKURA_AI_IMAGE=:vX.Y.Z`，或完整固定的 `:dev-<UTC timestamp>-vX.Y.Z-<40 位 SHA>@sha256:...` 引用时，安装器可以直接采用其中的版本，无需查询 `/health`，也不需要宿主源码。因此，初装时可以在 Web 尚未运行前安装 updater；通过 `start.sh` 更新则会在应用更新前自动同步宿主 updater。三镜像应用更新仍由 updater 事务执行 health 与 rollback 门禁。
 
 更新成功、三镜像运行身份验证通过且回滚事务结束后，Host Updater 会尝试删除未被任何容器引用的旧版 Sakura AI 官方镜像。它会保留当前部署镜像、其他容器仍在使用的镜像及非 Sakura AI 镜像。清理结果写入更新任务日志；清理失败只会产生警告，不会改变已成功的更新状态。
 

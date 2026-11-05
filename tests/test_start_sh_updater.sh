@@ -1533,7 +1533,7 @@ run_systemd_reinstall_order_case() {
         updater_prepare_stop() { printf 'PREPARE\n' >> "$calls_log"; }
         updater_systemd_stop_for_reinstall() { printf 'SYSTEMD_STOP\n' >> "$calls_log"; }
         stop_verified_updater() { printf 'RAW_STOP\n' >> "$calls_log"; }
-        cmd_updater_install() { printf 'INSTALL\n' >> "$calls_log"; }
+        updater_install_release() { printf 'INSTALL\n' >> "$calls_log"; }
         ensure_updater_running() { printf 'START\n' >> "$calls_log"; }
         updater_backend() { printf 'BACKEND:%s\n' "$*" >> "$calls_log"; }
         : > "$calls_log"

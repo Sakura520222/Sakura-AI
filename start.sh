@@ -2895,6 +2895,9 @@ UPDATER_BACKEND_VERSION_FILE="${UPDATER_BACKEND_VERSION_FILE:-$UPDATER_PROJECT_R
 UPDATER_RELEASE_BASE_URL="https://github.com/Sakura520222/Sakura-AI/releases/download"
 UPDATER_RELEASE_API_URL="https://api.github.com/repos/Sakura520222/Sakura-AI/releases/latest"
 UPDATER_HEALTH_URL="${UPDATER_HEALTH_URL:-http://localhost:8000/health}"
+# Startup can recover an interrupted three-image transaction before opening the
+# IPC socket. Pass this explicitly so already-published binaries also get enough time.
+UPDATER_STARTUP_TIMEOUT=180
 # 与 updater.systemd.UNIT_INSTALL_DIR/UNIT_NAME 对齐；仅用于卸载后的安全确认，
 # 不把 unit 路径注入 daemon 参数（unit 仍由 updater 自己写入）。
 UPDATER_SYSTEMD_UNIT_PATH="${UPDATER_SYSTEMD_UNIT_PATH:-/etc/systemd/system/sakura-ai-updater.service}"
@@ -3632,9 +3635,9 @@ resolve_updater_asset() {
 
 install_updater_binary() {
     local binary="$UPDATER_BINARY" lock_path lock_fd=""
-    local version stable_version asset binary_url sums_url
+    local requested_release="${1:-}" version stable_version asset binary_url sums_url
     local binary_tmp="" sums_tmp="" binary_headers_tmp="" sums_headers_tmp=""
-    local expected_hash actual_hash binary_http_status
+    local expected_hash actual_hash binary_http_status candidate_identity
 
     # Root gate precedes every filesystem or network operation.
     # root gate 必须早于任何文件系统或网络操作。
@@ -3670,7 +3673,13 @@ install_updater_binary() {
         return 1
     fi
 
-    if ! version=$(resolve_updater_app_version); then
+    version="$requested_release"
+    if [[ -z "$version" ]] && ! version=$(resolve_updater_app_version); then
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        fail "invalid updater Release version" >&2
         updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
         return 1
     fi
@@ -3780,8 +3789,15 @@ install_updater_binary() {
     fi
     # Verify the checksummed candidate before replacing the installed binary,
     # including a stable fallback for an unreleased development version.
-    if ! TMPDIR="$UPDATER_STATE_DIR" "$binary_tmp" --identity | updater_identity_compatible; then
+    if ! candidate_identity=$(TMPDIR="$UPDATER_STATE_DIR" "$binary_tmp" --identity) \
+        || ! updater_identity_compatible <<< "$candidate_identity"; then
         fail "下载的 Host Updater 不满足当前三镜像部署 contract；旧 binary 保持不变。请使用包含兼容 Updater 的 Release。" >&2
+        updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
+        return 1
+    fi
+    if [[ -n "$requested_release" ]] \
+        && ! updater_identity_is_current "$requested_release" "$candidate_identity"; then
+        fail "下载的 Host Updater 发布构建过旧或身份无效；旧 binary 保持不变" >&2
         updater_abort_acquisition "$lock_fd" "$binary_tmp" "$sums_tmp" "$binary_headers_tmp" "$sums_headers_tmp"
         return 1
     fi
@@ -3820,15 +3836,19 @@ install_updater_binary() {
 }
 
 updater_backend() {
+    local action="$1"
+    shift
     local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
     local runtime_tmp="$UPDATER_STATE_DIR/tmp"
     if updater_binary_is_safe "$binary"; then
         if ! updater_prepare_runtime_tmp "$runtime_tmp"; then
             return 1
         fi
-        TMPDIR="$runtime_tmp" "$binary" backend "$@"
+        TMPDIR="$runtime_tmp" "$binary" backend "$action" \
+            --startup-timeout "$UPDATER_STARTUP_TIMEOUT" "$@"
     elif [[ "${SAKURA_UPDATER_DEV:-0}" == "1" ]]; then
-        "${SAKURA_UPDATER_PYTHON:-python3}" -m sakura_ai_updater backend "$@"
+        "${SAKURA_UPDATER_PYTHON:-python3}" -m sakura_ai_updater backend "$action" \
+            --startup-timeout "$UPDATER_STARTUP_TIMEOUT" "$@"
     elif updater_path_exists "$binary"; then
         fail "refusing unsafe updater executable: $binary" >&2
         return 126
@@ -3892,6 +3912,12 @@ updater_service_uninstall() {
 }
 
 cmd_updater_install() {
+    updater_install_release "" "$@"
+}
+
+updater_install_release() {
+    local release="$1"
+    shift
     local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
     local was_running=0
     local uid
@@ -3929,7 +3955,7 @@ cmd_updater_install() {
             --binary-path "$binary" >/dev/null 2>&1; then
             was_running=1
         fi
-        if install_updater_binary; then
+        if install_updater_binary "$release"; then
             :
         else
             local install_rc=$?
@@ -3948,7 +3974,7 @@ cmd_updater_install() {
         fail "refusing unsafe updater executable: $binary" >&2
         return 126
     else
-        if install_updater_binary; then
+        if install_updater_binary "$release"; then
             :
         else
             local install_rc=$?
@@ -4034,6 +4060,12 @@ stop_verified_updater() {
 }
 
 cmd_updater_reinstall() {
+    updater_reinstall_release "" "$@"
+}
+
+updater_reinstall_release() {
+    local release="$1"
+    shift
     local was_running=0 install_rc=0 start_rc=0 stop_rc=0 service_required=0
     updater_require_root || return $?
     updater_require_idle_deployment || return $?
@@ -4067,7 +4099,7 @@ cmd_updater_reinstall() {
     fi
     # 用户参数（如 --startup-timeout）必须贯穿 install 与恢复/拉起两阶段，
     # 否则 reinstall 渲染出的 unit 回退默认值。
-    if cmd_updater_install "$@"; then
+    if updater_install_release "$release" "$@"; then
         :
     else
         install_rc=$?
@@ -4922,7 +4954,89 @@ except (ValueError, TypeError, AttributeError):
 '
 }
 
+updater_identity_is_current() {
+    local release="$1" identity="$2" installed_identity="${3:-}"
+    updater_identity_compatible <<< "$identity" >/dev/null 2>&1 || return 1
+    python3 - "$release" "$identity" "$installed_identity" <<'PY'
+import json
+import re
+import sys
+
+try:
+    required = tuple(map(int, sys.argv[1].split(".")))
+    identity = json.loads(sys.argv[2])
+    release = identity.get("build_release")
+    revision = identity.get("build_revision")
+    if not isinstance(release, str) or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", release):
+        raise ValueError
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError
+    if tuple(map(int, release[1:].split("."))) < required:
+        raise ValueError
+    if sys.argv[3]:
+        installed = json.loads(sys.argv[3])
+        if any(identity.get(key) != installed.get(key) for key in ("build_release", "build_revision")):
+            raise ValueError
+except (ValueError, TypeError, AttributeError):
+    raise SystemExit(1)
+PY
+}
+
+updater_installed_identity() {
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+    updater_binary_is_safe "$binary" || return 1
+    TMPDIR="$UPDATER_STATE_DIR" "$binary" --identity
+}
+
+ensure_image_updater_current() {
+    local release installed_identity="" running_identity=""
+    local binary="${UPDATER_BINARY:-$UPDATER_STATE_DIR/sakura-ai-updater}"
+    updater_require_root || return $?
+    updater_require_idle_deployment || return $?
+    if [[ "${SAKURA_UPDATER_DEV:-0}" == "1" ]]; then
+        ensure_updater_running
+        return $?
+    fi
+    if updater_path_exists "$binary" && ! updater_binary_is_safe "$binary"; then
+        fail "refusing unsafe updater executable: $binary" >&2
+        return 126
+    fi
+    info "检查 Host Updater 最新稳定 Release..."
+    if ! release=$(resolve_latest_stable_updater_version); then
+        fail "无法检查 Host Updater Release；未提交应用更新" >&2
+        return 1
+    fi
+    installed_identity=$(updater_installed_identity 2>/dev/null) || installed_identity=""
+    running_identity=$(updater_ipc_get /v1/status) || running_identity=""
+    if updater_identity_is_current "$release" "$installed_identity"; then
+        if ! updater_identity_is_current "$release" "$running_identity" "$installed_identity"; then
+            info "同步 Host Updater 运行进程与已安装构建..."
+            updater_prepare_stop || return $?
+            if updater_stop_daemon; then
+                :
+            else
+                local stop_rc=$?
+                updater_cancel_stop
+                return "$stop_rc"
+            fi
+        fi
+        ensure_updater_running || return $?
+    else
+        info "升级 Host Updater 到 v${release}..."
+        updater_reinstall_release "$release" || return $?
+    fi
+    installed_identity=$(updater_installed_identity 2>/dev/null) || return 1
+    running_identity=$(updater_ipc_get /v1/status) || return 1
+    if ! updater_identity_is_current "$release" "$installed_identity" \
+        || ! updater_identity_is_current "$release" "$running_identity" "$installed_identity"; then
+        fail "Host Updater 构建身份未同步；未提交应用更新" >&2
+        return 1
+    fi
+    ok "Host Updater 发布构建与运行进程已就绪"
+}
+
 require_image_updater_transaction() {
+    ensure_image_updater_current || return $?
     if ! updater_daemon_is_running; then
         fail "生产镜像更新需要可用的 host updater daemon；拒绝 Web-only Compose fallback" >&2
         fail "请先执行: sudo ./start.sh updater start" >&2
@@ -5348,7 +5462,6 @@ cmd_switch_channel() {
         info "已取消"
         return 0
     fi
-    require_image_updater_transaction || return 1
     if [[ "$target" == "development" && "$channel" != "development" ]]; then
         fail "从 stable 切换 development 需要 updater 可验证的结构化 development target；请使用 WebUI 选择精确版本" >&2
         return 1

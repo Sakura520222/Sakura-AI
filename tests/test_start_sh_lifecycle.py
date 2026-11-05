@@ -301,6 +301,7 @@ printf '%s\n' \
   'COMPOSE_PROJECT_NAME=sakura-ai' > "$DEPLOYMENT_ENV_FILE"
 init_deployment_env() { :; }
 require_idle_image_deployment() { :; }
+ensure_image_updater_current() { :; }
 updater_daemon_is_running() { return 1; }
 apply_channel_image() { printf 'UNEXPECTED_WEB_ONLY\n'; return 99; }
 cmd_update_image
@@ -327,6 +328,7 @@ printf '%s\n' \
   'COMPOSE_PROJECT_NAME=sakura-ai' > "$DEPLOYMENT_ENV_FILE"
 init_deployment_env() { :; }
 require_idle_image_deployment() { :; }
+ensure_image_updater_current() { :; }
 updater_daemon_is_running() { return 0; }
 updater_ipc_get() { printf '%s' '{"protocol_version":1,"capabilities":["three-image-transaction-v1","deployment-reconcile-v1","deployment-manifest-v1"]}'; }
 curl() { return 7; }
@@ -355,9 +357,10 @@ printf '%s\n' \
   'COMPOSE_PROJECT_NAME=sakura-ai' > "$DEPLOYMENT_ENV_FILE"
 init_deployment_env() { :; }
 require_idle_image_deployment() { :; }
+ensure_image_updater_current() { :; }
 updater_daemon_is_running() { return 1; }
 apply_channel_image() { printf 'UNEXPECTED_WEB_ONLY\n'; return 99; }
-printf '2\ny\n' | cmd_switch_channel
+printf '1\ny\n' | cmd_switch_channel
 """,
     )
 
@@ -380,7 +383,7 @@ updater_uses_systemd() { return 1; }
 updater_socket_listener_responds() { return 0; }
 updater_prepare_stop() { printf 'PREPARE\n'; }
 stop_verified_updater() { printf 'STOP\n'; }
-cmd_updater_install() { printf 'INSTALL\n'; }
+updater_install_release() { printf 'INSTALL\n'; }
 ensure_updater_running() { printf 'START\n'; }
 updater_backend() { printf 'STATUS:%s\n' "$*"; }
 cmd_updater_reinstall
@@ -447,7 +450,7 @@ updater_uses_systemd() { return 1; }
 updater_socket_listener_responds() { return 0; }
 updater_prepare_stop() { :; }
 stop_verified_updater() { printf 'STOP\n'; }
-cmd_updater_install() { printf 'INSTALL_FAIL\n'; return 23; }
+updater_install_release() { printf 'INSTALL_FAIL\n'; return 23; }
 ensure_updater_running() { printf 'RESTORE_OLD\n'; }
 cmd_updater_reinstall
 """
@@ -546,6 +549,7 @@ touch "$UPDATER_BINARY" \
 updater_require_root() { :; }
 updater_require_idle_deployment() { :; }
 updater_existing_state_dir_is_safe() { :; }
+updater_systemd_unit_needs_cleanup() { return 1; }
 updater_prepare_stop() { :; }
 stop_verified_updater() { printf 'STOPPED\n'; }
 cmd_updater_uninstall

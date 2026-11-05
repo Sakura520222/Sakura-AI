@@ -46,6 +46,7 @@ export SAKURA_UPDATER_DEV=1
 COMPOSE_FILE='docker/docker-compose.yml'
 PROD_COMPOSE_FILE='docker/docker-compose.prod.yml'
 updater_binary_is_safe() {{ return 1; }}
+updater_socket_listener_responds() {{ return 1; }}
 updater_backend() {{
     printf 'BACKEND:%s\\n' "$*"
     if [[ "$1" == 'is-running' ]]; then

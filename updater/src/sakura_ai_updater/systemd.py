@@ -35,7 +35,7 @@ _UNIT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@-]*\.service\Z")
 _UNIT_PATH_UNSAFE_CHARS = frozenset("%$'\\\";")
 
 # 超时契约：TimeoutStartSec 必须大于 backend readiness gate（--startup-timeout
-# 渲染值，默认 DEFAULT_STARTUP_TIMEOUT=5s），否则 systemd 会先杀 Exec 命令、打断
+# 渲染值，默认 DEFAULT_STARTUP_TIMEOUT=180s），否则 systemd 会先杀 Exec 命令、打断
 # CLI 自己的清理阶梯。实际值按 max(TIMEOUT_START_SEC, ceil(N)+余量) 派生，由
 # test_systemd_unit.py 的契约测试固化。
 # / Must exceed the backend's internal gates; derived per unit; contract-tested.
