@@ -19,6 +19,7 @@ from backend.services.activity_observability.integration_service import (
     ActivityIntegrationService,
 )
 from backend.services.billing_context import context_for_payload
+from backend.services.pr_diff_scope import load_pr_diff_scope
 
 PENDING_QUEUE_STATES = ("pending", "dispatching", "running")
 
@@ -333,11 +334,17 @@ class PRReviewIncrementalQueueService:
                 return None
 
             try:
-                comparison = await asyncio.to_thread(repo.compare, base_sha, head_sha)
+                comparison = await asyncio.to_thread(
+                    load_pr_diff_scope,
+                    repo,
+                    pr_number,
+                    before_sha=str(base_sha),
+                    head_sha=str(head_sha),
+                )
                 message = self._build_incremental_user_message(
                     repo_full_name=repo_full_name,
                     pr_number=pr_number,
-                    base_sha=str(base_sha),
+                    base_sha=comparison.base_sha,
                     head_sha=str(head_sha),
                     comparison=comparison,
                     queue_items=pending,
@@ -778,6 +785,7 @@ class PRReviewIncrementalQueueService:
     ) -> dict[str, Any]:
         files = list(getattr(comparison, "files", []) or [])
         commits = list(getattr(comparison, "commits", []) or [])
+        is_incremental = comparison.is_incremental
 
         sections = [
             "=== BEGIN UNTRUSTED INCREMENTAL REVIEW EVIDENCE ===",
@@ -785,11 +793,17 @@ class PRReviewIncrementalQueueService:
                 "New commits were pushed while this PR review was already running. "
                 "Review only the newly added changes and update any earlier "
                 "conclusions that these changes affect."
+                if is_incremental
+                else "The PR history or comparison scope changed. The evidence below "
+                "replaces the earlier diff with the complete current net PR diff. "
+                "Review this scope and withdraw earlier findings for changes no longer "
+                "in the PR; do not attribute inherited base-branch changes to the PR."
             ),
             "",
             f"Repository: {repo_full_name}",
             f"Pull Request: #{pr_number}",
             f"Compare range: {base_sha}...{head_sha}",
+            f"Diff scope: {'incremental' if is_incremental else 'full net PR'}",
             f"Queued events merged: {len(queue_items)}",
             "",
         ]
