@@ -554,6 +554,14 @@ Paddle adjustment.created 的 pending_approval 与后续 approved/rejected 共�
 或来源矛盾继续待核对。锁竞争中被跳过的行由现有 payment-events replay 入口
 在锁释放后关闭，不再次请求退款或要求猜测原始证据。
 
+Paddle 全额/部分退款使用 SDK 的 `Adjustments.Operations` 公开导出构建请求。
+离线回归保留真实 SDK 的请求序列化和响应解析，只拦截 HTTP 传输，覆盖
+`approved` 与 `pending_approval`；通过此测试不代表已执行真实网关退款。
+Paddle full and partial refunds use the SDK's public `Adjustments.Operations`
+exports. Offline regressions exercise real SDK serialization and response parsing
+with intercepted HTTP, including approved and pending outcomes; they do not issue
+refunds through a live gateway.
+
 Stripe 的 `refund.created` 中 `pending`/`requires_action` 同样按原生退款 ID
 与 PaymentIntent 关联；`refund.updated`、`refund.failed`、`charge.refund.updated`
 或完整 `charge.refunded` 中的终态证据核对成功后，关闭匹配的旧待核对回执。
