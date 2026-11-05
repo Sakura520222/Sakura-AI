@@ -42,6 +42,14 @@ def load_pr_diff_scope(
 
     pr_files = list(pr.get_files())
     pr_commits = list(pr.get_commits())
+    # The PR commits endpoint is capped at 250. A SHA-pinned base/head
+    # comparison supplies the paginated PR-only history for longer branches.
+    expected_commits = getattr(pr, "commits", len(pr_commits))
+    if isinstance(expected_commits, int) and len(pr_commits) < expected_commits:
+        history = repo.compare(snapshot_base, snapshot_head)
+        pr_commits = list(history.commits)
+        if len(pr_commits) != history.total_commits:
+            raise RuntimeError("PR commit comparison is incomplete")
     if len(pr_files) != pr.changed_files:
         raise RuntimeError("PR file list is incomplete or changed during loading")
 
