@@ -10,9 +10,12 @@ except ImportError:
 from dataclasses import dataclass
 
 from loguru import logger
+from sqlalchemy import select
 
 from backend.core.config import get_strategy_config
 from backend.core.github_app import GitHubAppClient
+from backend.models import database as db_module
+from backend.models.database import PRReview, PRStatus, ReviewStrategy
 from backend.services.pr_diff_scope import load_pr_diff_scope
 
 
@@ -96,9 +99,49 @@ class PRAnalyzer:
 
     async def analyze_pr(self, pr_info: dict[str, any]) -> PRAnalysis:
         """分析PR并返回分析结果（将 PyGithub 同步调用移到线程池避免阻塞事件循环）"""
-        return await asyncio.to_thread(self._analyze_pr_sync, pr_info)
+        allow_incremental = False
+        if (
+            pr_info.get("action") == "synchronize"
+            and pr_info.get("before")
+            and pr_info["before"] != "0" * 40
+        ):
+            allow_incremental = await self._has_completed_baseline(pr_info)
+            if not allow_incremental:
+                logger.info(
+                    "PR {}#{} uses full net diff: previous head has no completed review",
+                    pr_info["repo_full_name"],
+                    pr_info["pr_number"],
+                )
+        return await asyncio.to_thread(
+            self._analyze_pr_sync, pr_info, allow_incremental=allow_incremental
+        )
 
-    def _analyze_pr_sync(self, pr_info: dict[str, any]) -> PRAnalysis:
+    @staticmethod
+    async def _has_completed_baseline(pr_info: dict[str, any]) -> bool:
+        """A failed/superseded queue operation cannot establish review coverage.
+
+        Query committed history on each admission so the next operation covers
+        any missed prefix, including after a restart. Do not rewrite queued SHAs
+        or combine independently admitted billing operations.
+        """
+        async with db_module.async_session() as session:
+            result = await session.execute(
+                select(PRReview.id)
+                .where(
+                    PRReview.pr_id == pr_info["pr_id"],
+                    PRReview.repo_owner == pr_info["repo_owner"],
+                    PRReview.repo_name == pr_info["repo_name"],
+                    PRReview.head_sha == pr_info["before"],
+                    PRReview.status == PRStatus.COMPLETED.value,
+                    PRReview.strategy != ReviewStrategy.SKIP.value,
+                )
+                .limit(1)
+            )
+            return result.scalar_one_or_none() is not None
+
+    def _analyze_pr_sync(
+        self, pr_info: dict[str, any], *, allow_incremental: bool = False
+    ) -> PRAnalysis:
         """同步执行 PR 分析（在线程池中运行）"""
         try:
             # 获取GitHub客户端
@@ -120,7 +163,8 @@ class PRAnalyzer:
             before_sha = pr_info.get("before")
             after_sha = pr_info.get("after")
             incremental_requested = (
-                action == "synchronize"
+                allow_incremental
+                and action == "synchronize"
                 and before_sha
                 and after_sha
                 and before_sha != "0" * 40
