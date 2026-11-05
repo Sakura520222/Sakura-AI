@@ -523,7 +523,7 @@ class JobOrchestrator:
         return usage.free >= self.disk_space_threshold, usage.free
 
     async def _current_state(self) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Read running image identity as a structured preflight gate.
+        """Read live or verified stopped-image identity as a preflight gate.
 
         Deployment identity failures are expected fail-closed readiness results,
         not updater protocol crashes. This keeps the IPC response typed and
@@ -629,6 +629,8 @@ class JobOrchestrator:
             ]
             current_state, identity_check = await self._current_state()
             checks.append(identity_check)
+            if current_state.get("identity_source") == "stopped_image":
+                current_version = current_state["current_version"]
             current_channel = (
                 current_state.get("current_channel")
                 if isinstance(current_state, dict)
@@ -643,10 +645,8 @@ class JobOrchestrator:
             drift = await self._deployment_drift(current_state, digest=development.digest,
                 revision=development.revision, sandboxd=target_sandboxd_image, runner=target_runner_image)
             digest_changed = bool(drift)
-            # A missing/legacy health identity is not evidence that the host is
-            # already on the requested channel.  Require the explicit channel
-            # switch confirmation for every current channel except a positively
-            # identified development deployment.
+            # Only a verified runtime or stopped-image identity establishes the
+            # current channel. Missing/legacy health alone never confirms it.
             requires_confirmation = current_channel != "development"
             if same_channel or current_digest is not None:
                 checks.append(
@@ -760,6 +760,8 @@ class JobOrchestrator:
             min_version = _value(manifest, "min_upgrade_from", "0.0.0")
             mode = self.deployment.read_deploy_mode()
             current_state, identity_check = await self._current_state()
+            if current_state.get("identity_source") == "stopped_image":
+                current_version = current_state["current_version"]
             current_channel = (
                 current_state.get("current_channel")
                 if isinstance(current_state, dict)
@@ -1194,7 +1196,10 @@ class JobOrchestrator:
             # where materialization happened before the rollback snapshot.
             self._transition(job, "preflight", "materialize_current_anchor")
             from_image = await self.deployment.capture_from_image()
-            from_digest = await self.deployment.capture_from_digest()
+            capture_digest = getattr(
+                self.deployment, "capture_rollback_digest", self.deployment.capture_from_digest
+            )
+            from_digest = await capture_digest()
             job.from_image = from_image
             job.from_digest = from_digest
             from_sandboxd, from_runner = await self._current_sandbox_refs()
