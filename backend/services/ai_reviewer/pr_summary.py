@@ -38,17 +38,12 @@ class PRSummaryService:
         Args:
             analysis: PR 分析结果
             pr_info: PR 信息字典（包含 title、body 等）
-            pr: PyGithub PullRequest 对象，增量审查时用于获取累计统计
+            pr: PyGithub PullRequest 对象（兼容调用参数；数据使用 analysis 快照）
 
         Returns:
             AI 生成的总结文本
         """
-        # 从 PR body 中提取旧摘要（增量更新时用于保持上下文连贯）
-        previous_summary = self._extract_previous_summary(pr_info.get("body", ""))
-
-        system_prompt, user_message = self._build_prompts(
-            analysis, pr_info, previous_summary, pr
-        )
+        system_prompt, user_message = self._build_prompts(analysis, pr_info, pr=pr)
 
         response = await self.api_client.call_with_retry(
             model="",
@@ -118,12 +113,15 @@ class PRSummaryService:
         # 构建 commit 信息
         commits = self._build_commit_info(analysis, pr_info)
 
-        # 增量审查时使用 PR 累计统计，避免摘要漂移
-        if pr and analysis.is_incremental:
-            additions = pr.additions
-            deletions = pr.deletions
-            file_count = pr.changed_files
+        # Use the complete net PR snapshot for every field, never live counters
+        # alongside incremental files/commits or an earlier generated summary.
+        if analysis.pr_files is not None:
+            additions = sum(file.additions for file in analysis.pr_files)
+            deletions = sum(file.deletions for file in analysis.pr_files)
+            file_count = len(analysis.pr_files)
         else:
+            if analysis.is_incremental:
+                raise ValueError("PR summary requires the complete net PR snapshot")
             additions = analysis.total_additions
             deletions = analysis.total_deletions
             file_count = analysis.total_files
@@ -137,14 +135,12 @@ class PRSummaryService:
             commits=commits,
         )
 
-        # 增量更新时，注入旧摘要让 AI 在其基础上整合
-        if previous_summary:
-            user_message += (
-                "\n\n---\n"
-                "以下是该 PR 之前的 AI 总结，请在此基础上整合新的变更信息，"
-                "生成一份完整的更新总结（保留之前的重要内容，补充新变更）：\n\n"
-                f"{previous_summary}"
-            )
+        system_prompt += (
+            "\n\nSummarize only the current net PR changes in the supplied file list. "
+            "The counts and file list describe the same complete PR snapshot. "
+            "Commit messages are context, not evidence that inherited base-branch "
+            "changes belong to this PR. Do not carry forward earlier generated claims."
+        )
 
         # 注入输出语言指令 / Inject output language directive
         output_lang = get_settings().output_language
@@ -163,21 +159,32 @@ class PRSummaryService:
     def _build_file_list(self, analysis: PRAnalysis) -> str:
         """构建变更文件列表文本"""
         lines = []
-        for f in analysis.code_files:
-            status_icon = {"added": "+", "modified": "~", "deleted": "-"}.get(
-                f.status, "?"
-            )
+        files = (
+            analysis.pr_files if analysis.pr_files is not None else analysis.code_files
+        )
+        for f in files:
+            status_icon = {
+                "added": "+",
+                "modified": "~",
+                "deleted": "-",
+                "removed": "-",
+            }.get(f.status, "?")
             lines.append(f"  {status_icon} {f.path} (+{f.additions}/-{f.deletions})")
         if not lines:
-            return "（无代码文件变更）"
-        return "\n".join(lines[:50])  # 最多显示 50 个文件
+            return "（无文件变更）"
+        displayed = lines[:50]
+        if len(lines) > len(displayed):
+            displayed.append(f"（另有 {len(lines) - len(displayed)} 个文件未列出）")
+        return "\n".join(displayed)
 
     def _build_commit_info(self, analysis: PRAnalysis, pr_info: dict[str, Any]) -> str:
         """构建 commit 信息文本
 
-        增量审查时使用 new_commits，否则从 pr_info 提取可用信息。
+        使用完整 PR 的提交信息，排除同步目标分支带入的提交。
         """
-        commits = analysis.new_commits
+        commits = analysis.pr_commits
+        if commits is None and not analysis.is_incremental:
+            commits = analysis.new_commits
         if not commits:
             return f"PR 标题: {pr_info.get('title', '（未知）')}"
 
