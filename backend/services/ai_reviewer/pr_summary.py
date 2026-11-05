@@ -6,7 +6,6 @@
 """
 
 import asyncio
-import re
 from typing import Any
 
 from loguru import logger
@@ -43,7 +42,7 @@ class PRSummaryService:
         Returns:
             AI 生成的总结文本
         """
-        system_prompt, user_message = self._build_prompts(analysis, pr_info, pr=pr)
+        system_prompt, user_message = self._build_prompts(analysis, pr_info)
 
         response = await self.api_client.call_with_retry(
             model="",
@@ -87,8 +86,6 @@ class PRSummaryService:
         self,
         analysis: PRAnalysis,
         pr_info: dict[str, Any],
-        previous_summary: str | None = None,
-        pr: Any = None,
     ) -> tuple[str, str]:
         """构建系统提示词和用户消息
 
@@ -189,7 +186,11 @@ class PRSummaryService:
             return f"PR 标题: {pr_info.get('title', '（未知）')}"
 
         lines = []
-        for c in commits[:20]:  # 最多显示 20 条
+        # Keep recent semantic evidence after long PR histories.
+        displayed = commits[-20:]
+        if len(commits) > len(displayed):
+            lines.append(f"({len(commits) - len(displayed)} earlier commits omitted)")
+        for c in displayed:
             sha = c.get("sha", "unknown")
             title = c.get("title", "")
             lines.append(f"  - {sha[:7]} {title}")
@@ -206,23 +207,3 @@ class PRSummaryService:
     def _extract_original_body(self, body: str) -> str:
         """Extract human evidence; body publication removes only its own section."""
         return strip_sakura_generated_sections(body)
-
-    def _extract_previous_summary(self, body: str) -> str | None:
-        """从 PR body 中提取上一次的 AI 摘要内容（不含标题行）"""
-        if not body:
-            return None
-
-        pattern = re.escape(self.START_MARKER) + r"(.*?)" + re.escape(self.END_MARKER)
-        match = re.search(pattern, body, flags=re.DOTALL)
-        if not match:
-            return None
-
-        content = match.group(1).strip()
-        if not content:
-            return None
-
-        # 去掉旧标题行（AI 可能生成带后缀的变体，如 "更新版"）
-        content = re.sub(
-            r"^## 🌸 Sakura AI(?: Reviewer)?的总结[^\n]*\n*", "", content
-        ).strip()
-        return content if content else None

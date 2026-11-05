@@ -3,6 +3,7 @@
 import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
@@ -23,6 +24,7 @@ from backend.services.billing_context import (
     context_for_payload,
 )
 from backend.services.billing_service import BillingService
+from backend.services.pr_analyzer import PRAnalyzer
 from backend.services.pr_review_incremental_queue import PRReviewIncrementalQueueService
 from tests.test_billing_usage_attribution import (
     complete_usage,
@@ -118,6 +120,149 @@ async def test_drain_reuses_first_queued_operation_and_target_head(
     assert context_for_payload(submitted[0], "pr_review") == first
     assert submitted[0]["head_sha"] == submitted[0]["after"] == "B"
     assert submitted[0]["before"] == "base"
+
+
+def _two_push_analyzer():
+    files = [
+        SimpleNamespace(
+            filename=f"backend/{name}.py",
+            status="modified",
+            additions=1,
+            deletions=1,
+            changes=2,
+            patch=f"@@ -1 +1 @@\n-old\n+{name}",
+        )
+        for name in ("first_push", "second_push")
+    ]
+    commits = [
+        SimpleNamespace(
+            sha=sha,
+            commit=SimpleNamespace(
+                message=f"Update {sha}", author=SimpleNamespace(name="Dev")
+            ),
+        )
+        for sha in ("H1", "H2", "H3")
+    ]
+    pr = SimpleNamespace(
+        head=SimpleNamespace(sha="H3"),
+        base=SimpleNamespace(sha="target"),
+        changed_files=2,
+        get_files=lambda: files,
+        get_commits=lambda: commits,
+        update=lambda: None,
+    )
+    repo = SimpleNamespace(
+        get_pull=lambda _: pr,
+        compare=lambda before, after: SimpleNamespace(
+            files=files[1:],
+            commits=commits[-1:],
+            total_commits=1,
+            status="ahead",
+            merge_base_commit=SimpleNamespace(sha=before),
+        ),
+    )
+    analyzer = PRAnalyzer.__new__(PRAnalyzer)
+    analyzer.github_app = MagicMock()
+    analyzer.github_app.get_repo_client.return_value.get_repo.return_value = repo
+    return analyzer
+
+
+async def _completed_review(factory, *, head, status="completed", strategy="standard"):
+    async with factory() as db:
+        db.add(
+            PRReview(
+                pr_id=1,
+                pr_number=7,
+                repo_owner="owner1",
+                repo_name="repo",
+                head_sha=head,
+                status=status,
+                strategy=strategy,
+            )
+        )
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_superseded_queued_head_does_not_drop_the_first_push(
+    sql_runtime, monkeypatch
+):
+    from backend.workers import review_worker
+
+    factory, engine, _ = sql_runtime
+    await fund_and_price(factory)
+    await _completed_review(factory, head="H1")
+    first, first_id = await add_increment(factory, "queued-H2", 2, head="H2", base="H1")
+    second, second_id = await add_increment(
+        factory, "queued-H3", 1, head="H3", base="H2"
+    )
+    submitted = []
+    analyses = []
+    analyzer = _two_push_analyzer()
+
+    async def capture(value):
+        submitted.append(value)
+
+    class Worker:
+        @billable_payload("pr_review")
+        async def process_review_task(self, value, *, deadline):
+            await admit_billing_operation()
+            analyses.append(await analyzer.analyze_pr(value))
+            await finish_billing_operation("completed")
+            return "done"
+
+    monkeypatch.setattr(review_worker, "submit_review_task", capture)
+    monkeypatch.setattr(
+        review_worker, "register_background_task", lambda task, kind: task
+    )
+    await review_worker._drain_pending_incremental(
+        payload(BillingContext(1, "active-H1", "pr_review", {}), head="H1")
+    )
+    older = submitted.pop(0)
+    assert context_for_payload(older, "pr_review") == first
+    with pytest.raises(RuntimeError, match="head changed"):
+        await review_worker._run_review_task_with_timeout(
+            Worker(), older, "owner1/repo#7"
+        )
+
+    # The distinct later operation keeps H2 -> H3 and its own payer, but must
+    # review the complete net PR because H2 never acquired completed coverage.
+    newer = submitted.pop(0)
+    assert context_for_payload(newer, "pr_review") == second
+    assert (newer["before"], newer["after"]) == ("H2", "H3")
+    await review_worker._run_review_task_with_timeout(Worker(), newer, "owner1/repo#7")
+    assert not analyses[0].is_incremental
+    assert {file.path for file in analyses[0].code_files} == {
+        "backend/first_push.py",
+        "backend/second_push.py",
+    }
+    assert submitted == []
+    with Session(engine) as db:
+        assert db.get(PRReviewIncrementalQueue, first_id).status == "failed"
+        assert db.get(PRReviewIncrementalQueue, second_id).status == "consumed"
+        assert db.get(BillingOperation, first.operation_id).user_id == 2
+        assert db.get(BillingOperation, second.operation_id).user_id == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,strategy,incremental",
+    [
+        ("completed", "standard", True),
+        ("failed", "standard", False),
+        ("reviewing", "standard", False),
+        ("completed", "skip", False),
+    ],
+)
+async def test_only_completed_review_is_an_incremental_baseline(
+    sql_runtime, status, strategy, incremental
+):
+    await _completed_review(sql_runtime[0], head="H2", status=status, strategy=strategy)
+    result = await _two_push_analyzer().analyze_pr(
+        payload(BillingContext(1, "next", "pr_review", {}), base="H2", head="H3")
+    )
+    assert result.is_incremental is incremental
+    assert result.total_files == (1 if incremental else 2)
 
 
 @pytest.mark.asyncio
