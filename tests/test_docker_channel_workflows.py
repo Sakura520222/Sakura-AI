@@ -145,3 +145,23 @@ def test_main_sync_workflow_runs_for_every_main_push():
         "publish-synchronized-development-sandbox",
     ]
     assert "python scripts/publish_development_deployment.py" in text
+
+
+def test_docker_publish_callers_grant_reusable_workflow_permissions():
+    """GitHub rejects the whole run before scheduling jobs if a scope is missing."""
+    reusable, _ = _load("docker-publish.yml")
+    levels = {"none": 0, "read": 1, "write": 2}
+    callers = []
+    for path in (ROOT / ".github" / "workflows").glob("*.yml"):
+        workflow, _ = _load(path.name)
+        for name, job in workflow.get("jobs", {}).items():
+            if job.get("uses") != "./.github/workflows/docker-publish.yml":
+                continue
+            callers.append((path.name, name))
+            granted = job.get("permissions", workflow.get("permissions", {}))
+            for scope, required in reusable["permissions"].items():
+                assert levels[granted.get(scope, "none")] >= levels[required], (
+                    f"{path.name}:{name} grants {scope}={granted.get(scope, 'none')}, "
+                    f"but docker-publish.yml requires {required}"
+                )
+    assert callers
