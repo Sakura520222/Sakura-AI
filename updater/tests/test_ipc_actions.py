@@ -20,10 +20,10 @@ class _Orchestrator:
     async def check(self):
         return {"update_available": True, "update_ready": True}
 
-    async def preflight(self, target_version):
+    async def preflight(self, target_version, *, confirm_channel_switch=False):
         return {"can_update": True, "target_version": target_version, "checks": []}
 
-    async def submit_update(self, target_version):
+    async def submit_update(self, target_version, *, confirm_channel_switch=False):
         return "upd_test"
 
     def get_job(self, job_id):
@@ -86,9 +86,46 @@ def test_channel_switch_confirmation_requires_json_boolean(tmp_path, endpoint, v
     assert response.json() == {"error": "invalid_confirm_channel_switch"}
 
 
+@pytest.mark.parametrize("confirmation", [None, False, True])
+@pytest.mark.parametrize(("endpoint", "body"), [
+    ("/v1/preflight", {"target_version": "3.2.5"}),
+    ("/v1/update", {"target_version": "3.2.5"}),
+    ("/v1/update", {}),
+    ("/v1/preflight", {"target": {"channel": "development"}}),
+    ("/v1/update", {"target": {"channel": "development"}}),
+    ("/v1/preflight", {"target": {"channel": "stable"}}),
+    ("/v1/update", {"target": {"channel": "stable"}}),
+])
+def test_confirmation_reaches_orchestrator_for_every_target_form(
+    tmp_path, endpoint, body, confirmation
+):
+    calls = []
+
+    class _Recording(_Orchestrator):
+        async def preflight(self, target_version, *, confirm_channel_switch):
+            calls.append((target_version, confirm_channel_switch))
+            return {"can_update": True, "checks": []}
+
+        async def submit_update(self, target_version, *, confirm_channel_switch):
+            calls.append((target_version, confirm_channel_switch))
+            return "upd_confirmed"
+
+    client = TestClient(
+        create_app(str(tmp_path / "state.json"), orchestrator=_Recording())
+    )
+    request_body = dict(body)
+    if confirmation is not None:
+        request_body["confirm_channel_switch"] = confirmation
+
+    response = client.post(endpoint, json=request_body)
+
+    assert response.status_code == (200 if endpoint.endswith("preflight") else 202)
+    assert calls == [(body.get("target", body.get("target_version")), confirmation is True)]
+
+
 def test_conflict_and_preflight_errors_are_unwrapped():
     class _Conflict(_Orchestrator):
-        async def submit_update(self, target_version):
+        async def submit_update(self, target_version, *, confirm_channel_switch=False):
             from sakura_ai_updater.jobs import UpdateInProgressError
 
             raise UpdateInProgressError("upd_existing")

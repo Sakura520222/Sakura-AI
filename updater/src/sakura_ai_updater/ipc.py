@@ -251,7 +251,10 @@ def create_app(state_path: str, *, orchestrator: Any | None = None) -> FastAPI:
                 else:
                     return _error_response(422, "invalid_target")
             else:
-                result = await orchestrator_value.preflight(target_version)
+                result = await orchestrator_value.preflight(
+                    target_version,
+                    confirm_channel_switch=confirm_channel_switch is True,
+                )
             return envelope(_as_data(result))
         except Exception as exc:
             return _action_error(exc)
@@ -285,7 +288,10 @@ def create_app(state_path: str, *, orchestrator: Any | None = None) -> FastAPI:
                 else:
                     return _error_response(422, "invalid_target")
             else:
-                result = await orchestrator_value.submit_update(target_version)
+                result = await orchestrator_value.submit_update(
+                    target_version,
+                    confirm_channel_switch=confirm_channel_switch is True,
+                )
             if isinstance(result, str):
                 data = {
                     "job_id": result,

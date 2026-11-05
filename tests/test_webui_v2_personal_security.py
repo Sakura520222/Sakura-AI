@@ -18,6 +18,7 @@ from backend.models.telegram_models import (
     UserRecoveryCode,
     UserWebAuthnCredential,
 )
+from backend.services.webauthn_service import WebAuthnError
 from backend.webui.auth import WEBUI_TOKEN_COOKIE_NAME, create_mfa_pending_token
 from backend.webui.deps import generate_csrf_token, get_db
 
@@ -195,6 +196,29 @@ async def test_passkey_options_and_verification_keep_shared_challenge_handlers(
     assert response.status_code == 200
     assert verify.await_args.kwargs["user"] is user
     assert verify.await_args.kwargs["body"] == payload
+
+
+@pytest.mark.asyncio
+async def test_passkey_options_hides_webauthn_error_details(api, monkeypatch):
+    _, client, _, _ = api
+
+    async def fail_registration(db, user, origin):
+        raise WebAuthnError("Invalid passkeys_origin configuration")
+
+    monkeypatch.setattr(security, "begin_registration", fail_registration)
+    headers = {"X-CSRF-Token": generate_csrf_token()}
+    response = await client.post(
+        "/api/v1/webui/security/passkeys/options", headers=headers
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "success": False,
+        "message": "Passkey 注册失败，请重试",
+        "data": None,
+    }
+    # 库异常携带的 RP/Origin 配置细节不得回传客户端。
+    assert "passkeys_origin" not in response.text
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@ import re
 from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from fastapi import Depends, Form, Header, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -400,7 +400,14 @@ def _safe_redirect_path(url: str) -> str:
         or decoded_url.startswith("//")
     ):
         return "/"
-    return url
+    # Rebuild from validated components instead of echoing the raw input, so the
+    # returned value cannot carry a scheme/netloc by construction.
+    # The fragment is intentionally dropped: toast_redirect appends query params
+    # after this path and a fragment would swallow them, so no caller relies on it.
+    # 从已校验的解析组件重建返回值（而非原样回显入参），构造上不可能携带
+    # scheme/netloc；fragment 有意丢弃：toast_redirect 会在其后追加 query，
+    # fragment 会吞掉这些参数，且没有调用方依赖它。
+    return urlunsplit(("", "", parsed.path, parsed.query, ""))
 
 
 def toast_redirect(

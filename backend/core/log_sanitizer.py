@@ -37,7 +37,29 @@ _HEADER = re.compile(
 _QUERY = re.compile(r"([?&#;])([^\s?&#;=]+)=([^\s&#;\"'<>]*)")
 # Empty usernames are valid (notably Redis). The last @ within the authority
 # separates the password from the host; query/fragment @ characters do not.
-_USERINFO = re.compile(r"([a-z][a-z0-9+.-]*://[^:/\s?#]*:)[^/\s?#]+(@)", re.IGNORECASE)
+# Userinfo redaction runs as a linear scan anchored on every "://" instead of
+# a start-position regex: the scheme-character runs preceding anchors are
+# disjoint, the userinfo/password segments between anchors cannot contain a
+# further anchor, and each segment search is a quantifier-free single
+# character class, so hostile floods (letter runs, mixed scheme-alphabet
+# runs, dangling markers) stay linear in the text length. The semantics are
+# unchanged: an anchor admits matches only from its directly preceding run,
+# the earliest scheme letter of that run is the match start, the userinfo
+# segment ends at its first delimiter (which must be a colon), and the
+# password segment ends at the last @ before its first delimiter, i.e. the
+# leftmost-match and final-@ behavior of the previous regex.
+# The lead/run sets mirror ``[a-z]``/``[a-z0-9+.-]`` under IGNORECASE;
+# beyond ASCII that is exactly U+0130, U+0131, U+017F and U+212A.
+_SCHEME_LEAD = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "İıſK"
+)
+_SCHEME_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+.-"
+    "İıſK"
+)
+_USERINFO_STOP = re.compile(r"[:/?\s#]")
+_PASSWORD_STOP = re.compile(r"[/\s?#]")
 _BOT = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
 _AUTH = re.compile(r"\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 _TOKEN = re.compile(
@@ -45,9 +67,15 @@ _TOKEN = re.compile(
     r"sk-(?:proj-|ant-)?[A-Za-z0-9_-]+|"
     r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b"
 )
-_PEM = re.compile(
-    r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----", re.DOTALL
-)
+# Private-key blocks are located as two independent markers built from plain
+# substring searches, so a dangling BEGIN marker costs one linear scan rather
+# than quadratic re-scanning of the remaining text and no quantifier remains
+# for a ReDoS model to consider. The old ``[^-]*PRIVATE KEY-----`` label run
+# has a unique resolution: the run cannot contain dashes, so the literal
+# label must sit immediately before the first dash after the header.
+_PEM_BEGIN_HEADER = "-----BEGIN "
+_PEM_END_HEADER = "-----END "
+_PEM_KEY_LABEL = "PRIVATE KEY-----"
 _HEADER_PAIR = re.compile(
     r"(?P<prefix>b?[\"'](?:authorization|proxy-authorization|cookie|set-cookie|x-api-key)[\"']\s*,\s*)"
     r"b?(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*')",
@@ -180,6 +208,105 @@ def _replace_encoded_secret(text: str, secret: str) -> str:
     return "".join(pieces)
 
 
+def _pem_marker_end(text: str, body_start: int) -> int:
+    """Resolve one ``-----BEGIN/END `` header to its marker end, or -1.
+
+    The old ``[^-]*`` label run cannot contain dashes, so under backtracking
+    the ``PRIVATE KEY`` label must end exactly at the first dash at or after
+    ``body_start``; the label therefore has at most one valid position and
+    needs no quantifier at all.
+    """
+    dash = text.find("-", body_start)
+    if (
+        dash != -1
+        and dash - 11 >= body_start
+        and text[dash - 11 : dash + 5] == _PEM_KEY_LABEL
+    ):
+        return dash + 5
+    return -1
+
+
+def _redact_private_keys(text: str) -> str:
+    """Replace each complete PEM private-key block with REDACTED.
+
+    BEGIN and END markers are located with two linear substring scans, so
+    text without a complete pair is returned unchanged, exactly like the
+    previous non-greedy cross-marker match failing.
+    """
+    pieces = []
+    start = 0
+    search_from = 0
+    while (begin := text.find(_PEM_BEGIN_HEADER, search_from)) != -1:
+        begin_end = _pem_marker_end(text, begin + len(_PEM_BEGIN_HEADER))
+        if begin_end == -1:
+            search_from = begin + 1
+            continue
+        end = -1
+        scan = begin_end
+        while (header := text.find(_PEM_END_HEADER, scan)) != -1:
+            end = _pem_marker_end(text, header + len(_PEM_END_HEADER))
+            if end != -1:
+                break
+            scan = header + 1
+        if end == -1:
+            # No END marker exists after this BEGIN, so none can complete any
+            # later BEGIN either: the previous regex would not have matched
+            # again and the remaining text stays as-is.
+            break
+        pieces.append(text[start:begin])
+        pieces.append(REDACTED)
+        start = search_from = end
+    if not pieces:
+        return text
+    pieces.append(text[start:])
+    return "".join(pieces)
+
+
+def _redact_userinfo(text: str) -> str:
+    """Redact ``scheme://user:password@`` credentials with a linear scan.
+
+    Every ``://`` anchor is examined once in left-to-right order. A match can
+    only start at a scheme letter inside the run of scheme characters
+    directly preceding the anchor (any earlier start is blocked by a
+    non-scheme character), the userinfo segment ends at its first delimiter,
+    which must be a colon, and the password segment ends at the last @ before
+    its first delimiter. This reproduces the previous regex's leftmost-match,
+    final-@ output byte for byte while staying linear on hostile floods.
+    """
+    pieces = []
+    start = 0
+    search_from = 0
+    while (anchor := text.find("://", search_from)) != -1:
+        run_start = anchor
+        while run_start and text[run_start - 1] in _SCHEME_CHARS:
+            run_start -= 1
+        lead = run_start
+        while lead < anchor and text[lead] not in _SCHEME_LEAD:
+            lead += 1
+        stop = _USERINFO_STOP.search(text, anchor + 3)
+        at = -1
+        if lead < anchor and stop is not None and text[stop.start()] == ":":
+            colon = stop.start()
+            boundary = _PASSWORD_STOP.search(text, colon + 1)
+            password_end = boundary.start() if boundary else len(text)
+            at = text.rfind("@", colon + 1, password_end)
+            if at < colon + 2:  # the password segment needs at least one char
+                at = -1
+        if at == -1:
+            search_from = anchor + 3
+            continue
+        pieces.append(text[start:lead])
+        pieces.append(text[lead : colon + 1])
+        # Matches the old ``\1***\2`` substitution: scheme through the userinfo
+        # colon, then the redacted password and the separating @.
+        pieces.append("***@")
+        start = search_from = at + 1
+    if not pieces:
+        return text
+    pieces.append(text[start:])
+    return "".join(pieces)
+
+
 def sanitize_text(value: str, *, secrets: tuple[str, ...] = ()) -> str:
     text = value
     for secret in sorted({*_scoped_secrets.get(), *secrets}, key=len, reverse=True):
@@ -187,8 +314,8 @@ def sanitize_text(value: str, *, secrets: tuple[str, ...] = ()) -> str:
             continue
         text = text.replace(secret, REDACTED)
         text = _replace_encoded_secret(text, secret)
-    text = _PEM.sub(REDACTED, text)
-    text = _USERINFO.sub(r"\1***\2", text)
+    text = _redact_private_keys(text)
+    text = _redact_userinfo(text)
     text = _BOT.sub("/bot***", text)
 
     def query(match: re.Match) -> str:

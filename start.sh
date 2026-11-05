@@ -4951,13 +4951,53 @@ updater_development_target_body() {
     printf '}\n'
 }
 
+# Keep the complete blocking set: a missing container also leaves its channel
+# unknown, so channel_switch_confirmed must not hide the failed identity gate.
+# Parse JSON structurally; whitespace/key order must not change the diagnosis.
+updater_preflight_summary() {
+    python3 -c '
+import json, sys
+try:
+    payload = json.load(sys.stdin)
+    checks = payload.get("checks") if isinstance(payload, dict) else None
+    if not isinstance(checks, list) or not checks:
+        raise ValueError("missing checks")
+    failed = []
+    for check in checks:
+        if (not isinstance(check, dict)
+            or not isinstance(check.get("name"), str) or not check["name"]
+            or type(check.get("passed")) is not bool
+            or type(check.get("blocking", True)) is not bool
+            or not isinstance(check.get("detail", ""), str)):
+            raise ValueError("invalid check")
+        if not check["passed"] and check.get("blocking", True):
+            failed.append(check)
+    if not failed:
+        raise ValueError("preflight failure has no blocking checks")
+    names = {check["name"] for check in failed}
+    if names <= {"already_current", "target_newer"}:
+        print("already_current")
+    elif "current_image_identity_valid" in names:
+        print("current_identity_invalid")
+    elif names == {"channel_switch_confirmed"}:
+        print("channel_confirmation_required")
+    else:
+        print("blocked")
+    for check in failed:
+        detail = " ".join(check.get("detail", "").splitlines())
+        print("  - " + check["name"] + (": " + detail if detail else ""))
+except (ValueError, TypeError):
+    sys.exit(1)
+'
+}
+
 # Submit and wait for one updater-owned three-image transaction. Stable
 # updates let the updater resolve the signed current release; development
 # updates must provide its exact structured target. HTTP/network failures are
 # terminal for this command and never fall back to direct Compose mutation.
 updater_submit_image_transaction() {
     local channel="$1" image="$2" confirm="${3:-false}"
-    local payload job_id body_file http_status pattern body
+    local payload job_id body_file http_status pattern body summary diagnosis
     require_image_updater_transaction || return 1
 
     if [[ "$channel" == "stable" ]]; then
@@ -5010,13 +5050,21 @@ updater_submit_image_transaction() {
 
     pattern='"error"[[:space:]]*:[[:space:]]*"preflight_failed"'
     if [[ "$http_status" == "422" && "$payload" =~ $pattern ]]; then
-        if python3 -c 'import json,sys; checks=json.load(sys.stdin).get("checks", []); failed=[x.get("name") for x in checks if x.get("passed") is not True and x.get("blocking", True)]; sys.exit(0 if failed and set(failed) <= {"already_current", "target_newer"} else 1)' <<< "$payload"; then
-            ok "${channel} 频道完整部署已一致，无需更新"
-            return 0
-        fi
-        pattern='"name":"channel_switch_confirmed"[[:space:]]*,[[:space:]]*"passed":false'
-        if [[ "$payload" =~ $pattern ]]; then
-            fail "updater 检测到频道切换未确认，拒绝更新" >&2
+        if summary=$(updater_preflight_summary <<< "$payload"); then
+            diagnosis="${summary%%$'\n'*}"
+            case "$diagnosis" in
+                already_current)
+                    ok "${channel} 频道完整部署已一致，无需更新"
+                    return 0 ;;
+                current_identity_invalid)
+                    fail "updater 无法验证当前部署，不能安全执行镜像更新" >&2
+                    warn "停服更新需要已保存的不可变镜像和匹配的本地镜像身份；请检查下方失败项及 deployment.env，确认频道不能跳过镜像校验" >&2 ;;
+                channel_confirmation_required)
+                    fail "updater 无法确认当前运行频道与目标 ${channel} 一致" >&2
+                    warn "请先检查服务运行状态；确需选择目标频道时，用菜单 [11] 显式确认，镜像标签本身不代表运行频道" >&2 ;;
+                *) fail "updater 预检未通过 (422):" >&2 ;;
+            esac
+            printf '%s\n' "${summary#*$'\n'}" >&2
             return 1
         fi
         fail "updater 预检未通过 (422):" >&2
@@ -5201,7 +5249,7 @@ apply_channel_image() {
 # 更新当前频道的镜像到最新（菜单 [3]）。image/production 模式所有更新都
 # 复用 updater 的三镜像 job；updater 不可用或请求失败时 fail closed。
 cmd_update_image() {
-    local image channel
+    local image channel target_image resolved
     require_image_deployment || return 1
     require_idle_image_deployment || return 1
     # 补全残缺部署状态（缺数据库密码/项目名/镜像时自动补写），确保后续镜像
@@ -5217,8 +5265,23 @@ cmd_update_image() {
         fail "当前镜像无法识别频道；镜像更新仅支持 stable/development 别名"
         return 1
     fi
+    target_image="$image"
+    if [[ "$channel" == "development" ]]; then
+        # The saved pin identifies the baseline, not the newest deployment.
+        # Resolve the complete channel manifest without changing local state.
+        if ! resolved=$(production_resolve_dev_deployment); then
+            fail "无法解析 development 频道最新完整部署；未提交更新" >&2
+            return 1
+        fi
+        target_image="${resolved%%$'\n'*}"
+        if ! production_dev_web_reference_is_safe "$target_image"; then
+            fail "development 频道返回了无效的目标镜像；未提交更新" >&2
+            return 1
+        fi
+        info "目标镜像: $target_image"
+    fi
     info "通过 host updater daemon 执行 ${channel} 三镜像事务..."
-    updater_submit_image_transaction "$channel" "$image" false
+    updater_submit_image_transaction "$channel" "$target_image" false
 }
 
 # 菜单 [7] 生产镜像部署：未初始化时先选择镜像频道（stable 默认 / development
@@ -5275,14 +5338,15 @@ cmd_switch_channel() {
     esac
 
     if [[ "$target" == "$channel" ]]; then
-        info "已在 $target 频道；将执行频道内更新"
+        info "已保存的镜像属于 $target 频道；确认后将执行频道内更新"
     else
-        warn "切换频道会替换运行中的 web 镜像并重启服务"
-        read -rp "  确认切换到 $target? (y/N): " confirm
-        if [[ ! "$confirm" =~ ^[yY]$ ]]; then
-            info "已取消"
-            return 0
-        fi
+        warn "切换频道会更新三镜像部署并重启服务"
+    fi
+    # The persisted tag is not runtime identity. Even selecting the same saved
+    # channel needs an explicit answer before sending the updater confirmation.
+    if ! read -rp "  确认以 $target 频道执行三镜像更新? (y/N): " confirm || [[ ! "$confirm" =~ ^[yY]$ ]]; then
+        info "已取消"
+        return 0
     fi
     require_image_updater_transaction || return 1
     if [[ "$target" == "development" && "$channel" != "development" ]]; then

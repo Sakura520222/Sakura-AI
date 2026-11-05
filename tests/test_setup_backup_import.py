@@ -180,6 +180,21 @@ async def test_save_step_hides_unexpected_exception_details(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_save_step_reports_failing_field_without_exception_details(monkeypatch):
+    monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
+
+    response = await setup_route.save_step(
+        _Request({"values": {"LOG_LEVEL": "not-a-level"}})
+    )
+
+    payload = _response_json(response)
+    assert response.status_code == 400
+    assert payload == {"success": False, "message": "配置校验失败: LOG_LEVEL"}
+    # 异常携带的具体原因（如 "日志级别无效"）不得回传客户端，仅记录服务端日志。
+    assert "日志级别无效" not in response.body.decode()
+
+
+@pytest.mark.asyncio
 async def test_setup_complete_revalidates_backup_and_passes_parsed_sections(
     monkeypatch,
 ):
@@ -231,6 +246,36 @@ async def test_setup_complete_rejects_invalid_backup_before_service_call(monkeyp
 
     assert response.status_code == 400
     assert "备份文件无效" in _response_json(response)["message"]
+    complete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_setup_complete_rejects_backup_without_echoing_details(monkeypatch):
+    monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
+    complete = AsyncMock()
+    monkeypatch.setattr(setup_route.setup_service, "complete_setup", complete)
+    document = json.loads(_setup_backup_content())
+    # 构造重复键：校验消息会插值配置键名，响应不得回传这些细节。
+    global_section = document["sections"][GLOBAL_SECTION]
+    global_section["configs"].append(dict(global_section["configs"][0]))
+    global_section["count"] = len(global_section["configs"])
+
+    response = await setup_route.complete_setup(
+        _Request(
+            {
+                "ADMIN_GITHUB_USERNAME": "admin",
+                "ADMIN_TELEGRAM_ID": "123",
+                "CONFIG_BACKUP": json.dumps(document, ensure_ascii=False),
+            }
+        )
+    )
+
+    assert response.status_code == 400
+    assert _response_json(response) == {
+        "success": False,
+        "message": "备份文件无效",
+    }
+    assert "database_url" not in response.body.decode()
     complete.assert_not_awaited()
 
 

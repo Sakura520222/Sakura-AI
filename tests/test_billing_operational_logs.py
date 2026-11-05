@@ -312,6 +312,9 @@ async def test_checkout_log_redacts_before_truncating_url(
     _, client_class = paddle_sdk_mock
     secret = "opaque-checkout-path-credential-long"
     url = "https://checkout.paddle.com/" + "x" * 43 + "/" + secret
+    # Redaction runs before truncation, so the whole non-secret URL prefix
+    # (scheme + host + filler path) must survive verbatim in the logs.
+    redacted_url_prefix = url[: -len(secret)]
     transaction = MagicMock()
     transaction.id = "txn_safe"
     transaction.status = "ready"
@@ -330,7 +333,7 @@ async def test_checkout_log_redacts_before_truncating_url(
     assert secret in result.checkout_url
     for rendered in (console.getvalue(), path.read_text(encoding="utf-8")):
         assert secret[:8] not in rendered
-        assert "checkout.paddle.com" in rendered
+        assert redacted_url_prefix in rendered
 
 
 @pytest.mark.asyncio
