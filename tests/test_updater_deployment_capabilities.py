@@ -154,6 +154,7 @@ def test_shell_rejects_live_legacy_daemon_before_submission():
     script = """
 export _START_SH_SOURCED=1
 source ./start.sh
+ensure_image_updater_current() { :; }
 updater_daemon_is_running() { return 0; }
 updater_ipc_get() { printf '%s' "$IDENTITY"; }
 curl() { echo UNSAFE_POST; return 0; }
