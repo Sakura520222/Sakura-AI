@@ -91,7 +91,7 @@ jobs:
             | awk 'NF && !seen[$0]++' > "$FACTS_DIR/subjects.txt"
           echo "去重后提交数: $(awk 'END {print NR}' "$FACTS_DIR/subjects.txt")"
 
-          # 变更文件全量清单（降级路径确定性路径规则 + 变更区域汇总的原始输入）
+          # 变更文件全量清单（变更区域汇总的原始输入）
           git diff --name-only --no-color "$BASE_REF" HEAD > "$FACTS_DIR/changed_paths.txt"
 
           # 变更区域汇总：按前两级目录聚合计数，根级文件逐个列出
@@ -162,24 +162,19 @@ jobs:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
         run: |
-          if [ -n "$LLM_BASE_URL" ] && [ -n "$LLM_API_KEY" ] && [ -n "$LLM_MODEL" ]; then
-            echo "has_llm=true" >> "$GITHUB_OUTPUT"
-            echo "LLM 已配置，将尝试 AI 路径"
-          else
-            echo "has_llm=false" >> "$GITHUB_OUTPUT"
-            echo "LLM 未配置，跳过 Python 安装，直接走 bash 降级路径"
+          if [ -z "$LLM_BASE_URL" ] || [ -z "$LLM_API_KEY" ] || [ -z "$LLM_MODEL" ]; then
+            echo "::error::必须配置 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL，无法生成 AI Release 说明。" >&2
+            exit 1
           fi
+          echo "LLM 已配置，将生成 AI Release 说明"
 
       - name: 设置 Python 3.14
-        if: steps.check_llm.outputs.has_llm == 'true'
         uses: actions/setup-python@v7
         with:
           python-version: '3.14'
 
       - name: AI 生成 Release 说明
         id: ai_notes
-        if: steps.check_llm.outputs.has_llm == 'true'
-        continue-on-error: true
         shell: bash
         env:
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
@@ -197,15 +192,9 @@ jobs:
           import urllib.request
 
 
-          def emit(key: str, value: str) -> None:
-              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-                  f.write(f"{key}={value}\n")
-
-
-          def fail_fallback(reason: str) -> None:
-              print(f"AI 路径降级到 bash 分组: {reason}")
-              emit("fallback", "true")
-              sys.exit(0)
+          def fail(reason: str) -> None:
+              print(f"AI Release 说明生成失败: {reason}", file=sys.stderr)
+              sys.exit(1)
 
 
           # 1. 校验 secrets
@@ -213,9 +202,9 @@ jobs:
           api_key = os.environ.get("LLM_API_KEY", "")
           model = os.environ.get("LLM_MODEL", "")
           if not base_url or not api_key or not model:
-              fail_fallback("LLM_BASE_URL / LLM_API_KEY / LLM_MODEL 任一未配置")
+              fail("LLM_BASE_URL / LLM_API_KEY / LLM_MODEL 任一未配置")
 
-          # 2. 读取版本、日期与收集好的事实信号（facts 步骤产出，两条路径同源）
+          # 2. 读取版本、日期与收集好的事实信号（facts 步骤产出）
           version = os.environ["VERSION"]
           date = os.environ["DATE"]
           facts_dir = os.path.join(os.environ["RUNNER_TEMP"], "release_facts")
@@ -229,7 +218,7 @@ jobs:
 
           commits = [c for c in read_fact("subjects.txt").splitlines() if c.strip()]
           if not commits:
-              fail_fallback("提交列表为空")
+              fail("提交列表为空")
           changed_areas = read_fact("changed_areas.txt").strip()
           sensitive_stat = read_fact("sensitive_stat.txt").strip()
           sensitive_diffs = read_fact("sensitive_diffs.txt").strip()
@@ -286,7 +275,7 @@ jobs:
               "temperature": 0.3,
               "reasoning_effort": "high",
               "max_tokens": 32000,
-              "stream": False,
+              "stream": True,
           }
           body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
           url = f"{base_url}/chat/completions"
@@ -295,13 +284,58 @@ jobs:
               "Authorization": f"Bearer {api_key}",
               "Content-Type": "application/json",
               "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
-              "Accept": "application/json, text/plain, */*",
+              "Accept": "text/event-stream",
               "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
               "Cache-Control": "no-cache",
               "Pragma": "no-cache",
               "Origin": "https://api.firefly520.top",
               "Referer": "https://api.firefly520.top/",
           }
+
+          def read_completion(response) -> str:
+              # 逐行消费 SSE，及时接收上游数据，避免非流式响应在代理层等待完整生成。
+              # 每次尝试独立收集，断流后不得把前一次的片段拼进重试结果。
+              parts: list[str] = []
+              event_lines: list[str] = []
+              finish_reason: str | None = None
+              for raw_line in response:
+                  line = raw_line.decode("utf-8").rstrip("\r\n")
+                  if line.startswith(":"):
+                      continue  # SSE 心跳
+                  if line:
+                      field, _, value = line.partition(":")
+                      if field == "data":
+                          event_lines.append(value.removeprefix(" "))
+                      continue
+                  if not event_lines:
+                      continue
+                  event = "\n".join(event_lines)
+                  event_lines.clear()
+                  if event == "[DONE]":
+                      if finish_reason != "stop":
+                          raise RuntimeError("AI 流未正常完成")
+                      content = "".join(parts)
+                      if not content.strip():
+                          raise RuntimeError("AI 流未返回正文")
+                      return content
+                  chunk = json.loads(event)
+                  if not isinstance(chunk, dict) or "error" in chunk:
+                      raise RuntimeError("AI 流返回错误事件")
+                  for choice in chunk.get("choices") or []:
+                      if choice.get("index", 0) != 0:
+                          continue
+                      delta = choice.get("delta") or {}
+                      text = delta.get("content")
+                      if text is not None:
+                          if not isinstance(text, str):
+                              raise RuntimeError("AI 流正文格式无效")
+                          parts.append(text)
+                      reason = choice.get("finish_reason")
+                      if reason is not None:
+                          if reason != "stop":
+                              raise RuntimeError("AI 流提前终止，正文不完整")
+                          finish_reason = reason
+              raise RuntimeError("AI 流在 [DONE] 前断开，正文不完整")
 
           # 4. 请求（最多重试 2 次，指数退避；HTTP 错误读取响应体，便于从日志定位拒绝原因）
           last_err: Exception | None = None
@@ -311,9 +345,11 @@ jobs:
                   req = urllib.request.Request(
                       url, data=body, headers=headers, method="POST"
                   )
-                  with urllib.request.urlopen(req, timeout=60) as resp:
-                      data = json.loads(resp.read().decode("utf-8"))
-                  content = data["choices"][0]["message"]["content"]
+                  # 不设置客户端超时；流式接收，避免代理等待完整响应而返回 524。
+                  print(f"AI 流式请求 {attempt + 1}/3", flush=True)
+                  with urllib.request.urlopen(req) as resp:
+                      print("已开始接收 AI 流式响应", flush=True)
+                      content = read_completion(resp)
                   break
               except urllib.error.HTTPError as e:
                   try:
@@ -328,7 +364,7 @@ jobs:
                   if attempt < 2:
                       time.sleep(2 ** attempt)  # 1s, 2s
           if content is None:
-              fail_fallback(f"API 请求失败: {last_err}")
+              fail(f"API 请求失败: {last_err}")
 
           # 5. 解析 content 为 JSON（兼容模型擅自加的代码围栏）
           def extract_json(text: str) -> str:
@@ -345,7 +381,7 @@ jobs:
           try:
               obj = json.loads(extract_json(content))
           except Exception as e:  # noqa: BLE001
-              fail_fallback(
+              fail(
                   f"JSON 解析失败: {e}; 原始内容前 200 字: {content[:200]!r}"
               )
 
@@ -354,9 +390,9 @@ jobs:
           summary_en = (obj.get("summary_en") or "").strip()
           raw_groups = obj.get("groups")
           if not isinstance(raw_groups, list):
-              fail_fallback("groups 字段非数组")
+              fail("groups 字段非数组")
           if not summary_zh or not summary_en or not raw_groups:
-              fail_fallback("summary_zh / summary_en / groups 字段缺失")
+              fail("summary_zh / summary_en / groups 字段缺失")
 
           # 升级提示 / 注意事项：缺字段按空处理；条目缺中英即丢弃
           raw_upgrade = obj.get("upgrade_notes")
@@ -412,7 +448,7 @@ jobs:
                       }
                   )
           if not norm_groups:
-              fail_fallback("解析后无有效分组")
+              fail("解析后无有效分组")
 
           # 7. 按固定枚举顺序重排（type 优先，缺失回退 title_en 匹配；未匹配项放最后）
           group_order = [
@@ -504,144 +540,9 @@ jobs:
               f.write("\n".join(lines))
 
           print("AI 路径成功生成 release_notes.txt")
-          emit("fallback", "false")
           print("--- release_notes.txt ---")
           print("\n".join(lines))
           PY
-
-      - name: 生成 Release 描述（降级 - Conventional Commits 分组）
-        id: generate_release_notes
-        if: ${{ steps.ai_notes.outcome != 'success' || steps.ai_notes.outputs.fallback == 'true' }}
-        shell: bash
-        env:
-          VERSION: ${{ steps.read_version.outputs.current_version }}
-          TODAY: ${{ steps.read_version.outputs.today }}
-        run: |
-          set -e
-
-          FACTS_DIR="${RUNNER_TEMP}/release_facts"
-          SUBJECTS_FILE="${FACTS_DIR}/subjects.txt"
-          CHANGED_FILE="${FACTS_DIR}/changed_paths.txt"
-
-          # 类型→组 key 映射（style 归入其他变更，与 AI 路径一致）
-          declare -A PREFIX_GROUP=(
-            ["feat"]="feat" ["fix"]="fix" ["perf"]="perf"
-            ["refactor"]="refactor" ["docs"]="docs" ["test"]="test"
-            ["i18n"]="i18n"
-            ["build"]="chore" ["ci"]="chore" ["chore"]="chore" ["style"]="chore"
-          )
-          declare -A GROUP_ZH=(
-            ["feat"]="新增功能" ["fix"]="问题修复" ["perf"]="性能优化"
-            ["refactor"]="重构" ["docs"]="文档更新" ["test"]="测试"
-            ["i18n"]="国际化" ["chore"]="其他变更"
-          )
-          declare -A GROUP_EN=(
-            ["feat"]="New Features" ["fix"]="Bug Fixes" ["perf"]="Performance"
-            ["refactor"]="Refactor" ["docs"]="Documentation" ["test"]="Tests"
-            ["i18n"]="Internationalization" ["chore"]="Other Changes"
-          )
-          # 固定枚举顺序
-          GROUP_ORDER=("feat" "fix" "perf" "refactor" "docs" "test" "i18n" "chore")
-
-          # 解析提交，按组归类（subjects.txt 已在收集步骤做过 --no-merges + 按标题去重）
-          declare -A NEW_COMMITS
-          TOTAL=0
-          BREAKING=0
-          BREAKING_RE='^[[:alnum:]_]+(\([^)]*\))?!:'
-          while IFS= read -r commit; do
-            [ -z "$commit" ] && continue
-            # Conventional Commits 破坏性标记：type!:/type(scope)!:/BREAKING CHANGE
-            if [[ "$commit" =~ $BREAKING_RE ]] || [[ "${commit^^}" == *"BREAKING CHANGE"* ]]; then
-              BREAKING=1
-            fi
-            # 提取 Conventional Commits 前缀（小写）
-            prefix=$(echo "$commit" | sed -E 's/^([a-zA-Z]+)(\([^)]*\))?!?:.*/\1/' | tr '[:upper:]' '[:lower:]')
-            group="${PREFIX_GROUP[$prefix]:-chore}"
-            NEW_COMMITS[$group]="${NEW_COMMITS[$group]}- ${commit}"$'\n'
-            TOTAL=$((TOTAL + 1))
-          done < "$SUBJECTS_FILE"
-
-          # 确定性升级提示：只输出能由 BREAKING 标记或路径规则确定判断的内容，绝不让 bash 推测
-          UPGRADE_ZH=""
-          UPGRADE_EN=""
-          add_upgrade_note() {
-            UPGRADE_ZH="${UPGRADE_ZH}- $1"$'\n'
-            UPGRADE_EN="${UPGRADE_EN}- $2"$'\n'
-          }
-          if [ "$BREAKING" -eq 1 ]; then
-            add_upgrade_note \
-              "此版本包含破坏性变更，升级前请仔细阅读更新日志。" \
-              "This release contains breaking changes. Review the changelog carefully before upgrading."
-          fi
-          if grep -Eq '(^|/)(requirements[^/]*\.txt|pyproject\.toml|uv\.lock)$' "$CHANGED_FILE"; then
-            add_upgrade_note \
-              "项目依赖已发生变化，源码部署用户升级后应重新同步依赖。" \
-              "Project dependencies changed; source deployments should re-sync dependencies after upgrading."
-          fi
-          if grep -Eq '^docker/|(^|/)(docker-compose[^/]*\.ya?ml|Dockerfile[^/]*)$' "$CHANGED_FILE"; then
-            add_upgrade_note \
-              "Docker 部署相关文件发生变化，使用 Docker 部署的用户建议重新拉取配置并重建服务。" \
-              "Docker deployment files changed; Docker deployments should re-fetch the configuration and rebuild."
-          fi
-          if grep -Eq '^(migrations|alembic|backend/models|backend/database)/' "$CHANGED_FILE"; then
-            add_upgrade_note \
-              "本版本包含数据库结构变更（启动时自动迁移），请在升级前备份数据库。" \
-              "This release includes database schema changes (auto-migrated on startup). Back up the database before upgrading."
-          fi
-
-          # 收集涉及的类型（中文顿号 / 英文逗号）
-          ZH_TITLES=""
-          EN_TITLES=""
-          for g in "${GROUP_ORDER[@]}"; do
-            if [ -n "${NEW_COMMITS[$g]:-}" ]; then
-              if [ -n "$ZH_TITLES" ]; then
-                ZH_TITLES="${ZH_TITLES}、${GROUP_ZH[$g]}"
-                EN_TITLES="${EN_TITLES}, ${GROUP_EN[$g]}"
-              else
-                ZH_TITLES="${GROUP_ZH[$g]}"
-                EN_TITLES="${GROUP_EN[$g]}"
-              fi
-            fi
-          done
-
-          if [ "$TOTAL" -eq 0 ]; then
-            ZH_TITLES="无"
-            EN_TITLES="none"
-          fi
-
-          # 拼装 Markdown（双语并排标题、确定性升级提示、条目为 commit 原文、无 emoji）
-          {
-            echo "## v${VERSION} (${TODAY})"
-            echo ""
-            echo "### 总结 / Summary"
-            echo ""
-            echo "本次发布包含 ${TOTAL} 项提交，涉及：${ZH_TITLES}。"
-            echo ""
-            echo "This release includes ${TOTAL} commits across: ${EN_TITLES}."
-            echo ""
-            if [ -n "$UPGRADE_ZH" ]; then
-              echo "### 升级提示 / Upgrade Notes"
-              echo ""
-              printf '%s\n' "$UPGRADE_ZH"
-              echo ""
-              printf '%s\n' "$UPGRADE_EN"
-              echo ""
-            fi
-
-            for g in "${GROUP_ORDER[@]}"; do
-              commits="${NEW_COMMITS[$g]:-}"
-              if [ -n "$commits" ]; then
-                echo "### ${GROUP_ZH[$g]} / ${GROUP_EN[$g]}"
-                echo ""
-                printf '%s\n' "$commits"
-                echo ""
-              fi
-            done
-          } > release_notes.txt
-
-          echo "降级路径（bash 分组）已生成 release_notes.txt"
-          echo "--- release_notes.txt ---"
-          cat release_notes.txt
 
       - name: 创建或更新 Release
         id: create_or_update_release
@@ -690,7 +591,7 @@ jobs:
               echo ""
               echo "</details>"
             else
-              echo "release_notes.txt 未生成（AI 与降级路径均未产出）"
+              echo "release_notes.txt 未生成（AI 生成失败，未更新 Release）"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -710,7 +611,7 @@ jobs:
       contents: write
     uses: ./.github/workflows/webui-build.yml
     with:
-      source_ref: refs/tags/v${{ needs.generate-release.outputs.version }}
+      source_revision: refs/tags/v${{ needs.generate-release.outputs.version }}
       release_tag: v${{ needs.generate-release.outputs.version }}
 
   build-and-upload-assets:

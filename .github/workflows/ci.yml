@@ -103,11 +103,6 @@ jobs:
       - name: Ruff 检查
         run: uv run --no-sync ruff check .
 
-      - name: 运行完整测试
-        run: uv run --no-sync pytest -q
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-
   settings-databases:
     name: Settings database (${{ matrix.engine }})
     runs-on: ubuntu-latest

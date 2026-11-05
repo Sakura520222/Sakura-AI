@@ -168,6 +168,7 @@ jobs:
       needs.sync-main-to-develop.outputs.target == 'develop' &&
       needs.sync-main-to-develop.outputs.using_pat != 'true'
     permissions:
+      actions: read
       contents: read
       packages: write
     uses: ./.github/workflows/docker-publish.yml

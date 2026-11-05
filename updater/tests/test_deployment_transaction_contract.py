@@ -40,6 +40,8 @@ class Transport:
         self.commands = []
         self.pulled = []
         self.bad_label = None
+        self.web_status = "running"
+        self.sandbox_running = True
         self.persist(initial)
 
     def persist(self, values):
@@ -69,9 +71,12 @@ class Transport:
         }
         if self.bad_label == component:
             labels["org.opencontainers.image.revision"] = "9" * 40
-        return {"RepoDigests": [REPOSITORIES[component] + "@" + ref.rsplit("@", 1)[1]], "Config": {"Labels": labels}}
+        return {"Id": "sha256:" + ("0" if component == "web" else "1") * 64,
+                "RepoDigests": [REPOSITORIES[component] + "@" + ref.rsplit("@", 1)[1]], "Config": {"Labels": labels}}
 
     async def health(self, provider=None, timeout=5):
+        if self.web_status != "running":
+            return None
         return {"version": VERSION, "build": {"channel": "development",
                 "revision": REVISION if self.running["web"] == NEW["web"] else OLD_REVISION}}
 
@@ -80,26 +85,37 @@ class Transport:
         if argv[:3] == ["docker", "manifest", "inspect"]:
             return "{}", ""
         if argv[:2] == ["docker", "pull"]:
-            assert self.selected() != NEW  # no premature commit, even during mixed repair
+            # Restarting an already selected target is valid after stopping.
+            assert self.selected() != NEW or (self.running == NEW and self.web_status != "running")
             self.pulled.append(argv[-1])
             if self.fail == "pull:" + argv[-1]:
                 raise ImageAdapterError("pull failure")
             return "", ""
         if argv[:3] == ["docker", "image", "inspect"]:
             return json.dumps(self.metadata(argv[-1])), ""
+        if argv[:3] == ["docker", "container", "ls"]:
+            return ("" if self.web_status == "missing" else "2" * 64), ""
+        if argv[:3] == ["docker", "container", "inspect"]:
+            return json.dumps({"Name": "/sakura-ai", "Image": "sha256:" + "0" * 64,
+                               "State": {"Running": self.web_status == "running", "Status": self.web_status}}), ""
         if argv[:2] == ["docker", "inspect"]:
             if argv[-1] == "sakura-ai":
+                if self.web_status == "missing":
+                    from sakura_ai_updater.deployment import DeploymentError
+
+                    raise DeploymentError("no such object: sakura-ai")
                 return "sha256:" + "0" * 64, ""
             return json.dumps({"Config": {"Image": self.running["sandboxd"],
                 "Cmd": ["--runner-image-digest", self.running["runner"]],
                 "Labels": {"ai.sakura.managed-by": "sandboxd-daemon", "ai.sakura.instance-id": "sandbox-1234567890abcdef",
                            "ai.sakura.runner-image-digest": self.running["runner"]}},
-                "Image": "sha256:" + "1" * 64, "State": {"Running": True}}), ""
+                "Image": "sha256:" + "1" * 64, "State": {"Running": self.sandbox_running}}), ""
         if argv[0] == "bash":
             selected = self.selected()
             if self.fail == "rollback" and self.failed_once:
                 raise ImageAdapterError("rollback failure")
             self.running.update({k: selected[k] for k in ("sandboxd", "runner")})
+            self.sandbox_running = True
             if self.fail == "activation" and not self.failed_once:
                 self.failed_once = True
                 raise ImageAdapterError("activation failure")
@@ -107,6 +123,7 @@ class Transport:
         if argv[:2] == ["docker", "compose"]:
             assert set(NEW.values()) <= set(self.pulled)
             self.running["web"] = self.selected()["web"]
+            self.web_status = "running"
             if self.fail == "partial":
                 self.running["runner"] = OLD["runner"]
             return "", ""
@@ -232,3 +249,54 @@ async def test_incomplete_persisted_pair_recovers_rollback_anchor_and_self_heals
     job = await orchestrator.wait_for_job(await orchestrator.submit_update(TARGET))
     assert job.state == "success", job.error
     assert transport.selected() == NEW == transport.running
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["exited", "missing"])
+@pytest.mark.parametrize("initial", [OLD, NEW])
+async def test_stopped_update_verifies_baseline_and_starts_complete_deployment(transaction, status, initial):
+    orchestrator, transport = transaction(initial)
+    transport.web_status = status
+    transport.sandbox_running = False
+    before = transport.path.read_bytes()
+
+    result = await orchestrator.preflight(TARGET)
+
+    assert result["can_update"] is True
+    assert result["requires_channel_switch_confirmation"] is False
+    assert result["current_deployment"]["identity_source"] == "stopped_image"
+    assert result["current_deployment"]["running_container_digest"] is None
+    assert result["from_version"] == VERSION
+    assert transport.path.read_bytes() == before
+    assert not transport.pulled
+
+    job = await orchestrator.wait_for_job(await orchestrator.submit_update(TARGET))
+
+    assert job.state == "success", job.error
+    assert job.deployment_verified is True
+    assert job.from_digest == initial["web"].rsplit("@", 1)[1]
+    assert transport.selected() == NEW == transport.running
+    assert transport.web_status == "running"
+    assert transport.sandbox_running is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["exited", "missing"])
+@pytest.mark.parametrize("failure", ["pull:web", "activation", "health"])
+async def test_stopped_update_keeps_rollback_target_on_failure(transaction, status, failure):
+    orchestrator, transport = transaction(OLD)
+    transport.web_status = status
+    transport.sandbox_running = False
+    before = transport.path.read_bytes()
+    transport.fail = "pull:" + NEW["web"] if failure == "pull:web" else failure
+
+    job = await orchestrator.wait_for_job(await orchestrator.submit_update(TARGET))
+
+    assert job.state == "failed"
+    assert job.deployment_verified is False
+    assert transport.path.read_bytes() == before
+    assert transport.selected() == OLD == transport.running
+    if failure == "pull:web":
+        assert job.activation_started is False
+        assert transport.web_status == status
+        assert transport.sandbox_running is False

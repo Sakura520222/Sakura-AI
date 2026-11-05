@@ -165,9 +165,18 @@ async def passkey_register_options(
     try:
         data = await begin_registration(db, db_user, request_origin(request))
     except WebAuthnError as exc:
+        # WebAuthnError 消息可能携带 RP/Origin 配置细节，不回传客户端；
+        # 固定文案与 passkey_register_verify 保持一致，细节记录在服务端日志。
+        logger.warning(
+            "Passkey 注册 options 生成失败: user_id={}, error={}", user_id, exc
+        )
         return JSONResponse(
             status_code=400,
-            content={"success": False, "message": str(exc), "data": None},
+            content={
+                "success": False,
+                "message": "Passkey 注册失败，请重试",
+                "data": None,
+            },
         )
     return {"success": True, "message": "ok", "data": data}
 

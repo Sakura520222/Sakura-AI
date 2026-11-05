@@ -511,7 +511,15 @@ async def update_user_info(
         # mutating the target so an alias collision cannot partially rename it.
         await rename_github_username(db, target, body.github_username)
     except GitHubUsernameConflictError as exc:
-        return error_response(str(exc))
+        # Conflict messages are fixed literals from identity_service; read
+        # args[0] directly so exception stringification never reaches the
+        # response. / 冲突消息是 identity_service 的固定文案，直接读 args[0]，
+        # 避免异常对象字符串化进入响应。
+        return error_response(
+            exc.args[0]
+            if exc.args and isinstance(exc.args[0], str)
+            else "GitHub 用户名冲突"
+        )
     # An omitted Telegram id means "leave the existing compatibility value as
     # is".  This preserves legacy child rows whose foreign keys still point
     # at telegram_users.telegram_id while allowing GitHub-only accounts.
