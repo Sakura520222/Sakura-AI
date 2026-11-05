@@ -201,7 +201,7 @@ updater_systemd_unit_needs_cleanup() { return 1; }
 updater_socket_listener_responds() { return 1; }
 updater_prepare_stop() { return 0; }
 stop_verified_updater() { return 0; }
-cmd_updater_install() { echo "INSTALL:$*" >> "$LOG"; return 0; }
+updater_install_release() { shift; echo "INSTALL:$*" >> "$LOG"; return 0; }
 ensure_updater_running() { echo "ENSURE:$*" >> "$LOG"; return 0; }
 updater_backend() { echo "BACKEND:$*" >> "$LOG"; return 0; }
 cmd_updater_reinstall --startup-timeout 300
@@ -229,7 +229,7 @@ updater_systemd_unit_needs_cleanup() { return 1; }
 updater_socket_listener_responds() { return 0; }
 updater_prepare_stop() { return 0; }
 stop_verified_updater() { return 0; }
-cmd_updater_install() { echo "INSTALL:$*" >> "$LOG"; return 1; }
+updater_install_release() { shift; echo "INSTALL:$*" >> "$LOG"; return 1; }
 ensure_updater_running() { echo "ENSURE:$*" >> "$LOG"; return 0; }
 updater_backend() { echo "BACKEND:$*" >> "$LOG"; return 0; }
 rc=0

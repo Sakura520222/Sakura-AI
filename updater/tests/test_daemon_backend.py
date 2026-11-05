@@ -27,6 +27,7 @@ from sakura_ai_updater.backends.daemon import (
     DEFAULT_RUN_DIR,
     DEFAULT_SOCKET_PATH,
     DEFAULT_STARTUP_TIMEOUT,
+    DEFAULT_STOP_TIMEOUT,
     DaemonBackend,
     GIDConflictError,
     PrivilegeError,
@@ -250,7 +251,14 @@ def test_module_constants_match_spec():
     assert DEFAULT_RUN_DIR == "/run/sakura-ai"
     assert DEFAULT_GID == 9472
     assert DEFAULT_GROUP == "sakura-ai"
-    assert DEFAULT_STARTUP_TIMEOUT == 5.0
+    assert DEFAULT_STARTUP_TIMEOUT == 180.0
+    assert DEFAULT_STOP_TIMEOUT == 5.0
+
+
+def test_startup_recovery_budget_does_not_extend_shutdown_grace(tmp_path):
+    backend = DaemonBackend(state_dir=str(tmp_path))
+    assert backend.startup_timeout == 180.0
+    assert backend.stop_timeout == 5.0
 
 
 def test_module_exports_error_types():

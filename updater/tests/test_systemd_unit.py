@@ -18,6 +18,7 @@ from sakura_ai_updater import systemd as systemd_mod
 from sakura_ai_updater.backends import daemon as daemon_mod
 from sakura_ai_updater.backends.daemon import (
     DEFAULT_STARTUP_TIMEOUT,
+    DEFAULT_STOP_TIMEOUT,
     DaemonBackend,
     PrivilegeError,
     backend_cli_flags,
@@ -27,6 +28,7 @@ from sakura_ai_updater.systemd import (
     RESTART_SEC,
     START_LIMIT_BURST,
     START_LIMIT_INTERVAL_SEC,
+    TIMEOUT_START_MARGIN_SEC,
     TIMEOUT_START_SEC,
     TIMEOUT_STOP_SEC,
     UNIT_NAME,
@@ -94,7 +96,7 @@ def test_render_unit_contains_p05_directives(tmp_path, monkeypatch):
     assert _directive(text, "PIDFile") == backend.pid_file_path
     assert _directive(text, "Restart") == "on-failure"
     assert _directive(text, "RestartSec") == f"{RESTART_SEC}s"
-    assert _directive(text, "TimeoutStartSec") == f"{TIMEOUT_START_SEC}s"
+    assert _directive(text, "TimeoutStartSec") == "210s"
     assert _directive(text, "TimeoutStopSec") == f"{TIMEOUT_STOP_SEC}s"
     assert _directive(text, "StartLimitIntervalSec") == str(START_LIMIT_INTERVAL_SEC)
     assert _directive(text, "StartLimitBurst") == str(START_LIMIT_BURST)
@@ -170,13 +172,13 @@ def test_render_unit_preserves_configured_startup_timeout(tmp_path, monkeypatch)
     )
 
 
-def test_render_unit_default_startup_timeout_keeps_timeout_floor(tmp_path, monkeypatch):
-    """默认 5s：flag 仍显式渲染进 unit，TimeoutStartSec 维持 120s 地板。"""
+def test_render_unit_default_timeout_covers_transaction_recovery(tmp_path, monkeypatch):
+    """The default readiness gate and systemd budget both cover startup recovery."""
     backend = _make_production_backend(tmp_path, monkeypatch)
     text = render_unit(backend)
     assert "--startup-timeout" in _directive(text, "ExecStart").split()
     assert str(DEFAULT_STARTUP_TIMEOUT) in _directive(text, "ExecStart").split()
-    assert _directive(text, "TimeoutStartSec") == f"{TIMEOUT_START_SEC}s"
+    assert _directive(text, "TimeoutStartSec") == "210s"
 
 
 def test_render_unit_pidfile_matches_daemon_derivation(tmp_path, monkeypatch):
@@ -224,8 +226,9 @@ def test_render_unit_requires_production_binary(tmp_path, monkeypatch):
 
 def test_unit_timeout_contract_exceeds_internal_gates():
     """systemd 超时必须大于 backend 内部门（readiness / SIGTERM 窗口）。"""
-    assert TIMEOUT_START_SEC > DEFAULT_STARTUP_TIMEOUT
-    assert TIMEOUT_STOP_SEC > DEFAULT_STARTUP_TIMEOUT
+    assert TIMEOUT_START_SEC > 0
+    assert TIMEOUT_START_MARGIN_SEC > 0
+    assert TIMEOUT_STOP_SEC > DEFAULT_STOP_TIMEOUT
 
 
 # =============================================================================

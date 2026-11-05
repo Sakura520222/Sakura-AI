@@ -30,7 +30,10 @@ DEFAULT_SOCKET_PATH = "/run/sakura-ai/updater.sock"
 DEFAULT_RUN_DIR = "/run/sakura-ai"
 DEFAULT_GID = 9472
 DEFAULT_GROUP = "sakura-ai"
-DEFAULT_STARTUP_TIMEOUT = 5.0
+# Startup can reconverge sandboxd/Web after an interrupted deployment before
+# publishing the IPC socket. Keep shutdown's SIGTERM grace period independent.
+DEFAULT_STARTUP_TIMEOUT = 180.0
+DEFAULT_STOP_TIMEOUT = 5.0
 
 # 与 __main__.py 的 DEFAULT_STATE_DIR 保持一致（backend CLI 显式传值，此处仅兜底）。
 _DEFAULT_STATE_DIR = ".deploy/updater"
@@ -257,7 +260,7 @@ class DaemonBackend:
         socket_path: str = DEFAULT_SOCKET_PATH,
         binary_path: str | None = None,
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
-        stop_timeout: float = DEFAULT_STARTUP_TIMEOUT,
+        stop_timeout: float = DEFAULT_STOP_TIMEOUT,
         poll_interval: float = 0.1,
         run_dir: str = DEFAULT_RUN_DIR,
         gid: int = DEFAULT_GID,
