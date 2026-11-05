@@ -404,6 +404,37 @@ async def test_stable_same_semver_digest_drift_requires_reconcile(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("minimum", ["0.0.0", "3.1.0"])
+async def test_stopped_stable_update_uses_verified_image_version(monkeypatch, tmp_path, minimum):
+    async def verify(self, target):
+        return target
+
+    class _Stopped(_StableChannelDeployment):
+        async def resolve_current_version(self):
+            return None
+
+        async def current_state(self):
+            return {"identity_source": "stopped_image", "current_version": "3.0.2",
+                    "current_channel": "stable", "running_container_digest": None}
+
+    class _Release(_StableRelease):
+        async def fetch_manifest(self, version=None):
+            manifest = await super().fetch_manifest(version)
+            manifest["min_upgrade_from"] = minimum
+            return manifest
+
+    monkeypatch.setattr("sakura_ai_updater.jobs.RegistryClient.verify_target", verify)
+    result = await JobOrchestrator(str(tmp_path / "state.json"), _Adapter(), _Release(),
+                                   _Stopped(), disk_space_threshold=1).preflight(_stable_target())
+
+    assert result["from_version"] == "3.0.2"
+    assert result["requires_channel_switch_confirmation"] is False
+    assert result["can_update"] is (minimum == "0.0.0")
+    check = next(item for item in result["checks"] if item["name"] == "min_upgrade_from")
+    assert check["passed"] is (minimum == "0.0.0")
+
+
+@pytest.mark.asyncio
 async def test_structured_stable_target_enforces_manifest_minimum_upgrade(
     monkeypatch, tmp_path
 ):
