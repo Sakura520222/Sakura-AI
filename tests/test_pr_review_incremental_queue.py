@@ -325,12 +325,23 @@ async def test_consume_pending_merges_events_and_marks_consumed(queue_store):
         ),
     )
     repo = SimpleNamespace(
+        get_pull=lambda _: SimpleNamespace(
+            head=SimpleNamespace(sha="head3"),
+            base=SimpleNamespace(sha="target"),
+            changed_files=1,
+            get_files=lambda: [file_obj],
+            get_commits=lambda: [commit_obj],
+            update=lambda: None,
+        ),
         compare=lambda base, head: SimpleNamespace(
             files=[file_obj],
             commits=[commit_obj],
             base=base,
             head=head,
-        )
+            status="ahead",
+            total_commits=1,
+            merge_base_commit=SimpleNamespace(sha=base),
+        ),
     )
 
     message = await service.consume_pending_for_review(
@@ -348,3 +359,66 @@ async def test_consume_pending_merges_events_and_marks_consumed(queue_store):
     assert {item.status for item in queue_store["queue"].values()} == {"consumed"}
     assert {item.consumed_review_id for item in queue_store["queue"].values()} == {12}
     assert {item.consumed_session_id for item in queue_store["queue"].values()} == {34}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("moved", [False, True])
+async def test_queued_base_merge_uses_net_pr_and_preserves_pending_on_snapshot_change(
+    queue_store, moved
+):
+    item = _add_queue(queue_store, base_sha="base1", head_sha="head2")
+    service = PRReviewIncrementalQueueService()
+    net_file = SimpleNamespace(
+        filename="backend/app.py",
+        status="modified",
+        additions=1,
+        deletions=1,
+        patch="@@ -1 +1 @@\n-old\n+PR fix",
+    )
+    own_commit = SimpleNamespace(
+        sha="head2",
+        commit=SimpleNamespace(
+            message="fix: PR change", author=SimpleNamespace(name="Dev")
+        ),
+    )
+    upstream_commit = SimpleNamespace(
+        sha="upstream",
+        commit=SimpleNamespace(
+            message="Release version 3.2.5", author=SimpleNamespace(name="Dev")
+        ),
+    )
+    pr = SimpleNamespace(
+        head=SimpleNamespace(sha="head2"),
+        base=SimpleNamespace(sha="target"),
+        changed_files=1,
+        get_files=lambda: [net_file],
+        get_commits=lambda: [own_commit],
+        update=lambda: None,
+    )
+    if moved:
+        pr.update = lambda: setattr(pr.head, "sha", "head3")
+    repo = SimpleNamespace(
+        get_pull=lambda _: pr,
+        compare=lambda *_: SimpleNamespace(
+            files=[SimpleNamespace(filename="upstream.py")],
+            commits=[upstream_commit, own_commit],
+            total_commits=2,
+            status="ahead",
+            merge_base_commit=SimpleNamespace(sha="base1"),
+        ),
+    )
+
+    prepared = await service.prepare_pending_for_review(pr_info=_pr_info(), repo=repo)
+
+    assert item.status == "pending"
+    if moved:
+        assert prepared is None
+    else:
+        assert prepared.head_sha == "head2"
+        assert prepared.queue_ids == [item.id]
+        content = prepared.message["content"]
+        assert "full net PR" in content
+        assert "target...head2" in content
+        assert "PR fix" in content
+        assert "upstream.py" not in content
+        assert "Release version 3.2.5" not in content

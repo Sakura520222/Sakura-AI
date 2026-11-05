@@ -13,6 +13,7 @@ from loguru import logger
 
 from backend.core.config import get_strategy_config
 from backend.core.github_app import GitHubAppClient
+from backend.services.pr_diff_scope import load_pr_diff_scope
 
 
 class CommitInfo(TypedDict):
@@ -81,6 +82,11 @@ class PRAnalysis:
     # 增量审查时的新提交信息
     new_commits: list[CommitInfo] | None = None
 
+    # Complete net PR evidence, including files excluded by review filters.
+    # Summary counts, file list and commits must come from this same snapshot.
+    pr_files: list[PRFileInfo] | None = None
+    pr_commits: list[CommitInfo] | None = None
+
 
 class PRAnalyzer:
     """PR分析器"""
@@ -104,7 +110,6 @@ class PRAnalyzer:
 
             # 获取仓库和PR
             repo = client.get_repo(pr_info["repo_full_name"])
-            pr = repo.get_pull(pr_info["pr_number"])
 
             logger.info(
                 f"开始分析PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
@@ -114,56 +119,31 @@ class PRAnalyzer:
             action = pr_info.get("action")
             before_sha = pr_info.get("before")
             after_sha = pr_info.get("after")
-            is_incremental = (
+            incremental_requested = (
                 action == "synchronize"
                 and before_sha
                 and after_sha
                 and before_sha != "0" * 40
             )
 
-            # 获取文件变更
-            new_commits = None
+            scope = load_pr_diff_scope(
+                repo,
+                pr_info["pr_number"],
+                before_sha=before_sha if incremental_requested else None,
+                head_sha=after_sha or pr_info.get("head_sha"),
+            )
+            is_incremental = scope.is_incremental
+            file_list = scope.files
+            new_commits = (
+                [self._commit_info(commit) for commit in scope.commits]
+                if is_incremental
+                else None
+            )
             if is_incremental:
-                # 增量审查：只获取两次提交之间的变更
-                comparison = repo.compare(before_sha, after_sha)
-                file_list = list(comparison.files)
-
-                # 提取新提交的标题和消息
-                new_commits = []
-                for commit in comparison.commits:
-                    commit_msg = commit.commit.message.strip()
-                    # 取第一行作为标题，其余作为正文
-                    first_newline = commit_msg.find("\n")
-                    title = (
-                        commit_msg[:first_newline]
-                        if first_newline != -1
-                        else commit_msg
-                    )
-                    body = (
-                        commit_msg[first_newline + 1 :].strip()
-                        if first_newline != -1
-                        else ""
-                    )
-                    new_commits.append(
-                        {
-                            "sha": commit.sha[:8],
-                            "message": commit_msg,
-                            "title": title,
-                            "body": body,
-                            "author": commit.commit.author.name
-                            if commit.commit.author
-                            else "Unknown",
-                        }
-                    )
-
                 logger.info(
                     f"增量审查模式: 对比 {before_sha[:8]}... → {after_sha[:8]}..., "
                     f"变更文件数: {len(file_list)}, 新提交数: {len(new_commits)}"
                 )
-            else:
-                # 全量审查
-                files = pr.get_files()
-                file_list = list(files)
 
             # 分析文件
             code_files = []
@@ -172,15 +152,7 @@ class PRAnalyzer:
             total_changes = 0
 
             for file in file_list:
-                file_info = PRFileInfo(
-                    path=file.filename,
-                    status=file.status,
-                    additions=file.additions,
-                    deletions=file.deletions,
-                    changes=file.changes,
-                    patch=file.patch if hasattr(file, "patch") else None,
-                    is_code_file=get_strategy_config().is_code_file(file.filename),
-                )
+                file_info = self._file_info(file)
 
                 # 检查是否应该跳过
                 if get_strategy_config().should_skip_file(file.filename):
@@ -235,6 +207,8 @@ class PRAnalyzer:
                 original_indent_map=original_indent_map,
                 is_incremental=is_incremental,
                 new_commits=new_commits,
+                pr_files=[self._file_info(file) for file in scope.pr_files],
+                pr_commits=[self._commit_info(commit) for commit in scope.pr_commits],
             )
 
             logger.info(
@@ -248,6 +222,30 @@ class PRAnalyzer:
         except Exception as e:
             logger.opt(exception=True).error(f"分析PR时出错: {e}")
             raise
+
+    @staticmethod
+    def _file_info(file) -> PRFileInfo:
+        return PRFileInfo(
+            path=file.filename,
+            status=file.status,
+            additions=file.additions,
+            deletions=file.deletions,
+            changes=file.changes,
+            patch=getattr(file, "patch", None),
+            is_code_file=get_strategy_config().is_code_file(file.filename),
+        )
+
+    @staticmethod
+    def _commit_info(commit) -> CommitInfo:
+        message = commit.commit.message.strip()
+        title, _, body = message.partition("\n")
+        return {
+            "sha": commit.sha[:8],
+            "message": message,
+            "title": title,
+            "body": body.strip(),
+            "author": commit.commit.author.name if commit.commit.author else "Unknown",
+        }
 
     def _extract_changed_lines(
         self, code_files: list[PRFileInfo]
