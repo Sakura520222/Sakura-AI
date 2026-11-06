@@ -10,7 +10,7 @@ GitHub PR reviews, Issue analysis and Agent-assisted fixes
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-3.2.5-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.6-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)

@@ -787,7 +787,7 @@ def _ensure_model_modules_imported() -> None:
 
 # Startup seeds only the version marker. Dynamic defaults remain inherited;
 # the definition-only helper below is retained for migration/calibration tooling.
-APP_VERSION_DEFAULT = "3.2.5"
+APP_VERSION_DEFAULT = "3.2.6"
 
 
 def _settings_default_to_str(value: object) -> str:
