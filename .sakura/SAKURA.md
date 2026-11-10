@@ -5,40 +5,34 @@
 
 ## 2. 仓库信息
 - 仓库名: Sakura520222/Sakura-AI
-- 语言统计: Python: 8744585, HTML: 1130029, Shell: 357518, Dockerfile: 3135
-- 累计反思 43 次
+- 语言统计: Python: 12076203, TypeScript: 1168442, Shell: 368927, CSS: 91611, JavaScript: 10789, Dockerfile: 3615, HTML: 511
+- 累计反思 6 次
 
 ## 3. 核心审查原则
-- 完整性验证：PR 描述/提交/文件/diff 一致核对；差异 >10% 标 minor。
-- 删减与配置核验：批量清理后跑 `ruff format`；移除配置项核验 `config.py`、`DYNAMIC_CONFIG_GROUPS`、`templates/`、`translations/`、`.env` 五要素；校验遵从代码引用→配置声明→UI 渲染→i18n→CI/部署环境；配置合法性校验物理前置于空数据早退分支。
-- 配置中心事实源：恢复默认值自省静态 Schema（Pydantic `model_fields[key].default`）防运行时单例污染；字段级 PATCH 防并发无序覆盖；`backend/core/config.py` 禁顶层静态导入外部依赖，动态选项惰性加载。
-- 前端 CSS/UI 截断：移除 `line-clamp-*`/`truncate` 时核验父容器弹性高度、无残留二次截断、`whitespace-pre-wrap` 三要素。
-- 双轨评分与批准：增量+整体双轨；历史 major 未清零上限 8；10/10≠无风险；approve 须声明未解决问题；历史 major 闭环须结案并全库引用搜索。
+- 事实锚定：结论从实际 diff/list_changed_files 出发，禁止按 PR 类型套模板推断变更集；AI 自产摘要须与实际 diff 逐条比对，防"模板幻觉"。
+- 结论正确性 ≠ 过程完备性：反思须盘点"未做动作"，结论可信仍可能有零盲点缺口。
+- 聚合 Issue 范式：定锚点+分层拆解+每层绑定回归测试；区分"已确认缺陷"与"待核实疑点"，疑点不定 P0（48h 内补复现步骤否则降级）；重复检测逻辑须显式声明比对对象。
+- 文案/风格类改造：风险重心在配置不在代码——模板双源（默认值+DB 自定义）须版本化迁移（旧默认值检测→安全升级 vs 用户自定义→保留提示）；改文案必搜字符串比较幂等点与展示/解析正则的隐性契约；工作量=N 输出面×2 语言×(模板改写+断言修复+迁移)。
+- 依赖审查三缺一不可：三重一致+来源可信+CI 绿色；"最终状态正确"≠"过程合规"。
+- 双轨评分：增量+整体双轨；历史 major 未清零上限 8；approve 须声明未解决问题；规则豁免须单列依据，防宽松先例。
 
 ## 4. 硬规则（重点）
-- CI 与凭据防线：CI 失败定 Major 须追至行号级证据（文件:行、退出码），合并前全绿；机器人写 Secrets 必用 `pull_request_target` 并校验 actor；严禁 PAT 拼入 push URL。新增 workflow 须核验 `permissions:` 最小权限、Secret 缺失降级、矩阵 fail-fast，并以首次绿色运行为合并前置。
-- 依赖三重一致：`pyproject.toml`+`requirements.txt`+`uv.lock` 原子一致，遗漏定 Major；Dependabot 用 `uv lock --upgrade-package <pkg>` 单包升级防漂移。
-- 路径与文件系统安全：Windows 根路径显式 `resolve()` 防 8.3 短路径脱靶；`normcase` 仅 Windows 转小写、POSIX（含 macOS APFS）恒等，防大小写别名绕过；Bootstrap Token 原子写（`mkstemp`+`os.replace`）+最小权限 `0600`+启动轮换、消费即焚。
-- 日志脱敏热路径（Log Patcher Hot-Path Guard）：桥接层脱敏严禁单条日志内重复昂贵操作，规则须进程级缓存或绑定单条 Record 生命周期（依赖同步多 sink 语义；异步 sink/池化复用会跨记录泄漏密钥，须注释声明）；正则引入 DOTALL/未锚定 `.*?`/反向引用时须配病态输入基准测试或长度钳制防 ReDoS，推演结论须有测试锚点；`(?<!\\)` 识别不了偶数反斜杠，补 `\\"` 类边界断言。
-- `.sakura` 记忆文件脱敏红线：反思/记忆文件提交前须扫描引用的日志片段、配置示例、diff 摘要无明文凭据或可逆前缀——审查覆盖必须显式包含 AI 自身产物。
-- 审查过程纪律：增量审查过滤 reflection/merge 噪声提交并显式声明有效变更集；PR 分支 ≥3 次反向合入 main 时须声明并核验 diff 基线（三点 diff）；重复 suggestion 跨 ≥2 轮未处理须转独立 tracked issue 或要求作者显式回应，禁车轱辘重述。
-- 其他：模板清洗与兜底追加须校验数据完备防脏数据逃逸，降级解析累加变量显式回滚；独立子包（`updater/`）公共测试工具自包含；PEP 758 多异常捕获非语法错误；`asyncio.shield` 排空捕获后须记日志重抛 `CancelledError`；并发锁清理仅限 `users == 0`。
+- CI 与凭据防线：CI 失败定 Major 须追至行号级证据；CI 失败作佐证、锁文件内容作主证据，举证分层，措辞用"根因高度可能"；多平台 CI 须甄别与本 PR 的因果。机器人写 Secrets 必用 `pull_request_target` 并校验 actor；严禁 PAT 拼入 push URL。
+- 依赖升级检查（"permit the latest version"四点清单）： 三重声明同步，Dependabot PR 首查变更文件是否含 uv.lock； 缺陷版本规避； deprecated 引入须 grep 项目废弃符号； CI 证据力声明（可选依赖/延迟导入路径须注明 CI 是否覆盖该导入路径，否则降级为冒烟命令+针对性测试）。跳版本升级须显式声明推理链"下限 ≥X.Y.Z，已排除缺陷版本（依据）"；跨 ≥3 minor 版本须附加 provider 层行为核验；修复用 `uv lock --upgrade-package <pkg>` 并核验 diff 中传递依赖变更；建议 CI 加 `uv lock --check` 前移防线。
+- 锁文件领先审计：锁文件状态领先于声明即流程异常信号（与 CI 失败同级触发器），须 `git log --follow <lockfile>` 定位升级提交与作者，排除未授权变更后方可豁免。
+- 路径与凭据安全：Windows 根路径显式 `resolve()`；`normcase` 仅 Windows 转小写；Bootstrap Token 原子写+`0600`+消费即焚。
+- 日志脱敏热路径：规则须进程级缓存或绑定单条 Record 生命周期；DOTALL/未锚定 `.*?` 须基准测试或长度钳制防 ReDoS；`(?<!\\)` 补 `\\"` 边界断言。
+- 记忆文件脱敏红线：`.sakura/` 产物提交前扫描日志/diff 无明文凭据；AI 产物的事实准确性同属审查覆盖。
+- 过程纪律：增量审查过滤噪声提交并声明有效变更集；分支 ≥3 次反向合入 main 须核验三点 diff 基线；重复 suggestion 跨 ≥2 轮未处理转 tracked issue。
+- 其他：外部响应字段（Retry-After）用于调度须硬钳制上限；Provider 裸异常禁穿透 Web 层；扇出实体创建配额+LIMIT 熔断；新增表同步 Retention 策略；竞态测试只断言计数/幂等/终态。
 
-## 5. 事件流与外部边界（PR678 新增）
-- 外部控制反转值硬钳制：`Retry-After` 等不可信响应字段用于调度/延时须强制 `min(val, MAX)` 上限（≤1h）——不可信输入包括 Response 头，不仅是 Request。
-- Provider 异常全翻译契约：严禁 TimeoutError/ConnectionResetError 等裸异常穿透至 Web 层，须收敛为领域瞬态/永久异常类型。
-- 容量保护：订阅规则等扇出实体创建须配额上限，全量载入查询加 LIMIT 熔断，防内存扇出 DoS。
-- 生命周期闭环：新增事件/投递/审计表须同步检查 Retention/Purge 策略，防存储膨胀与索引劣化。
-- 竞态测试断言不变式：只断言计数、幂等性与终态一致性，禁断言事件顺序等 incidental 产物；播种 ORM fixture 可经状态 history 派生事件（单测/live-DB 语义分叉信号）。
-- 阻断措辞须区分"证据待补型"与"缺陷型"阻断，防止评分被误读为质量恶化。
+## 5. Agent/Issue 治理
+禁无日志无退避的异常忽略；两段式准入，账单主体服务端覆盖；Epic 强制拆解即时修复与阶段目标；已关闭 Issue 定期扫描未完成验收项归并追踪，防碎片化重复建单；行为可见变更禁用 refactor 标签；标题已含"对象+动作+目标"三要素时不改写。
 
-## 6. Agent/Worker/Issue 治理
-禁无日志无退避的异常忽略；恢复循环禁尾部 `sleep(0)` 死循环；`_cancel_events` 幂等取消；两段式准入 `prepare_admission`+`admit_operation`，账单主体由服务端上下文覆盖；Epic 强制拆解即时修复与阶段目标，重复检测区分架构提案与单业务 Issue。
+## 6. 知识库
+`.sakura/` 增量追加或精确修改，禁止覆盖重写；行号改语义标记。
 
-## 7. 知识库
-`.sakura/` 增量追加或精确修改，禁止覆盖重写；行号改语义标记；新配置 env+文件双入口并 CI 校验。
+## 7. 技术栈
+FastAPI (Python 3.14+) · React + TypeScript · 多协议 AI · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker
 
-## 8. 技术栈
-FastAPI (Python 3.14+) · Jinja2 + Tailwind + HTMX + Alpine.js · 多协议 AI · MySQL 8.0 + Redis + ChromaDB · GitHub App + OAuth · Docker Compose
-
-*最后更新：整合 PR676（记忆文件脱敏红线、建议升级机制、反向合并基线核验、record 缓存 sink 语义依赖）与 PR678（外部响应钳制、Provider 异常翻译、容量保护、生命周期闭环、竞态断言规范）反思，累计反思 43 次*
+*最后更新：整合 PR732/733/736（依赖升级四点清单、AI 摘要事实锚定、锁文件领先审计、CI 证据力声明、规则豁免显式化）与 ISSUE737/738（文案改造配置迁移、聚合 Issue 分层范式、安全疑点验证后阻断）反思，累计反思 6 次*
