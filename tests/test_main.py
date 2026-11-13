@@ -544,3 +544,101 @@ def test_get_system_info_dict_before_startup():
     assert info["uptime_seconds"] == 0
     assert info["uptime_formatted"] == "0ms"
     assert info["version"] is not None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("deploy_mode", "build_channel", "checks_channel"),
+    [
+        ("source", "source", False),
+        ("source", "development", False),
+        ("image", "stable", True),
+        ("image", "development", True),
+    ],
+)
+async def test_lifespan_installs_shared_manual_checker_before_background_skip(
+    monkeypatch, deploy_mode, build_channel, checks_channel
+):
+    from unittest.mock import AsyncMock
+
+    from backend.api.v1 import version
+    from backend.services.update_checker import GitHubReleasesClient, UpdateChecker
+
+    _patch_minimal_lifespan_shutdown(monkeypatch)
+    monkeypatch.setattr(main, "is_bootstrap_mode", lambda: False)
+    monkeypatch.setattr(
+        main, "_should_start_background_tasks", _should_start_background_tasks
+    )
+    # Lifespan applies the deployment connection to this cached singleton.
+    # Register the field with monkeypatch so that setup/backup tests keep their own deployment.
+    monkeypatch.setattr(main.settings, "database_url", "")
+    monkeypatch.setattr(main.settings, "sakura_skip_background_tasks", True)
+    monkeypatch.setattr(main.settings, "sakura_deploy_mode", deploy_mode)
+    monkeypatch.setattr(main.settings, "app_timezone", "UTC")
+    monkeypatch.setattr(
+        main,
+        "read_connection_config",
+        lambda: {"database_url": "mysql+asyncmy://db/app"},
+    )
+    monkeypatch.setattr("backend.models.init_db", AsyncMock())
+    monkeypatch.setattr(
+        "backend.core.config.load_dynamic_configs_to_settings", AsyncMock()
+    )
+
+    class NullSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr("backend.models.database.async_session", NullSession)
+    monkeypatch.setattr(
+        "backend.core.config_sections.load_section_configs", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "backend.core.config_sections.migrate_yaml_files_to_db", AsyncMock()
+    )
+    monkeypatch.setattr("backend.core.webui_distribution.get_distribution", AsyncMock())
+    monkeypatch.setattr(
+        "backend.core.build_info.get_build_info", lambda: {"channel": build_channel}
+    )
+    channel_check = AsyncMock(
+        return_value={"data": {"target": {"channel": build_channel}}}
+    )
+    monkeypatch.setattr(version, "_check_current_channel", channel_check)
+    release_check = AsyncMock(return_value=[])
+    monkeypatch.setattr(GitHubReleasesClient, "list_releases", release_check)
+    monkeypatch.setattr(
+        "backend.services.update_checker.read_cache", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr("backend.services.update_checker.write_cache", AsyncMock())
+
+    async def stop_registered_schedulers(app):
+        await app.state.database_reset_runtime_supervisor.quiesce()
+
+    monkeypatch.setattr(
+        "backend.services.database_reset_runtime_service.quiesce_database_reset_runtime",
+        stop_registered_schedulers,
+    )
+    app = FastAPI()
+    async with main.lifespan(app):
+        checker = app.state.update_checker
+        supervisor = app.state.database_reset_runtime_supervisor
+        assert isinstance(checker, UpdateChecker)
+        assert checker in supervisor.schedulers
+        assert checker.status()["scheduler_running"] is False
+        assert checker.status()["next_check_at"] is None
+        request = Request({"type": "http", "app": app})
+        response = await version.trigger_check(request, user={}, _csrf="")
+        assert response.status_code == 200
+        assert app.state.update_checker is checker
+        release_check.assert_awaited_once_with()
+        if checks_channel:
+            channel_check.assert_awaited_once_with(force_refresh=True)
+        else:
+            channel_check.assert_not_awaited()
+        assert not checker._client._http.is_closed
+    assert checker._client._http.is_closed
+    assert supervisor.quiescing
+    assert not supervisor.schedulers
