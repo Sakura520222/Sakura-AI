@@ -10,7 +10,7 @@ GitHub PR 代码审查、Issue 分析与 Agent 修复
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-3.2.6-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.7-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -30,7 +30,7 @@ Sakura AI 接入 GitHub 仓库，在 PR 和 Issue 中参与日常维护。审查
 - 定期扫描仓库，将发现的代码质量与安全问题整理为报告 Issue。
 - 在 WebUI 中管理仓库、模型与任务，查看 AI 对话、工具调用和用量，并按需订阅邮件、Telegram 或 Webhook 通知。
 
-支持多家 AI 提供商与自定义兼容端点，可为审查、摘要和 Agent 分别选择模型，配置回退链。Agent 支持仓库规则、Skills、MCP 与 Hooks；生产部署使用独立的 Linux 容器沙箱执行命令。
+支持多家 AI 提供商与自定义兼容端点，可为审查、摘要和 Agent 分别选择模型，拖拽调整回退链。回退默认按配置顺序尝试完整链，保存后用于下一次调用；单模型能力从已配置账号和模型中选择。Agent 支持仓库规则、Skills、MCP 与 Hooks；生产部署使用独立的 Linux 容器沙箱执行命令。
 
 功能细节与使用限制见[功能指南](https://sakura520222.github.io/Sakura-AI/features.html)。
 

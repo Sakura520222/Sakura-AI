@@ -1992,7 +1992,7 @@ agent_plugins:
 
 config_center:
   title: Configuration centre
-  description: Browse by category. Ordinary changes save automatically.
+  description: Browse by category. Save your changes when ready.
   search: Search all settings
   search_placeholder: Name, description or configuration key
   categories: Settings categories
@@ -2067,12 +2067,13 @@ config_center:
   primary_assignment: "Primary model"
   add_fallback: "Add fallback"
   remove_fallback: "Remove fallback"
-  binding_help: "Select an account and model. The primary model and fallback order save together automatically."
-  binding_incomplete: "Choose an account and enter a model for every row. Complete rows save automatically."
+  binding_help: "Select an account and model, then save the primary model and fallback order together."
+  binding_incomplete: "Choose an account and enter a model for every row, then save."
   account_disabled: "Disabled"
   account_unavailable: "Account no longer exists; choose another"
   editor_add: "Add item"
   editor_remove: "Remove"
+  editor_drag: "Drag to reorder"
   editor_move_up: "Move up"
   editor_move_down: "Move down"
   editor_item: "Item"
@@ -2309,6 +2310,8 @@ config_center:
     ERROR: "Error (ERROR)"
     CRITICAL: "Critical (CRITICAL)"
   help:
+    ai_fallback_max_candidates: "Includes the primary model. Zero tries the complete configured chain in order; a positive value explicitly limits candidates for each call."
+    ai_fallback_sticky_candidate: "Off by default to follow configured order. Enable to prefer the last successful candidate; changing the chain order, account or model clears its history."
     enable_issue_analysis: "Automatically analyze newly created Issues when enabled."
     issue_auto_assign: "Assign Issue owners automatically based on AI recommendations."
     issue_assignee_confidence_threshold: "Automatically assign only when assignee confidence reaches this threshold (0–1)."
@@ -2369,13 +2372,13 @@ webui_v2:
   m_03d13b60033e: Requested
   m_03ee4cc5a5ca: Enable this account
   m_041b3fac7eec: View details for {0}
+  m_046068ff1812: Could not load AI accounts.
   m_049d6b1e6abf: Search users
   m_04c114789c7e: Start update
   m_051187720189: Delete repository workspace?
   m_0515ddc1bf6f: Recently updated
   m_054f0ab4d577: Approved
   m_05635e8946e4: Next
-  m_0576b78ace9e: Disable feature
   m_05a8c743928b: No orders yet
   m_05deaec3f65b: No suggestions
   m_05e05db487aa: Update securely
@@ -2413,7 +2416,6 @@ webui_v2:
   m_0c23e6c00763: Test connection
   m_0c2a784cd0d0: Delete permanently
   m_0c385a622d2f: More usage details
-  m_0c4dd8406f22: Settings group
   m_0c8ba1f38680: New analysis task
   m_0c9115f03b39: Inbox
   m_0cbafaf9fd46: No operation charges
@@ -2445,7 +2447,6 @@ webui_v2:
   m_11fda2710549: No delivery history
   m_11fdc80ef076: Loading…
   m_12320975b402: Setup cannot continue
-  m_1253ef362da9: Disable repository community?
   m_1275e2934b50: High
   m_1298b6d74cf0: Per-model capabilities
   m_12c92aaec7db: This will change the task execution state.
@@ -2475,7 +2476,6 @@ webui_v2:
   m_15ac3f44b070: Mark read
   m_15eda6aacfac: Pull request opened
   m_16511d4a045a: Last checked
-  m_1694c4e32731: Project summary
   m_16a886d3a200: All sources
   m_16e00f6c700d: Review strategies
   m_171f81d17d52: Enrollment required
@@ -2606,13 +2606,15 @@ webui_v2:
   m_2b135a3bf37a: New task updates and account messages will appear here.
   m_2b48e65117a9: Connection failed. Check the endpoint, credential and default model.
   m_2b692fb394f9: Validating
+  m_2b758259bba4: Checking
+  m_2b8e984fdd41: No available accounts and models. Configure and enable an AI account first.
   m_2ba3ab76001b: Workspace deleted
   m_2bbb3adc24cd: Administration
   m_2bccc320bc7a: Actor
   m_2ce5d56493a5: documents
+  m_2cfa70246ea5: shared repositories
   m_2d1ba7b6300b: Reconnecting; the update outcome is not yet confirmed
   m_2d64e2b8f571: The action could not complete. Refresh the task and try again.
-  m_2deec39484ae: Show advanced settings
   m_2e104e31386b: Send test
   m_2e25a5c275bc: Search tasks or repositories
   m_2e29873f2803: Delete this file?
@@ -2675,8 +2677,10 @@ webui_v2:
   m_375205fe123f: One more step to securely continue.
   m_3755868cd3ac: Restoring…
   m_37a9a65aff59: Administrator access required
+  m_37af1c6c9555: Check completed
   m_37beda4eba1a: Suggested labels
   m_37cd50fab5fb: Priority
+  m_37f7fc34bec1: No models configured
   m_380a1e734ebe: Configured; leave blank to keep
   m_3833e204b6e3: Reporting
   m_383c966554f1: Question
@@ -2689,7 +2693,6 @@ webui_v2:
   m_38ed249e843f: All invocations
   m_38f86cb19b89: Publish this price version?
   m_39009718d93a: '{0} items'
-  m_39051e007b00: Enter model identifier
   m_3921d943d1a0: Reserved
   m_392d2394f660: Submitted for background processing.
   m_395fc29b0ff8: Messages
@@ -2702,6 +2705,7 @@ webui_v2:
   m_3a62d40c7c9d: You have unsaved changes. Discard them and leave?
   m_3b04fa6d2099: Update sensitive setting?
   m_3b110dfdcd8f: Submitting…
+  m_3b12ee0be7f4: Collapse
   m_3b7a97b70972: Delivery channels
   m_3ba7ddfe6e1a: Configure connections and your administrator to get started. Manage AI accounts in Settings.
   m_3bc63cd8a759: 'For example: My laptop'
@@ -2710,7 +2714,6 @@ webui_v2:
   m_3bd785e584df: Choose plan
   m_3bdc65a7a84c: New invocation
   m_3be87163df5a: Check your connection and retry. Your changes are kept.
-  m_3c18a7fa3eb6: Adjust capabilities and context limits for a specific model. Restore defaults to inherit model metadata.
   m_3c34850b752f: No events awaiting reconciliation
   m_3cbdb4952e1a: Creating…
   m_3cc3c5f77e43: Quota must be a nonnegative integer.
@@ -2733,6 +2736,7 @@ webui_v2:
   m_40e01c1aabec: No models discovered. You can still enter model IDs manually.
   m_4113d3eff908: Reset database…
   m_411e6648c6d6: Installation could not complete. Check your connection and try again.
+  m_415b26bdc724: The restart request did not complete. Check service status before retrying.
   m_417bf08e113c: Export failed. Please try again.
   m_41808f9b3569: No authorized installations
   m_418bd0e6e985: No matching projects
@@ -2837,8 +2841,10 @@ webui_v2:
   m_518a9a767778: Status checked; allow preflight
   m_519d2ec35639: Reset all verification methods
   m_51c0be93621b: Too many attempts. Please try again later.
+  m_51fc63dc9cc7: This content was not captured.
   m_5270b61cd4bf: Test
   m_5289bec25b3b: Rerank API key
+  m_52b41daa300e: AI account
   m_52eb5ff8bda9: Labels
   m_5307a254d2b4: Super administrator access required
   m_5325c1126d08: Choose the notifications you need
@@ -2853,6 +2859,7 @@ webui_v2:
   m_54e3d09bc7ee: An issued code retains its purchased offer. Generate a new code to use a different plan.
   m_54fc6b5824e3: Execution details
   m_551984996d7c: Remove {0}
+  m_553b1409eef9: Copy failed
   m_5580e45a6dc4: Ban
   m_55cb05285539: Channel
   m_55cebc53bc6a: Enable email (true / false)
@@ -2866,6 +2873,7 @@ webui_v2:
   m_5825124730d4: Sign-in options
   m_58aecb12e180: Disable repository display?
   m_58c64720bb61: Analysis, classification and responses
+  m_58ed0a978813: Service is back
   m_58eeb1a6e351: Code
   m_58f2a6a5b058: Repository community
   m_5949920beee9: '{0} remaining. Generating new codes invalidates the previous codes.'
@@ -2884,8 +2892,10 @@ webui_v2:
   m_5b302f5893c2: Plugins & permissions
   m_5b404d0244b7: Rejected
   m_5b5b00425e67: System
+  m_5b794f23b482: An automatic or manual update check failed. Try again later.
   m_5b94bd61997f: Operation
   m_5bd06d2573e5: Enabled
+  m_5bd1df2b6f9d: The selected account or model is unavailable. Select an available model; unsaved changes are retained.
   m_5be66e487b28: Used
   m_5bf2cdaa6c20: Enable Telegram (true / false)
   m_5c3309566737: Plans and prices
@@ -2949,6 +2959,7 @@ webui_v2:
   m_665bf084bfbf: GitHub App private key
   m_66afb44c6959: In progress
   m_674b6d2db8fc: Delete all application data and users, then return to initial setup. This cannot be undone.
+  m_674cfed0f773: Not checked yet
   m_67b43e8352c6: Change role
   m_67e2b26d9ce3: Shared repository management
   m_68043f88235c: No external channels yet
@@ -2965,6 +2976,7 @@ webui_v2:
   m_6977b6061875: Retry
   m_69aea807aa0d: Ban member?
   m_69df7cb46492: Delete passkey {0}?
+  m_6a4c688b7d1c: Hide notes
   m_6a73b75c56a5: Connect a provider, then assign models to your workflows below.
   m_6aae064d8519: Refresh this page after the service returns. A database reset returns to initial setup.
   m_6ace4f550995: Vector storage
@@ -2994,6 +3006,7 @@ webui_v2:
   m_6fe3baac2fe2: Batch name
   m_70530a78f5fb: Review queue
   m_70a9668db793: Repository status
+  m_70abb21f80f0: Management
   m_70f297fbb035: The complete deployment outcome is not verified. Check Host Updater and the running version.
   m_7116eb963cce: Restart Sakura AI?
   m_712da14e1299: Showing the latest 100 sessions you can access.
@@ -3012,6 +3025,7 @@ webui_v2:
   m_7341ed10a607: Current phase
   m_7362dd47ed49: Actual model usage
   m_73c98e4d9e2a: Delete preference {0}
+  m_73f82b6ed917: Disabled
   m_745a837aee45: Unverified
   m_74a6a386d7c4: Per-user business execution limit
   m_7501c36a43be: Relevant code
@@ -3041,6 +3055,7 @@ webui_v2:
   m_7b6a1c9d4ca8: Worktrees cleaned
   m_7bd9b5a8bab2: Search repositories…
   m_7bef21343a36: Search community projects
+  m_7c24b43c3577: Check failed; keeping the last successful result
   m_7c3c0ba74f68: Create order
   m_7c7db4304e8c: Continue payment
   m_7c822f53ae9e: Plugin configuration saved
@@ -3056,6 +3071,7 @@ webui_v2:
   m_7e4e168279ba: Scan settings
   m_7e61a885a65e: Refund request
   m_7e886613664f: Manage billing
+  m_7eee80e776ad: Next check
   m_7eff4efac768: Enable {0}
   m_7f0c6bb8bc3b: Generate codes
   m_7f5d15fe637d: Discard changes
@@ -3174,7 +3190,6 @@ webui_v2:
   m_90b3c7a2d17b: Cleanup did not complete. Refresh the list and check task status.
   m_90f185bed07e: Agent tasks per month
   m_90fdb1411e7c: Authenticator or recovery code
-  m_9112cb6860ad: Enable repository community?
   m_91850fcf7f4b: Suggestion
   m_91939cc320cb: The code is invalid or already used. Enter a new code.
   m_9198e935fcee: Leave repository community?
@@ -3185,6 +3200,7 @@ webui_v2:
   m_92925c1224bf: decimal places
   m_92a5cd1a9f8b: Language
   m_92c9ba4a2d3c: Loaded {0} configuration entries.
+  m_934337d0352d: Expand
   m_936810909e34: This category does not exist or your account cannot access it.
   m_936ef0edb262: Replace signing secret (leave blank to keep)
   m_93742227be67: OAuth callback URL
@@ -3211,8 +3227,10 @@ webui_v2:
   m_96e8551e6ac4: No matching users
   m_96f7c3548af9: Application, authentication and service configuration
   m_97450793e2bc: Implementation
+  m_976c8ba94741: Account unavailable
   m_979c39a688a5: JSON is incomplete. Correct it before saving.
   m_97b40f6249ca: In progress
+  m_97f334dd9041: You do not have permission to view this content.
   m_9855e963248b: Critical only
   m_9857aabae342: Download backup
   m_986421599659: Reviews
@@ -3268,10 +3286,12 @@ webui_v2:
   m_9f41cb5755c3: Number of codes
   m_9f49c76cda6b: Connected, refresh
   m_9f4e38c875e1: Weekly
+  m_9f56de851a2f: My community plan
   m_9f75a5301ab6: Some recovery codes cannot be migrated. Regenerate codes for affected accounts.
   m_9f75f3907d4d: The announcement will be published and delivered according to user preferences.
   m_9f81a10385a7: Loading settings
   m_9fa37bbd482e: Submission preview
+  m_9fbac189773f: Automatic checks
   m_9fd74418a53a: Review note
   m_9ff92dd84e64: Comment
   m_a01d96e16b7a: No matching reviews
@@ -3296,8 +3316,8 @@ webui_v2:
   m_a3e3416f7de8: Mark all read
   m_a3f34ea9d99c: Balance
   m_a406baec40f8: Notes
-  m_a442cdbad058: settings
   m_a4616f886214: PR reviews
+  m_a4817887f916: Tool results
   m_a4d1179d3d59: Reserved Credits
   m_a53cd7e87214: Choose a configuration backup. Existing deployment connection settings are preserved.
   m_a543b977fca0: Sender address
@@ -3367,6 +3387,7 @@ webui_v2:
   m_b0945602bd1d: Search all settings
   m_b09513d63a09: Triggered by
   m_b0b6963ec1b0: Two-step verification
+  m_b0f2efb4b14c: Check result
   m_b102991b6ca0: Suggested assignees
   m_b131ac1e184b: Search title, repository or author
   m_b13bac2c7bb8: Skipped
@@ -3378,6 +3399,7 @@ webui_v2:
   m_b26f47024382: Uncommitted local changes will also be removed.
   m_b28ae5b7c12b: All tasks
   m_b2a7673242a1: Verification code
+  m_b2f0208b9680: Select model
   m_b2f2956f387b: Create user
   m_b32f4b968d74: Clear failed records
   m_b39ad495a579: days
@@ -3388,6 +3410,7 @@ webui_v2:
   m_b41429271638: Payment events requiring reconciliation
   m_b415dfefb400: Supported
   m_b44ce9c36f3b: Inbox notifications are on by default. Verify an external channel, then choose the events you want to receive.
+  m_b4ed2ae2aaae: Update available
   m_b514bf896866: Apply “{1}” to {0} selected items?
   m_b53efee332c8: Sign in with your fingerprint, face or device PIN.
   m_b580f9cc9924: Repositories
@@ -3443,9 +3466,9 @@ webui_v2:
   m_c07de6e60255: Recorded token usage
   m_c0820929048e: Moderation note
   m_c08a56d6be8b: Settlement currency
+  m_c0ce9858bf3e: Expand summary
   m_c140b96d11df: Start deployment update?
   m_c155b062d6e8: Backup type
-  m_c169b5b3867e: Change the global repository community setting.
   m_c183c458b48f: Search releases…
   m_c1b393d16a47: My passkey
   m_c1b91ab0d3f2: Inspect pending work, retry failures and manage queue history.
@@ -3456,6 +3479,7 @@ webui_v2:
   m_c34821f521b5: Edit AI account
   m_c353cb7c161c: Choose how to continue
   m_c36afb3403e2: Diagnostics
+  m_c37483f04163: Not running
   m_c39688cc15ff: This content cannot be read right now.
   m_c3bae2867635: Export configuration or restore a backup
   m_c3bc65946d8c: Choose a backup file
@@ -3468,7 +3492,6 @@ webui_v2:
   m_c50149813655: Sync GitHub repositories
   m_c5805d4949d6: Notification preference
   m_c5a946f69369: Model list (one per line)
-  m_c5d94b7c3c2b: Load
   m_c63a4a289efa: Overall feedback
   m_c645951da6b3: Unable to complete this action. Try again later.
   m_c67d82626c17: Reload the plugin and permission configuration saved on the server.
@@ -3503,6 +3526,7 @@ webui_v2:
   m_cbebe3e491dd: Refund currency
   m_cc0908198ab7: Embedding provider
   m_cc265c36f69b: Started
+  m_cc7e766a0063: GitHub PR information is unavailable
   m_ccb69047a545: All categories
   m_ccbdac1b20f3: Discard plugin changes?
   m_ccdae3b22acc: Save the current configuration or prepare for a migration.
@@ -3537,6 +3561,7 @@ webui_v2:
   m_d18c499c2c2c: Announcements
   m_d1cebd81f67c: '{0} selected'
   m_d1cee25af31a: Manage announcements
+  m_d1e341ee472d: Username
   m_d1e4ba802bd6: Request refund
   m_d1e5cf467ea4: Action
   m_d1ec1f4841c8: Leave community
@@ -3569,6 +3594,7 @@ webui_v2:
   m_d6142dbcc032: Choose the repository to manage.
   m_d68736a683b6: No matching repositories
   m_d6e45500970e: No transactions
+  m_d7234fe8fcc1: Waiting for service recovery. Do not submit another restart.
   m_d738574e0527: Tools
   m_d764b4d2641c: Your balance, spending and order history in one place.
   m_d7a49d54e4ee: Refund reference ID
@@ -3595,6 +3621,7 @@ webui_v2:
   m_da7a8215ac37: Iterating
   m_dabecf4652b4: Update diagnostic logs
   m_db0a4c75d56f: Network status
+  m_db0ec63cc027: Member sort
   m_db62bee76c63: Open navigation
   m_db76a849ed60: Remove delivery channel?
   m_dbba1b5b86fc: AI selection criteria (optional)
@@ -3617,7 +3644,9 @@ webui_v2:
   m_de7483414e04: Grant
   m_deb952deb7c8: Members
   m_debbf078e7e5: GitHub App access
+  m_debe15c715ca: Joined
   m_dedadf342ad8: The default notification rules will apply to this event.
+  m_def0763956e8: Copy
   m_df859a7d97fa: The system will save configuration, create the administrator and restart the application.
   m_df87b28e3cd7: Check again
   m_dfa6b16b199a: View pricing
@@ -3638,12 +3667,14 @@ webui_v2:
   m_e2bffcfe5ea6: Type
   m_e2d3d402c2c1: Execution rounds
   m_e359157e73bd: Maximum upload size
+  m_e36122f2c596: Choose a model from a configured account. Capability overrides are shared by accounts using the same provider and model.
   m_e389a3905d50: Allowed tools
   m_e3f5ec711cfa: Region
   m_e3f9a4f371e2: Medium
   m_e42dd5e1f731: Some settings require an application restart.
   m_e438e92a7d48: Finish setup
   m_e4498fee5623: Preview content
+  m_e4517cb6528f: Reload to connect to the new service instance.
   m_e4626cc6ee11: Personal account
   m_e471a9c85363: Delete worktree?
   m_e476bcbc3f5b: Call details
@@ -3696,6 +3727,7 @@ webui_v2:
   m_ee52bb3f989a: Withdraw
   m_ee560dd61f3f: Repository (optional)
   m_eeabc92e4fd8: Search results
+  m_eecf453445e6: Build time
   m_eef7c38e34f9: Browse and maintain reflections, knowledge and repository instructions in .sakura.
   m_ef1195d46d5b: Details
   m_efc016afbf49: Grant this plan?
@@ -3728,8 +3760,7 @@ webui_v2:
   m_f538dce8806c: No matching queue records
   m_f574ead78d39: Edit announcement
   m_f57aca2e721c: This release has no notes.
-  m_f5a260029925: Enable feature
-  m_f6307f445889: Model ID
+  m_f5f623e77c67: Member sort order
   m_f65f6e1e6009: Amounts and IDs must be positive integers.
   m_f6684186983a: Apply
   m_f68f1c3a1eb2: Settings unavailable
@@ -3757,6 +3788,7 @@ webui_v2:
   m_f93e5d0d5476: Start analysis
   m_f94c71d5992b: Balance adjustment
   m_f9815978b5f1: Load issue & preview
+  m_f9b93925d63f: Select account
   m_f9fe2520677c: Task submitted
   m_fa4ca64ecee2: Sort order
   m_fa548f96fdbe: Manage users, billing configuration and audit history.

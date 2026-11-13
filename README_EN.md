@@ -10,7 +10,7 @@ GitHub PR reviews, Issue analysis and Agent-assisted fixes
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-3.2.6-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
+[![Version](https://img.shields.io/badge/Version-3.2.7-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![CI](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakura520222/Sakura-AI/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -30,7 +30,7 @@ Use the [hosted service](https://ai.firefly520.top/) with free trial credits aft
 - Scans repositories periodically and publishes code quality and security findings as report Issues.
 - Provides a WebUI for repositories, models and tasks, with AI conversations, tool calls, usage tracking and optional Email, Telegram or Webhook subscriptions.
 
-You can use multiple AI providers or custom compatible endpoints, choose separate models for reviews, summaries and Agent tasks, and configure fallback chains. Agents support repository instructions, Skills, MCP and Hooks. Production deployments run commands in a separate Linux container sandbox.
+You can use multiple AI providers or custom compatible endpoints, choose separate models for reviews, summaries and Agent tasks, and reorder fallback chains by dragging. By default, calls try the complete chain in configured order; saved changes apply to the next call. Model capabilities are selected from configured accounts and models. Agents support repository instructions, Skills, MCP and Hooks. Production deployments run commands in a separate Linux container sandbox.
 
 See the [feature guide](https://sakura520222.github.io/Sakura-AI/features.html#english-summary) for details and limitations.
 

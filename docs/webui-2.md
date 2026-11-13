@@ -128,3 +128,17 @@ npm run e2e --prefix web
 Playwright starts a temporary SQLite fixture using real configuration routes. It never mounts its test authentication overrides into the production app. `setup.spec.ts` and `notifications.spec.ts` migrate the retired browser scripts' regressions to the React UI using isolated, stateful API fixtures: Setup credentials, failed preflight/repair and retry, credential clearing, notification names, subscriptions and read requests. Other tests use real local configuration/Skills/scan/queue APIs and a virtual browser authenticator. These checks are distinct from real database repair, GitHub OAuth, hardware Passkeys, SMTP, Telegram or payment-provider validation.
 
 The bundle report measures compressed build assets, with a 220 KiB budget for the initial shell. It does not claim a browser performance score. Screenshots and traces are retained as CI artifacts. Implementation details are recorded in the [upgrade notes](https://github.com/Sakura520222/Sakura-AI/blob/develop/docs/superpowers/plans/2026-10-30-webui-2-upgrade.md).
+
+## WebUI behavior after Issue #738 / 界面回归修复
+
+GitHub authorization is scoped to the authenticated user, including browser query caches. Review links use the repository PR number, while the global GitHub ID remains in the API. Activity shows authorized messages and paired tool calls/results, with formatted JSON, Markdown and bounded expandable output; protected request/response artifacts keep their existing access and audit checks.
+
+Administrators can restart from the header through the existing confirmation and CSRF-protected operation. The header and version manager display the running build version; the version manager follows its channel, shows full revision/digest/build time when available and expands release notes in place. Automatic and manual checks share discovery and retain the previous successful result on failure; the page shows check status and scheduling times.
+
+Community discovery and personal participation stay in the main view. Repository selection uses a dialog, administration uses a separate tab with searched, filtered, sorted and paginated lists, and the global enable switch stays in Settings. Cards show a short expandable summary and adapt to narrow screens.
+
+GitHub 授权及浏览器缓存按当前用户隔离，审查链接使用仓库内 PR 编号。活动页直接展示有权限的消息，并配对展示工具调用和结果；长内容可展开，敏感请求/响应仍遵循原有权限与审计。
+
+管理员可从顶栏进入原有的确认重启流程。顶栏和版本页展示当前运行版本；版本页跟随构建通道，展示完整 revision、可用的 digest 和构建时间，并就地展开发行说明。自动与手动检查共用发现结果，失败保留上次成功结果，同时显示检查状态和调度时间。
+
+仓库互助主视图展示社区项目及个人计划；展示仓库在弹窗中选择，管理功能在独立 Tab 中提供搜索、筛选、排序和分页。全局开关统一放在设置中，卡片摘要可展开，布局适配手机。

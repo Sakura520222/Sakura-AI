@@ -79,6 +79,10 @@
     "查看 {0} 详情",
     "View details for {0}"
   ],
+  "[\"无法加载 AI 账号。\",\"Could not load AI accounts.\"]": [
+    "无法加载 AI 账号。",
+    "Could not load AI accounts."
+  ],
   "[\"搜索用户\",\"Search users\"]": [
     "搜索用户",
     "Search users"
@@ -102,10 +106,6 @@
   "[\"下一页\",\"Next\"]": [
     "下一页",
     "Next"
-  ],
-  "[\"关闭功能\",\"Disable feature\"]": [
-    "关闭功能",
-    "Disable feature"
   ],
   "[\"暂无订单\",\"No orders yet\"]": [
     "暂无订单",
@@ -255,10 +255,6 @@
     "更多计量信息",
     "More usage details"
   ],
-  "[\"设置分组\",\"Settings group\"]": [
-    "设置分组",
-    "Settings group"
-  ],
   "[\"新的分析任务\",\"New analysis task\"]": [
     "新的分析任务",
     "New analysis task"
@@ -383,10 +379,6 @@
     "初始化无法继续",
     "Setup cannot continue"
   ],
-  "[\"关闭仓库互助？\",\"Disable repository community?\"]": [
-    "关闭仓库互助？",
-    "Disable repository community?"
-  ],
   "[\"高\",\"High\"]": [
     "高",
     "High"
@@ -502,10 +494,6 @@
   "[\"上次检查\",\"Last checked\"]": [
     "上次检查",
     "Last checked"
-  ],
-  "[\"项目摘要\",\"Project summary\"]": [
-    "项目摘要",
-    "Project summary"
   ],
   "[\"全部来源\",\"All sources\"]": [
     "全部来源",
@@ -1027,6 +1015,14 @@
     "验证中",
     "Validating"
   ],
+  "[\"正在检查\",\"Checking\"]": [
+    "正在检查",
+    "Checking"
+  ],
+  "[\"暂无可用的账号和模型，请先配置并启用 AI 账号。\",\"No available accounts and models. Configure and enable an AI account first.\"]": [
+    "暂无可用的账号和模型，请先配置并启用 AI 账号。",
+    "No available accounts and models. Configure and enable an AI account first."
+  ],
   "[\"工作区已删除\",\"Workspace deleted\"]": [
     "工作区已删除",
     "Workspace deleted"
@@ -1043,6 +1039,10 @@
     "个文档",
     "documents"
   ],
+  "[\"个展示仓库\",\"shared repositories\"]": [
+    "个展示仓库",
+    "shared repositories"
+  ],
   "[\"正在恢复连接，更新结果尚未确认\",\"Reconnecting; the update outcome is not yet confirmed\"]": [
     "正在恢复连接，更新结果尚未确认",
     "Reconnecting; the update outcome is not yet confirmed"
@@ -1050,10 +1050,6 @@
   "[\"操作未完成，请刷新状态后重试。\",\"The action could not complete. Refresh the task and try again.\"]": [
     "操作未完成，请刷新状态后重试。",
     "The action could not complete. Refresh the task and try again."
-  ],
-  "[\"显示高级设置\",\"Show advanced settings\"]": [
-    "显示高级设置",
-    "Show advanced settings"
   ],
   "[\"发送测试\",\"Send test\"]": [
     "发送测试",
@@ -1303,6 +1299,10 @@
     "需要管理员权限",
     "Administrator access required"
   ],
+  "[\"检查完成\",\"Check completed\"]": [
+    "检查完成",
+    "Check completed"
+  ],
   "[\"建议标签\",\"Suggested labels\"]": [
     "建议标签",
     "Suggested labels"
@@ -1310,6 +1310,10 @@
   "[\"优先级\",\"Priority\"]": [
     "优先级",
     "Priority"
+  ],
+  "[\"未配置模型\",\"No models configured\"]": [
+    "未配置模型",
+    "No models configured"
   ],
   "[\"已配置，留空沿用\",\"Configured; leave blank to keep\"]": [
     "已配置，留空沿用",
@@ -1359,10 +1363,6 @@
     "共 {0} 项",
     "{0} items"
   ],
-  "[\"输入模型标识符\",\"Enter model identifier\"]": [
-    "输入模型标识符",
-    "Enter model identifier"
-  ],
   "[\"预留中\",\"Reserved\"]": [
     "预留中",
     "Reserved"
@@ -1411,6 +1411,10 @@
     "提交中…",
     "Submitting…"
   ],
+  "[\"收起\",\"Collapse\"]": [
+    "收起",
+    "Collapse"
+  ],
   "[\"通知渠道\",\"Delivery channels\"]": [
     "通知渠道",
     "Delivery channels"
@@ -1442,10 +1446,6 @@
   "[\"请检查连接后重试。你的修改不会被清除。\",\"Check your connection and retry. Your changes are kept.\"]": [
     "请检查连接后重试。你的修改不会被清除。",
     "Check your connection and retry. Your changes are kept."
-  ],
-  "[\"按供应商与模型调整能力和上下文限制。使用恢复默认值以继承模型元数据。\",\"Adjust capabilities and context limits for a specific model. Restore defaults to inherit model metadata.\"]": [
-    "按供应商与模型调整能力和上下文限制。使用恢复默认值以继承模型元数据。",
-    "Adjust capabilities and context limits for a specific model. Restore defaults to inherit model metadata."
   ],
   "[\"没有待核对的事件\",\"No events awaiting reconciliation\"]": [
     "没有待核对的事件",
@@ -1534,6 +1534,10 @@
   "[\"安装未完成，请检查连接后重试。\",\"Installation could not complete. Check your connection and try again.\"]": [
     "安装未完成，请检查连接后重试。",
     "Installation could not complete. Check your connection and try again."
+  ],
+  "[\"重启请求未完成，请检查服务状态后重试。\",\"The restart request did not complete. Check service status before retrying.\"]": [
+    "重启请求未完成，请检查服务状态后重试。",
+    "The restart request did not complete. Check service status before retrying."
   ],
   "[\"导出失败，请稍后重试。\",\"Export failed. Please try again.\"]": [
     "导出失败，请稍后重试。",
@@ -1951,6 +1955,10 @@
     "尝试次数过多，请稍后再试。",
     "Too many attempts. Please try again later."
   ],
+  "[\"此内容未被记录。\",\"This content was not captured.\"]": [
+    "此内容未被记录。",
+    "This content was not captured."
+  ],
   "[\"测试\",\"Test\"]": [
     "测试",
     "Test"
@@ -1958,6 +1966,10 @@
   "[\"重排 API Key\",\"Rerank API key\"]": [
     "重排 API Key",
     "Rerank API key"
+  ],
+  "[\"AI 账号\",\"AI account\"]": [
+    "AI 账号",
+    "AI account"
   ],
   "[\"标签\",\"Labels\"]": [
     "标签",
@@ -2015,6 +2027,10 @@
     "移除 {0}",
     "Remove {0}"
   ],
+  "[\"复制失败\",\"Copy failed\"]": [
+    "复制失败",
+    "Copy failed"
+  ],
   "[\"封禁\",\"Ban\"]": [
     "封禁",
     "Ban"
@@ -2066,6 +2082,10 @@
   "[\"分析流程、分类与回复内容\",\"Analysis, classification and responses\"]": [
     "分析流程、分类与回复内容",
     "Analysis, classification and responses"
+  ],
+  "[\"服务已恢复\",\"Service is back\"]": [
+    "服务已恢复",
+    "Service is back"
   ],
   "[\"兑换码\",\"Code\"]": [
     "兑换码",
@@ -2139,6 +2159,10 @@
     "系统",
     "System"
   ],
+  "[\"自动或手动更新检查失败，请稍后重试。\",\"An automatic or manual update check failed. Try again later.\"]": [
+    "自动或手动更新检查失败，请稍后重试。",
+    "An automatic or manual update check failed. Try again later."
+  ],
   "[\"任务\",\"Operation\"]": [
     "任务",
     "Operation"
@@ -2146,6 +2170,10 @@
   "[\"已开启\",\"Enabled\"]": [
     "已开启",
     "Enabled"
+  ],
+  "[\"所选账号或模型已不可用。请选择可用模型；未保存的修改仍保留。\",\"The selected account or model is unavailable. Select an available model; unsaved changes are retained.\"]": [
+    "所选账号或模型已不可用。请选择可用模型；未保存的修改仍保留。",
+    "The selected account or model is unavailable. Select an available model; unsaved changes are retained."
   ],
   "[\"已使用\",\"Used\"]": [
     "已使用",
@@ -2399,6 +2427,10 @@
     "删除全部应用数据与用户，重新进入首次设置。此操作无法撤销。",
     "Delete all application data and users, then return to initial setup. This cannot be undone."
   ],
+  "[\"尚未检查\",\"Not checked yet\"]": [
+    "尚未检查",
+    "Not checked yet"
+  ],
   "[\"更改角色\",\"Change role\"]": [
     "更改角色",
     "Change role"
@@ -2462,6 +2494,10 @@
   "[\"删除通行密钥 {0}？\",\"Delete passkey {0}?\"]": [
     "删除通行密钥 {0}？",
     "Delete passkey {0}?"
+  ],
+  "[\"收起说明\",\"Hide notes\"]": [
+    "收起说明",
+    "Hide notes"
   ],
   "[\"连接供应商后，在下方为不同任务选择模型。\",\"Connect a provider, then assign models to your workflows below.\"]": [
     "连接供应商后，在下方为不同任务选择模型。",
@@ -2579,6 +2615,10 @@
     "仓库状态",
     "Repository status"
   ],
+  "[\"管理\",\"Management\"]": [
+    "管理",
+    "Management"
+  ],
   "[\"尚未验证完整部署结果，请检查 Host Updater 与运行版本。\",\"The complete deployment outcome is not verified. Check Host Updater and the running version.\"]": [
     "尚未验证完整部署结果，请检查 Host Updater 与运行版本。",
     "The complete deployment outcome is not verified. Check Host Updater and the running version."
@@ -2650,6 +2690,10 @@
   "[\"删除偏好 {0}\",\"Delete preference {0}\"]": [
     "删除偏好 {0}",
     "Delete preference {0}"
+  ],
+  "[\"已禁用\",\"Disabled\"]": [
+    "已禁用",
+    "Disabled"
   ],
   "[\"待验证\",\"Unverified\"]": [
     "待验证",
@@ -2767,6 +2811,10 @@
     "搜索社区项目",
     "Search community projects"
   ],
+  "[\"检查失败，保留上次成功结果\",\"Check failed; keeping the last successful result\"]": [
+    "检查失败，保留上次成功结果",
+    "Check failed; keeping the last successful result"
+  ],
   "[\"创建订单\",\"Create order\"]": [
     "创建订单",
     "Create order"
@@ -2826,6 +2874,10 @@
   "[\"管理计费\",\"Manage billing\"]": [
     "管理计费",
     "Manage billing"
+  ],
+  "[\"下次检查\",\"Next check\"]": [
+    "下次检查",
+    "Next check"
   ],
   "[\"启用 {0}\",\"Enable {0}\"]": [
     "启用 {0}",
@@ -3299,10 +3351,6 @@
     "验证码或恢复码",
     "Authenticator or recovery code"
   ],
-  "[\"开启仓库互助？\",\"Enable repository community?\"]": [
-    "开启仓库互助？",
-    "Enable repository community?"
-  ],
   "[\"建议\",\"Suggestion\"]": [
     "建议",
     "Suggestion"
@@ -3342,6 +3390,10 @@
   "[\"已载入 {0} 项配置。\",\"Loaded {0} configuration entries.\"]": [
     "已载入 {0} 项配置。",
     "Loaded {0} configuration entries."
+  ],
+  "[\"展开\",\"Expand\"]": [
+    "展开",
+    "Expand"
   ],
   "[\"该分类不存在，或你的账号没有访问权限。\",\"This category does not exist or your account cannot access it.\"]": [
     "该分类不存在，或你的账号没有访问权限。",
@@ -3447,6 +3499,10 @@
     "实现",
     "Implementation"
   ],
+  "[\"账号不可用\",\"Account unavailable\"]": [
+    "账号不可用",
+    "Account unavailable"
+  ],
   "[\"JSON 格式不完整，请修正后保存。\",\"JSON is incomplete. Correct it before saving.\"]": [
     "JSON 格式不完整，请修正后保存。",
     "JSON is incomplete. Correct it before saving."
@@ -3454,6 +3510,10 @@
   "[\"正在处理\",\"In progress\"]": [
     "正在处理",
     "In progress"
+  ],
+  "[\"你没有查看此内容的权限。\",\"You do not have permission to view this content.\"]": [
+    "你没有查看此内容的权限。",
+    "You do not have permission to view this content."
   ],
   "[\"仅严重\",\"Critical only\"]": [
     "仅严重",
@@ -3675,6 +3735,10 @@
     "每周",
     "Weekly"
   ],
+  "[\"我的互助计划\",\"My community plan\"]": [
+    "我的互助计划",
+    "My community plan"
+  ],
   "[\"部分恢复码不能迁移，请为受影响账号重新生成恢复码。\",\"Some recovery codes cannot be migrated. Regenerate codes for affected accounts.\"]": [
     "部分恢复码不能迁移，请为受影响账号重新生成恢复码。",
     "Some recovery codes cannot be migrated. Regenerate codes for affected accounts."
@@ -3690,6 +3754,10 @@
   "[\"提交内容预览\",\"Submission preview\"]": [
     "提交内容预览",
     "Submission preview"
+  ],
+  "[\"自动检查\",\"Automatic checks\"]": [
+    "自动检查",
+    "Automatic checks"
   ],
   "[\"审核说明\",\"Review note\"]": [
     "审核说明",
@@ -3787,13 +3855,13 @@
     "备注",
     "Notes"
   ],
-  "[\"项设置\",\"settings\"]": [
-    "项设置",
-    "settings"
-  ],
   "[\"PR 审查次数\",\"PR reviews\"]": [
     "PR 审查次数",
     "PR reviews"
+  ],
+  "[\"工具结果\",\"Tool results\"]": [
+    "工具结果",
+    "Tool results"
   ],
   "[\"预留 Credits\",\"Reserved Credits\"]": [
     "预留 Credits",
@@ -4071,6 +4139,10 @@
     "两步验证",
     "Two-step verification"
   ],
+  "[\"检查结果\",\"Check result\"]": [
+    "检查结果",
+    "Check result"
+  ],
   "[\"建议指派人\",\"Suggested assignees\"]": [
     "建议指派人",
     "Suggested assignees"
@@ -4115,6 +4187,10 @@
     "验证码",
     "Verification code"
   ],
+  "[\"选择模型\",\"Select model\"]": [
+    "选择模型",
+    "Select model"
+  ],
   "[\"创建用户\",\"Create user\"]": [
     "创建用户",
     "Create user"
@@ -4154,6 +4230,10 @@
   "[\"站内通知默认开启。验证外部渠道后，选择希望接收的事件。\",\"Inbox notifications are on by default. Verify an external channel, then choose the events you want to receive.\"]": [
     "站内通知默认开启。验证外部渠道后，选择希望接收的事件。",
     "Inbox notifications are on by default. Verify an external channel, then choose the events you want to receive."
+  ],
+  "[\"有可用更新\",\"Update available\"]": [
+    "有可用更新",
+    "Update available"
   ],
   "[\"对选中的 {0} 项执行「{1}」？\",\"Apply “{1}” to {0} selected items?\"]": [
     "对选中的 {0} 项执行「{1}」？",
@@ -4375,6 +4455,10 @@
     "结算币种",
     "Settlement currency"
   ],
+  "[\"展开摘要\",\"Expand summary\"]": [
+    "展开摘要",
+    "Expand summary"
+  ],
   "[\"开始部署更新？\",\"Start deployment update?\"]": [
     "开始部署更新？",
     "Start deployment update?"
@@ -4382,10 +4466,6 @@
   "[\"备份类型\",\"Backup type\"]": [
     "备份类型",
     "Backup type"
-  ],
-  "[\"更改全局仓库互助开关。\",\"Change the global repository community setting.\"]": [
-    "更改全局仓库互助开关。",
-    "Change the global repository community setting."
   ],
   "[\"搜索发布记录…\",\"Search releases…\"]": [
     "搜索发布记录…",
@@ -4426,6 +4506,10 @@
   "[\"运行详情\",\"Diagnostics\"]": [
     "运行详情",
     "Diagnostics"
+  ],
+  "[\"未运行\",\"Not running\"]": [
+    "未运行",
+    "Not running"
   ],
   "[\"此内容当前无法读取。\",\"This content cannot be read right now.\"]": [
     "此内容当前无法读取。",
@@ -4474,10 +4558,6 @@
   "[\"模型列表（每行一个）\",\"Model list (one per line)\"]": [
     "模型列表（每行一个）",
     "Model list (one per line)"
-  ],
-  "[\"加载\",\"Load\"]": [
-    "加载",
-    "Load"
   ],
   "[\"总体意见\",\"Overall feedback\"]": [
     "总体意见",
@@ -4615,6 +4695,10 @@
     "开始",
     "Started"
   ],
+  "[\"缺少 GitHub PR 信息\",\"GitHub PR information is unavailable\"]": [
+    "缺少 GitHub PR 信息",
+    "GitHub PR information is unavailable"
+  ],
   "[\"全部分类\",\"All categories\"]": [
     "全部分类",
     "All categories"
@@ -4751,6 +4835,10 @@
     "管理公告",
     "Manage announcements"
   ],
+  "[\"用户名\",\"Username\"]": [
+    "用户名",
+    "Username"
+  ],
   "[\"申请退款\",\"Request refund\"]": [
     "申请退款",
     "Request refund"
@@ -4879,6 +4967,10 @@
     "暂无流水",
     "No transactions"
   ],
+  "[\"正在等待服务恢复。请勿重复提交重启。\",\"Waiting for service recovery. Do not submit another restart.\"]": [
+    "正在等待服务恢复。请勿重复提交重启。",
+    "Waiting for service recovery. Do not submit another restart."
+  ],
   "[\"工具\",\"Tools\"]": [
     "工具",
     "Tools"
@@ -4983,6 +5075,10 @@
     "链上状态",
     "Network status"
   ],
+  "[\"成员排序\",\"Member sort\"]": [
+    "成员排序",
+    "Member sort"
+  ],
   "[\"打开导航\",\"Open navigation\"]": [
     "打开导航",
     "Open navigation"
@@ -5071,9 +5167,17 @@
     "GitHub App 授权",
     "GitHub App access"
   ],
+  "[\"加入时间\",\"Joined\"]": [
+    "加入时间",
+    "Joined"
+  ],
   "[\"此事件将恢复默认通知规则。\",\"The default notification rules will apply to this event.\"]": [
     "此事件将恢复默认通知规则。",
     "The default notification rules will apply to this event."
+  ],
+  "[\"复制\",\"Copy\"]": [
+    "复制",
+    "Copy"
   ],
   "[\"系统将保存配置、创建管理员并重启应用。\",\"The system will save configuration, create the administrator and restart the application.\"]": [
     "系统将保存配置、创建管理员并重启应用。",
@@ -5155,6 +5259,10 @@
     "最大上传大小",
     "Maximum upload size"
   ],
+  "[\"从已配置的账号选择模型。能力覆盖由相同供应商和模型的所有账号共享。\",\"Choose a model from a configured account. Capability overrides are shared by accounts using the same provider and model.\"]": [
+    "从已配置的账号选择模型。能力覆盖由相同供应商和模型的所有账号共享。",
+    "Choose a model from a configured account. Capability overrides are shared by accounts using the same provider and model."
+  ],
   "[\"允许的工具\",\"Allowed tools\"]": [
     "允许的工具",
     "Allowed tools"
@@ -5178,6 +5286,10 @@
   "[\"预览内容\",\"Preview content\"]": [
     "预览内容",
     "Preview content"
+  ],
+  "[\"刷新以连接新的服务实例。\",\"Reload to connect to the new service instance.\"]": [
+    "刷新以连接新的服务实例。",
+    "Reload to connect to the new service instance."
   ],
   "[\"个人账号\",\"Personal account\"]": [
     "个人账号",
@@ -5387,6 +5499,10 @@
     "搜索结果",
     "Search results"
   ],
+  "[\"构建时间\",\"Build time\"]": [
+    "构建时间",
+    "Build time"
+  ],
   "[\"查看与维护 .sakura 中的反思、知识和仓库规则。\",\"Browse and maintain reflections, knowledge and repository instructions in .sakura.\"]": [
     "查看与维护 .sakura 中的反思、知识和仓库规则。",
     "Browse and maintain reflections, knowledge and repository instructions in .sakura."
@@ -5515,13 +5631,9 @@
     "此版本没有发布说明。",
     "This release has no notes."
   ],
-  "[\"开启功能\",\"Enable feature\"]": [
-    "开启功能",
-    "Enable feature"
-  ],
-  "[\"模型 ID\",\"Model ID\"]": [
-    "模型 ID",
-    "Model ID"
+  "[\"成员排序方向\",\"Member sort order\"]": [
+    "成员排序方向",
+    "Member sort order"
   ],
   "[\"金额与 ID 必须是正整数。\",\"Amounts and IDs must be positive integers.\"]": [
     "金额与 ID 必须是正整数。",
@@ -5630,6 +5742,10 @@
   "[\"读取 Issue 与预览\",\"Load issue & preview\"]": [
     "读取 Issue 与预览",
     "Load issue & preview"
+  ],
+  "[\"选择账号\",\"Select account\"]": [
+    "选择账号",
+    "Select account"
   ],
   "[\"任务已提交\",\"Task submitted\"]": [
     "任务已提交",
