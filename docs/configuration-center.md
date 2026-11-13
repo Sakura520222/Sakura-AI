@@ -18,11 +18,18 @@ contract. Previous settings URLs redirect to the matching category. See
 
 The sidebar has one Settings entry. Only the selected category's values and DOM
 are loaded. Search uses a role-filtered, value-free index of names, descriptions
-and keys in both languages. Groups collapse and advanced settings are initially
-closed. Business pages (tasks, Skills, billing, repositories, users) stay separate.
+and keys in both languages. All permitted groups and advanced fields in a category
+are visible on one continuous page. Business pages (tasks, Skills, billing, repositories, users) stay separate.
 Plugin permissions/credentials retain their dedicated editor, linked from Agent.
 AI role bindings use account/model rows with Add fallback, Remove and ordering
-buttons. Lists, Issue categories, label maps and repository overrides use typed
+buttons, plus drag-and-drop sorting. Model capabilities are selected from enabled
+accounts and their configured models; overrides retain provider/model identity.
+The default fallback policy tries the full configured chain in order
+(`ai_fallback_max_candidates=0`, including primary). A positive limit explicitly
+caps attempts including primary. Sticky preference is off by default; enabling it
+only applies to an unchanged chain, and an explicit reorder clears that memory.
+Saved bindings and locally applied strategy changes affect the next call; replicas
+retain the bounded revision synchronization interval described below. Lists, Issue categories, label maps and repository overrides use typed
 forms; model thinking uses a mode selector. Incomplete rows stay local until
 valid, including when an earlier save completes. Existing values and unknown
 historical properties survive unrelated form edits. Built-in map names stay fixed
@@ -43,6 +50,8 @@ form and dynamic-card template have been removed. Accounts, 2FA, Passkeys,
 notification binding, connection tests, App-slug lookup, restart, database reset
 and backup import/export retain dedicated workflows. Setup stays independent and
 continues sharing system/section validation.
+
+同一设置分类内连续展示所有有权限的分区和高级选项。回退链支持拖拽及键盘上移/下移，账号与模型一起排序、保存。模型能力覆盖从启用账号的已配置模型中选择，仍按供应商与模型标识读写。默认按配置顺序尝试完整回退链（候选上限 `0`，包含主模型）；正数上限会明确限制候选数。Sticky 默认关闭，启用时只适用于未改动的链，调整顺序会清除历史偏好。本地配置应用成功后下一次调用使用新值，其他进程按下述 revision 同步间隔更新。
 
 ## Metadata and API
 
