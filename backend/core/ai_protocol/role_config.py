@@ -217,6 +217,29 @@ async def _resolve_from_accounts(
     return resolve_role_from_snapshot(role, accounts, bindings, overrides)
 
 
+def _log_unavailable_assignment(
+    role: str, account_id: str, model_id: str, account: Any
+) -> None:
+    """Expose safe skip identities in the existing session operational logs."""
+    reason = "account_unavailable" if account is None else "account_disabled"
+    provider = account.provider_id if account is not None else None
+    logger.bind(
+        event="ai_candidate_skipped",
+        role=role,
+        account_id=account_id,
+        provider=provider,
+        model=model_id,
+        skip_reason=reason,
+    ).info(
+        "AI candidate skipped: role={} account={} provider={} model={} reason={}",
+        role,
+        account_id,
+        provider,
+        model_id,
+        reason,
+    )
+
+
 def resolve_role_from_snapshot(
     role: str,
     accounts: dict[str, Any],
@@ -247,6 +270,7 @@ def resolve_role_from_snapshot(
             return
         acct = accounts.get(account_id)
         if acct is None or not acct.enabled:
+            _log_unavailable_assignment(role, account_id, model_id, acct)
             return
         resolved = _build_candidate_from_account(
             acct,
@@ -283,6 +307,7 @@ def _resolve_from_accounts_sync_cached(
             return
         acct = accounts.get(account_id)
         if acct is None or not acct.enabled:
+            _log_unavailable_assignment(main_role, account_id, model_id, acct)
             return
         resolved = _build_candidate_from_account(
             acct,
