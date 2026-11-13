@@ -48,7 +48,7 @@ AI_STRATEGY_RANGES = {
     "ai_api_max_retries": (0, 20),
     "ai_api_initial_retry_delay_seconds": (0.0, 60.0),
     "ai_api_total_timeout_seconds": (1.0, 7200.0),
-    "ai_fallback_max_candidates": (1, 10),
+    "ai_fallback_max_candidates": (0, 10),
     "context_compression_threshold": (0.1, 1.0),
     "activity_artifact_retention_days": (1, 3650),
 }

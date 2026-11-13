@@ -1210,3 +1210,112 @@ async def test_frozen_listener_and_github_identity_require_restart(config_db):
         assert saved["effect"] == "restart_required"
         assert get_settings().app_port == original
         assert (await field(service, db, "global/github_app_id"))["requiresRestart"]
+
+
+@pytest.mark.asyncio
+async def test_saved_fallback_order_and_account_state_reach_the_next_call(
+    config_db, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    from backend.core.ai_protocol import account_store, registry
+    from backend.core.ai_protocol.errors import AIError
+    from backend.core.ai_protocol.models import (
+        AIErrorCategory,
+        StopReason,
+        UnifiedResponse,
+        UnifiedUsage,
+    )
+    from backend.models import database
+    from backend.services import ai_usage_service
+    from backend.services.ai_reviewer.api_client import AIApiClient
+
+    for boundary in ("begin_ai_call", "finish_ai_call", "finish_billing_operation"):
+        monkeypatch.setattr(ai_usage_service, boundary, AsyncMock())
+
+    monkeypatch.setattr(database, "async_session", config_db)
+    calls = []
+
+    class Adapter:
+        async def chat(self, _http, _endpoint, credential, request, **_kwargs):
+            calls.append((request.model, credential))
+            if request.model == "primary":
+                raise AIError(AIErrorCategory.SERVER_ERROR, "Primary unavailable")
+            return UnifiedResponse(
+                content=request.model,
+                tool_calls=[],
+                stop_reason=StopReason.END_TURN,
+                usage=UnifiedUsage(input_tokens=1, output_tokens=1),
+            )
+
+    monkeypatch.setattr(registry, "get_adapter", lambda _family: Adapter())
+    accounts = []
+    for name in ("primary", "second", "third"):
+        accounts.append(
+            await account_store.save_account(
+                account_store.ProviderAccount(
+                    id="",
+                    name=name,
+                    provider_id="custom",
+                    protocol="openai-compatible",
+                    api_base="https://example.test/v1/",
+                    api_key=f"fixture-{name}",
+                    default_model=name,
+                    models=[name],
+                )
+            )
+        )
+    client = AIApiClient()
+    client._compressor_initialized = True
+    get_settings().ai_fallback_max_candidates = 1
+    client._get_unified_client()  # A worker constructed before configuration save.
+    service = ConfigCenterService()
+
+    async def save_binding(fallbacks):
+        async with config_db() as db:
+            current = await field(service, db, "binding/main")
+            await service.mutate(
+                db,
+                ADMIN,
+                current["id"],
+                version=current["version"],
+                value={
+                    "primary": {"account": accounts[0].id, "model": "primary"},
+                    "fallback": [
+                        {"account": account.id, "model": account.default_model}
+                        for account in fallbacks
+                    ],
+                },
+            )
+
+    async def call():
+        calls.clear()
+        response = await client.call_with_retry(
+            [{"role": "user", "content": "hello"}], role="main"
+        )
+        return response.content, [model for model, _credential in calls]
+
+    try:
+        async with config_db() as db:
+            await service.save_app_updates(
+                db,
+                {
+                    "ai_fallback_max_candidates": 0,
+                    "ai_fallback_sticky_candidate": True,
+                    "ai_api_max_retries": 0,
+                },
+            )
+        await save_binding(accounts[1:])
+        assert await call() == ("second", ["primary", "second"])
+        await save_binding([accounts[2], accounts[1]])
+        assert await call() == ("third", ["primary", "third"])
+        third = await account_store.get_account(accounts[2].id)
+        third.enabled = False
+        await account_store.save_account(third)
+        assert await call() == ("second", ["primary", "second"])
+        assert calls[-1][1] == "fixture-second"
+        await save_binding([accounts[1]])
+        assert await account_store.delete_account(third.id)
+        assert await call() == ("second", ["second"])
+    finally:
+        await client._get_unified_client().aclose()

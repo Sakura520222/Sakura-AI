@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Self
 from uuid import uuid4
 
@@ -78,13 +78,14 @@ class FallbackConfig:
     """故障转移配置 / Fallback configuration."""
 
     enabled: bool = True
-    max_candidates: int = 3
+    # Zero follows the entire configured chain; a positive value includes primary.
+    max_candidates: int = 0
     # Number of retries after the initial request (0 still sends one request).
     max_retries: int = 3
     total_timeout: float = 600.0
     initial_retry_delay: float = 1.0
     # 是否记忆并优先使用上次成功的候选（按 role）/ prefer last-winning candidate per role
-    sticky_candidate: bool = True
+    sticky_candidate: bool = False
 
 
 @dataclass
@@ -110,6 +111,7 @@ class _CallState:
 
     observer: Any
     logical_call_factory: Any
+    fallback_config: FallbackConfig
     last_attempt_id: int | None = None
 
 
@@ -357,6 +359,78 @@ class UnifiedAIClient:
         # remember last-winning candidate per role so subsequent calls in the
         # same review skip the failed-first fallback chain.
         self._last_successful: dict[str, str] = {}
+        self._candidate_orders: dict[str, tuple[str, ...]] = {}
+
+    def _select_candidates(
+        self, candidates: list[ResolvedModel], role: str, config: FallbackConfig
+    ) -> list[ResolvedModel]:
+        """Apply explicit limits and opt-in stickiness to the current chain.
+
+        Reordering, replacing or disabling an account invalidates historical
+        preference, including when the primary itself has not changed.
+        """
+        order = tuple(candidate.sticky_identity for candidate in candidates)
+        if role in self._candidate_orders and self._candidate_orders[role] != order:
+            self._last_successful.pop(role, None)
+        self._candidate_orders[role] = order
+        limit = len(candidates)
+        if not config.enabled:
+            limit = 1
+        elif config.max_candidates > 0:
+            limit = min(config.max_candidates, limit)
+        selected = candidates[:limit]
+        for position, candidate in enumerate(candidates[limit:], start=limit + 1):
+            reason = "fallback_disabled" if not config.enabled else "candidate_limit"
+            logger.bind(
+                event="ai_candidate_skipped",
+                role=role,
+                account_id=candidate.account_id,
+                provider=candidate.provider.id,
+                model=candidate.model.model_id,
+                skip_reason=reason,
+                candidate_position=position,
+                configured_candidates=len(candidates),
+                limit=limit,
+            ).info(
+                "AI candidate skipped: role={} account={} provider={} model={} reason={}",
+                role,
+                candidate.account_id,
+                candidate.provider.id,
+                candidate.model.model_id,
+                reason,
+            )
+        if config.sticky_candidate:
+            sticky_key = self._last_successful.get(role)
+            for index, candidate in enumerate(selected):
+                if index and candidate.sticky_identity == sticky_key:
+                    logger.bind(role=role, account_id=candidate.account_id).info(
+                        "AI sticky preference selected provider={} model={} ahead of configured order",
+                        candidate.provider.id,
+                        candidate.model.model_id,
+                    )
+                    selected = [
+                        selected[index],
+                        *selected[:index],
+                        *selected[index + 1 :],
+                    ]
+                    break
+        return selected
+
+    def _remember_successful_candidate(
+        self,
+        role: str,
+        candidate: ResolvedModel,
+        candidates: list[ResolvedModel],
+        config: FallbackConfig,
+    ) -> None:
+        """A late response cannot restore preference from an obsolete chain."""
+        if (
+            config.sticky_candidate
+            and self.fallback_config == config
+            and self._candidate_orders.get(role)
+            == tuple(item.sticky_identity for item in candidates)
+        ):
+            self._last_successful[role] = candidate.sticky_identity
 
     def _mark_logical_attempt(self, logical_call_id: str) -> None:
         self._logical_attempt_counts[logical_call_id] = (
@@ -525,6 +599,7 @@ class UnifiedAIClient:
         call_state = _CallState(
             observer=active_observer,
             logical_call_factory=active_logical_call_factory,
+            fallback_config=replace(self.fallback_config),
         )
         if not candidates:
             raise AllCandidatesFailedError(
@@ -543,26 +618,11 @@ class UnifiedAIClient:
         )
 
         requested_candidate = candidates[0]
-        max_candidates = (
-            min(self.fallback_config.max_candidates, len(candidates))
-            if self.fallback_config.enabled
-            else 1
-        )
-        selected = candidates[:max_candidates]
-
-        # Sticky candidate: 若该 role 上次有成功候选，提升到首位，避免每轮工具循环
-        # 都从首选重新故障转移（首选若已挂会浪费 N×retries 次失败重试）。
-        if self.fallback_config.sticky_candidate and role in self._last_successful:
-            sticky_key = self._last_successful[role]
-            for i, c in enumerate(selected):
-                if c.sticky_identity == sticky_key:
-                    if i > 0:
-                        selected = [selected[i], *selected[:i], *selected[i + 1 :]]
-                    break
-
-        attempt_chain: list[AttemptRecord] = []
         logical_call_id = str(call_state.logical_call_factory())
         update_log_context(logical_call_id=logical_call_id)
+        selected = self._select_candidates(candidates, role, call_state.fallback_config)
+
+        attempt_chain: list[AttemptRecord] = []
         logical_call_started = time.monotonic()
         last_error: AIError | None = None
 
@@ -758,7 +818,9 @@ class UnifiedAIClient:
                 response.meta.served_capabilities = candidate.model.capabilities
                 response.meta.effective_request = policy.safe_log_dict()
                 # 记录该 role 的成功候选，供后续调用 sticky 提升
-                self._last_successful[role] = candidate.sticky_identity
+                self._remember_successful_candidate(
+                    role, candidate, candidates, call_state.fallback_config
+                )
                 logger.info(
                     "AI 调用成功 [{}/{}]: role={} served_by={}",
                     idx + 1,
@@ -859,7 +921,9 @@ class UnifiedAIClient:
                             candidate.model.capabilities
                         )
                         # 压缩重试成功仍属于该候选，记录 sticky
-                        self._last_successful[role] = candidate.sticky_identity
+                        self._remember_successful_candidate(
+                            role, candidate, candidates, call_state.fallback_config
+                        )
                         await self._record_successful_usage(
                             logical_call_id=logical_call_id,
                             call_kind="chat",
@@ -929,6 +993,7 @@ class UnifiedAIClient:
         logical_call_factory: Any = uuid4,
     ):
         """Public streaming path with the same observed-send boundary as chat."""
+        config = replace(self.fallback_config)
         candidates = self._extract_candidates(chain_or_candidates)
         if not candidates:
             raise AllCandidatesFailedError(f"角色 {role} 无可用 AI 候选模型")
@@ -951,31 +1016,14 @@ class UnifiedAIClient:
             else messages_from_legacy(messages)  # type: ignore[arg-type]
         )
         requested_candidate = candidates[0]
-        max_candidates = (
-            min(self.fallback_config.max_candidates, len(candidates))
-            if self.fallback_config.enabled
-            else 1
-        )
-        selected = candidates[:max_candidates]
-        if self.fallback_config.sticky_candidate and role in self._last_successful:
-            sticky_key = self._last_successful[role]
-            for index, item in enumerate(selected):
-                if item.sticky_identity == sticky_key:
-                    if index:
-                        selected = [
-                            selected[index],
-                            *selected[:index],
-                            *selected[index + 1 :],
-                        ]
-                    break
-
         logical_call_id = str(active_logical_call_factory())
         update_log_context(logical_call_id=logical_call_id)
+        selected = self._select_candidates(candidates, role, config)
         logical_call_started = time.monotonic()
         # ``total_timeout`` is a logical-call budget.  Non-positive values have
         # historically meant that the streaming path has no total deadline;
         # keep that behavior while enforcing positive configured budgets.
-        configured_total_timeout = self.fallback_config.total_timeout
+        configured_total_timeout = config.total_timeout
         stream_deadline = (
             logical_call_started + configured_total_timeout
             if configured_total_timeout is not None and configured_total_timeout > 0
@@ -1082,7 +1130,9 @@ class UnifiedAIClient:
                 thinking=policy.thinking,
                 effort=policy.effort,
                 stream=True,
-                include_stream_usage=getattr(candidate.model.capabilities, "stream_usage", True),
+                include_stream_usage=getattr(
+                    candidate.model.capabilities, "stream_usage", True
+                ),
             )
             reasoning_snapshot = _effective_reasoning_snapshot(
                 candidate,
@@ -1091,7 +1141,7 @@ class UnifiedAIClient:
                 requested_effort=effort,
             )
             # max_retries counts failures after the initial request.
-            for retry_index in range(self.fallback_config.max_retries + 1):
+            for retry_index in range(config.max_retries + 1):
                 if cancel_event is not None and cancel_event.is_set():
                     self._log_logical_call_summary(
                         logical_call_id=logical_call_id,
@@ -1191,7 +1241,9 @@ class UnifiedAIClient:
                         await self._close_stream_iterator(events)
                     if sender is not None:
                         previous_attempt_id = sender.last_attempt_id
-                    self._last_successful[role] = candidate.sticky_identity
+                    self._remember_successful_candidate(
+                        role, candidate, candidates, config
+                    )
                     await self._record_successful_usage(
                         logical_call_id=logical_call_id,
                         call_kind="chat_stream",
@@ -1242,9 +1294,9 @@ class UnifiedAIClient:
                         if emitted:
                             raise timeout_error
                         break
-                    if retry_index < self.fallback_config.max_retries:
+                    if retry_index < config.max_retries:
                         try:
-                            delay = self._calculate_delay(retry_index)
+                            delay = self._calculate_delay(retry_index, config)
                             remaining = self._remaining_budget(stream_deadline)
                             if remaining is not None and remaining <= 0:
                                 budget_exhausted = True
@@ -1290,9 +1342,9 @@ class UnifiedAIClient:
                     if not exc.is_retryable:
                         # BAD_REQUEST / REFUSAL 对相同 payload 是确定性的。
                         break
-                    if retry_index < self.fallback_config.max_retries:
+                    if retry_index < config.max_retries:
                         try:
-                            delay = self._calculate_delay(retry_index)
+                            delay = self._calculate_delay(retry_index, config)
                             remaining = self._remaining_budget(stream_deadline)
                             if remaining is not None and remaining <= 0:
                                 budget_exhausted = True
@@ -1365,7 +1417,7 @@ class UnifiedAIClient:
         call_state: _CallState,
     ) -> UnifiedResponse:
         adapter = _get_adapter(candidate.effective_protocol)
-        cfg = self.fallback_config
+        cfg = call_state.fallback_config
         total_timeout = timeout or cfg.total_timeout
         start = time.monotonic()
 
@@ -1452,7 +1504,7 @@ class UnifiedAIClient:
                 if not exc.is_retryable:
                     raise
                 if attempt < cfg.max_retries:
-                    delay = self._calculate_delay(attempt)
+                    delay = self._calculate_delay(attempt, cfg)
                     logger.warning(
                         "AI 调用失败 [{}]: {}，{:.1f}s 后重试 ({}/{}) role={} model={}",
                         exc.category.value,
@@ -1574,10 +1626,9 @@ class UnifiedAIClient:
         if cancel_event.is_set():
             raise ReviewCancelledError()
 
-    def _calculate_delay(self, attempt: int) -> float:
+    def _calculate_delay(self, attempt: int, config: FallbackConfig) -> float:
         """混合退避 + 抖动（沿用旧策略）/ Hybrid backoff with jitter (legacy)."""
-        cfg = self.fallback_config
-        initial = cfg.initial_retry_delay
+        initial = config.initial_retry_delay
         if attempt < 3:
             delay = initial * (2**attempt)
         else:

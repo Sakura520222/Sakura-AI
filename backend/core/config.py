@@ -185,12 +185,12 @@ class Settings(BaseSettings):
         description="是否启用跨协议/跨厂商故障转移（重试耗尽后切换备用模型）",
     )
     ai_fallback_max_candidates: int = Field(
-        3,
-        description="单次调用最多尝试的候选模型数量（含首选）",
+        0,
+        description="单次调用最多尝试的候选模型数量（含首选）；0 按配置顺序尝试完整回退链",
     )
     ai_fallback_sticky_candidate: bool = Field(
-        True,
-        description="是否记忆并优先使用上次成功的候选模型（按角色），避免每轮工具循环都从首选重新故障转移",
+        False,
+        description="优先上次成功的候选（默认关闭，严格按配置顺序）；启用后仅对未变更的角色链生效，调整顺序会清除记忆",
     )
 
     # 审查策略配置

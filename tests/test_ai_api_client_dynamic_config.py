@@ -244,3 +244,203 @@ async def test_role_snapshots_use_effective_account_protocol(monkeypatch):
         captured_context.role_snapshot.protocol_family
         == ProtocolFamily.OPENAI_RESPONSES.value
     )
+
+
+def test_cached_client_refreshes_fallback_policy_before_next_call(monkeypatch):
+    from types import SimpleNamespace
+
+    settings = SimpleNamespace(
+        ai_fallback_enabled=True,
+        ai_fallback_max_candidates=0,
+        ai_fallback_sticky_candidate=False,
+        ai_api_max_retries=0,
+        ai_api_total_timeout_seconds=10,
+        ai_api_initial_retry_delay_seconds=0,
+    )
+    monkeypatch.setattr("backend.core.config.get_settings", lambda: settings)
+    client = AIApiClient(compressor=object())
+    original_policy = client._get_unified_client().fallback_config
+    settings.ai_fallback_max_candidates = 6
+    settings.ai_fallback_sticky_candidate = True
+    settings.ai_api_max_retries = 2
+    refreshed = client._get_unified_client()
+    assert original_policy.max_candidates == 0
+    assert original_policy.max_retries == 0
+    assert original_policy.sticky_candidate is False
+    assert refreshed.fallback_config.max_candidates == 6
+    assert refreshed.fallback_config.sticky_candidate is True
+    assert refreshed.fallback_config.max_retries == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_new_policy_does_not_change_an_inflight_fallback_retry_budget(
+    monkeypatch, stream
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    from backend.core.ai_protocol.errors import AIError
+    from backend.core.ai_protocol.models import AIErrorCategory, UnifiedStreamEvent
+
+    settings = SimpleNamespace(
+        ai_fallback_enabled=True,
+        ai_fallback_max_candidates=0,
+        ai_fallback_sticky_candidate=False,
+        ai_api_max_retries=0,
+        ai_api_total_timeout_seconds=10,
+        ai_api_initial_retry_delay_seconds=0,
+    )
+    monkeypatch.setattr("backend.core.config.get_settings", lambda: settings)
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    class Adapter(_CapturingAdapter):
+        async def chat(self, http, endpoint, credential, request, *, timeout=None):
+            lane = request.messages[0].content
+            calls.append((lane, request.model))
+            if lane == "old" and request.model == "primary":
+                entered.set()
+                await release.wait()
+                raise AIError(AIErrorCategory.AUTH_INVALID, "Primary unavailable")
+            if lane == "old" or calls.count((lane, request.model)) == 1:
+                raise AIError(AIErrorCategory.SERVER_ERROR, "Transient failure")
+            return await super().chat(
+                http, endpoint, credential, request, timeout=timeout
+            )
+
+        async def stream(self, http, endpoint, credential, request, *, timeout=None):
+            response = await self.chat(
+                http, endpoint, credential, request, timeout=timeout
+            )
+            yield UnifiedStreamEvent(type="text_delta", text=response.content)
+            yield UnifiedStreamEvent(type="done", usage=response.usage)
+
+    adapter = Adapter()
+    monkeypatch.setattr(
+        "backend.core.ai_protocol.registry.get_adapter", lambda _family: adapter
+    )
+    chain = _resolved_chain("primary", 128000)
+    chain.candidates.append(_resolved_chain("fallback", 128000).candidates[0])
+    client = AIApiClient()
+    client._compressor_initialized = True
+
+    async def resolve(_role):
+        return chain
+
+    monkeypatch.setattr(client, "_resolve_role_chain", resolve)
+
+    async def invoke(lane):
+        messages = [{"role": "user", "content": lane}]
+        if stream:
+            events = [
+                event
+                async for event in await client.stream_with_retry(messages, role="main")
+            ]
+            return "".join(event.text or "" for event in events)
+        response = await client.call_with_retry(messages, role="main")
+        return response.content
+
+    old = asyncio.create_task(invoke("old"))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        settings.ai_api_max_retries = 1
+        response = await invoke("new")
+        assert response == "ok"
+        assert calls.count(("new", "primary")) == 2
+        release.set()
+        with pytest.raises(AllCandidatesFailedError):
+            await old
+        assert calls.count(("old", "fallback")) == 1
+    finally:
+        release.set()
+        if not old.done():
+            old.cancel()
+            await asyncio.gather(old, return_exceptions=True)
+        await client._get_unified_client().aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_late_success_cannot_restore_sticky_order_from_before_a_reorder(
+    monkeypatch, stream
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    from backend.core.ai_protocol.errors import AIError
+    from backend.core.ai_protocol.models import AIErrorCategory, UnifiedStreamEvent
+
+    settings = SimpleNamespace(
+        ai_fallback_enabled=True,
+        ai_fallback_max_candidates=0,
+        ai_fallback_sticky_candidate=True,
+        ai_api_max_retries=0,
+        ai_api_total_timeout_seconds=10,
+        ai_api_initial_retry_delay_seconds=0,
+    )
+    monkeypatch.setattr("backend.core.config.get_settings", lambda: settings)
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    class Adapter(_CapturingAdapter):
+        async def chat(self, http, endpoint, credential, request, *, timeout=None):
+            lane = request.messages[0].content
+            calls.append((lane, request.model))
+            if request.model == "primary":
+                raise AIError(AIErrorCategory.AUTH_INVALID, "Primary unavailable")
+            if lane == "old":
+                entered.set()
+                await release.wait()
+            return await super().chat(
+                http, endpoint, credential, request, timeout=timeout
+            )
+
+        async def stream(self, http, endpoint, credential, request, *, timeout=None):
+            response = await self.chat(
+                http, endpoint, credential, request, timeout=timeout
+            )
+            yield UnifiedStreamEvent(type="text_delta", text=response.content)
+            yield UnifiedStreamEvent(type="done", usage=response.usage)
+
+    monkeypatch.setattr(
+        "backend.core.ai_protocol.registry.get_adapter", lambda _family: Adapter()
+    )
+    primary = _resolved_chain("primary", 128000).candidates[0]
+    fallback = _resolved_chain("fallback", 128000).candidates[0]
+    new_fallback = _resolved_chain("new-fallback", 128000).candidates[0]
+    chain = ResolvedChain(role="main", candidates=[primary, fallback])
+    client = AIApiClient()
+    client._compressor_initialized = True
+
+    async def resolve(_role):
+        return chain
+
+    monkeypatch.setattr(client, "_resolve_role_chain", resolve)
+
+    async def invoke(lane):
+        messages = [{"role": "user", "content": lane}]
+        if stream:
+            events = [
+                event
+                async for event in await client.stream_with_retry(messages, role="main")
+            ]
+            return "".join(event.text or "" for event in events)
+        response = await client.call_with_retry(messages, role="main")
+        return response.content
+
+    old = asyncio.create_task(invoke("old"))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        chain = ResolvedChain(role="main", candidates=[primary, new_fallback, fallback])
+        await invoke("new")
+        release.set()
+        await old
+        await invoke("after")
+        assert [model for lane, model in calls if lane == "after"] == ["new-fallback"]
+    finally:
+        release.set()
+        if not old.done():
+            old.cancel()
+            await asyncio.gather(old, return_exceptions=True)
+        await client._get_unified_client().aclose()

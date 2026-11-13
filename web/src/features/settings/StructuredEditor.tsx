@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, GripVertical, Plus, Trash2 } from "lucide-react";
 import type { Account, ConfigField, Json, Schema } from "./types";
 import { initialValue } from "./state";
 
@@ -387,6 +387,22 @@ export function BindingEditor({
     fallback: [],
   }) as unknown as Binding;
   const update = (next: Binding) => onChange(next as unknown as Json);
+  const [dragging, setDragging] = useState<number | null>(null);
+  const move = (from: number, to: number) => {
+    if (
+      disabled ||
+      from === to ||
+      from < 0 ||
+      to < 0 ||
+      from >= binding.fallback.length ||
+      to >= binding.fallback.length
+    )
+      return;
+    const next = [...binding.fallback];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    update({ ...binding, fallback: next });
+  };
   const assignment = (entry: Assignment, index: number) => {
     const accountId = entry.account ?? entry.provider ?? "";
     const account = accounts.find((item) => item.id === accountId);
@@ -470,12 +486,44 @@ export function BindingEditor({
       <h4>{message("fallback")}</h4>
       <p className="settings-hint">{message("fallback_help")}</p>
       {(binding.fallback ?? []).map((entry, index) => (
-        <div className="settings-structured-item" key={index}>
+        <div
+          className="settings-structured-item"
+          key={index}
+          role="group"
+          aria-label={`${message("fallback_item")} ${index + 1}`}
+          onDragOver={(event) => {
+            if (!disabled && dragging !== null) event.preventDefault();
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            if (dragging !== null) move(dragging, index);
+            setDragging(null);
+          }}
+        >
           <div className="settings-structured-heading">
             <span>
               {message("fallback_item")} {index + 1}
             </span>
             <div className="settings-icon-actions">
+              <button
+                type="button"
+                className="icon-button settings-drag-handle"
+                disabled={disabled}
+                draggable={!disabled}
+                aria-label={`${message("editor_drag")}: ${index + 1}`}
+                onDragStart={(event) => {
+                  if (disabled) return;
+                  setDragging(index);
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData(
+                    "text/plain",
+                    `${field.id}:${index}`,
+                  );
+                }}
+                onDragEnd={() => setDragging(null)}
+              >
+                <GripVertical size={16} />
+              </button>
               {[-1, 1].map((direction) => (
                 <button
                   type="button"
@@ -487,14 +535,7 @@ export function BindingEditor({
                     index + direction >= binding.fallback.length
                   }
                   aria-label={`${message(direction === -1 ? "editor_move_up" : "editor_move_down")}: ${index + 1}`}
-                  onClick={() => {
-                    const next = [...binding.fallback];
-                    [next[index], next[index + direction]] = [
-                      next[index + direction],
-                      next[index],
-                    ];
-                    update({ ...binding, fallback: next });
-                  }}
+                  onClick={() => move(index, index + direction)}
                 >
                   {direction === -1 ? (
                     <ArrowUp size={16} />

@@ -1297,3 +1297,235 @@ async def test_call_with_retry_records_winner_context_window(monkeypatch):
     assert response.meta.served_by == "prov-fallback/fallback"
     assert response.meta.context_window_tokens == 1000000
     await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_default_fallback_tries_the_entire_configured_chain(monkeypatch, stream):
+    adapters = {
+        f"model-{index}": _StubAdapter(
+            fail_categories=[AIErrorCategory.SERVER_ERROR] if index < 4 else [],
+        )
+        for index in range(5)
+    }
+
+    class StreamingRouter(_ModelRoutingAdapter):
+        async def stream(self, http, endpoint, credential, request, *, timeout=None):
+            response = await self.chat(
+                http, endpoint, credential, request, timeout=timeout
+            )
+            yield UnifiedStreamEvent(type="text_delta", text=response.content)
+            yield UnifiedStreamEvent(type="done", usage=response.usage)
+
+    router = StreamingRouter(adapters)
+    _install_router(monkeypatch, router)
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(max_retries=0, initial_retry_delay=0),
+    )
+    candidates = [
+        _candidate(ProtocolFamily.OPENAI_COMPATIBLE, model) for model in adapters
+    ]
+    try:
+        if stream:
+            events = [
+                event
+                async for event in client.stream_with_retry(
+                    candidates, [UnifiedMessage(role="user", content="hi")], role="main"
+                )
+            ]
+            assert events[0].text == "ok"
+        else:
+            response = await client.call_with_retry(
+                candidates,
+                [UnifiedMessage(role="user", content="hi")],
+                model="primary",
+                role="main",
+            )
+            assert response.content == "ok"
+        assert router.call_models == list(adapters)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_explicit_reorder_invalidates_sticky_success(monkeypatch):
+    primary = _StubAdapter(fail_categories=[AIErrorCategory.SERVER_ERROR])
+    secondary = _StubAdapter()
+    third = _StubAdapter()
+    router = _ModelRoutingAdapter(
+        {"primary": primary, "secondary": secondary, "third": third}
+    )
+    _install_router(monkeypatch, router)
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            max_candidates=3, max_retries=0, sticky_candidate=True
+        )
+    )
+    candidates = [
+        _candidate(ProtocolFamily.OPENAI_COMPATIBLE, model)
+        for model in ("primary", "secondary", "third")
+    ]
+    try:
+        await client.call_with_retry(
+            candidates,
+            [UnifiedMessage(role="user", content="hi")],
+            model="primary",
+            role="main",
+        )
+        assert router.call_models == ["primary", "secondary"]
+        router.call_models.clear()
+        await client.call_with_retry(
+            [candidates[0], candidates[2], candidates[1]],
+            [UnifiedMessage(role="user", content="hi")],
+            model="primary",
+            role="main",
+        )
+        assert router.call_models == ["primary"]
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    ("enabled", "limit", "reason"),
+    [(False, 0, "fallback_disabled"), (True, 1, "candidate_limit")],
+)
+async def test_skipped_candidates_log_identity_reason_and_activity_context(
+    monkeypatch, stream, enabled, limit, reason
+):
+    from loguru import logger
+
+    from backend.core.log_context import log_context
+    from backend.core.logging_bridge import _patch_record
+
+    records = []
+    sink_id = logger.add(lambda message: records.append(message.record))
+    monkeypatch.setattr(unified_client_module, "logger", logger.patch(_patch_record))
+    primary = _candidate(
+        ProtocolFamily.OPENAI_COMPATIBLE, "primary", account_id="primary-account"
+    )
+    skipped = _candidate(
+        ProtocolFamily.OPENAI_COMPATIBLE,
+        "skipped",
+        account_id="skipped-account",
+        credential="private-fixture-key",
+    )
+    _install_router(monkeypatch, _ModelRoutingAdapter({"primary": _StubAdapter()}))
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=enabled, max_candidates=limit, max_retries=0
+        ),
+        logical_call_factory=lambda: "skip-logical-call",
+    )
+    try:
+        with log_context(session_id=738, invocation_id=84):
+            if stream:
+                async for _ in client.stream_with_retry(
+                    [primary, skipped], [], role="main"
+                ):
+                    pass
+            else:
+                await client.call_with_retry(
+                    [primary, skipped], [], model="", role="main"
+                )
+        skips = [
+            record
+            for record in records
+            if record["extra"].get("event") == "ai_candidate_skipped"
+        ]
+        assert len(skips) == 1
+        extra = skips[0]["extra"]
+        assert {
+            key: extra[key]
+            for key in (
+                "session_id",
+                "invocation_id",
+                "logical_call_id",
+                "role",
+                "account_id",
+                "provider",
+                "model",
+                "skip_reason",
+            )
+        } == {
+            "session_id": 738,
+            "invocation_id": 84,
+            "logical_call_id": "skip-logical-call",
+            "role": "main",
+            "account_id": "skipped-account",
+            "provider": skipped.provider.id,
+            "model": "skipped",
+            "skip_reason": reason,
+        }
+        assert "private-fixture-key" not in str(skips)
+    finally:
+        logger.remove(sink_id)
+        await client.aclose()
+
+
+@pytest.mark.parametrize("role", ["main", "summary"])
+def test_unavailable_account_skips_keep_activity_context_and_no_credentials(
+    monkeypatch, role
+):
+    from loguru import logger
+
+    from backend.core.ai_protocol import role_config
+    from backend.core.ai_protocol.account_store import (
+        ProviderAccount,
+        RoleAssignment,
+        RoleBindingConfig,
+    )
+    from backend.core.log_context import log_context
+    from backend.core.logging_bridge import _patch_record
+
+    records = []
+    sink_id = logger.add(lambda message: records.append(message.record))
+    monkeypatch.setattr(role_config, "logger", logger.patch(_patch_record))
+    account = ProviderAccount(
+        id="disabled-account",
+        name="disabled",
+        provider_id="custom",
+        api_key="private-disabled-key",
+        enabled=False,
+    )
+    bindings = {
+        "main": RoleBindingConfig(
+            primary=RoleAssignment(account.id, "disabled-model"),
+            fallback=[RoleAssignment("deleted-account", "deleted-model")],
+        )
+    }
+    if role == "summary":
+        bindings[role] = RoleBindingConfig(primary=RoleAssignment("main", "follow"))
+    try:
+        with log_context(session_id=738, invocation_id=84):
+            assert (
+                role_config.resolve_role_from_snapshot(
+                    role, {account.id: account}, bindings
+                )
+                is None
+            )
+        skips = [
+            record["extra"]
+            for record in records
+            if record["extra"].get("event") == "ai_candidate_skipped"
+        ]
+        assert [
+            (
+                record["account_id"],
+                record["provider"],
+                record["model"],
+                record["skip_reason"],
+            )
+            for record in skips
+        ] == [
+            ("disabled-account", "custom", "disabled-model", "account_disabled"),
+            ("deleted-account", None, "deleted-model", "account_unavailable"),
+        ]
+        assert all(
+            record["session_id"] == 738 and record["invocation_id"] == 84
+            for record in skips
+        )
+        assert "private-disabled-key" not in str(skips)
+    finally:
+        logger.remove(sink_id)

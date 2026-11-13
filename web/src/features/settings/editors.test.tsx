@@ -1,7 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { StructuredEditor } from "./StructuredEditor";
+import { BindingEditor, StructuredEditor } from "./StructuredEditor";
 import { accountPayload } from "./AccountsPanel";
+import type { ConfigField } from "./types";
 
 describe("structured configuration editors", () => {
   it("edits a known property without dropping unknown historical siblings", () => {
@@ -115,4 +116,35 @@ describe("account payload", () => {
     });
     expect(accountPayload(values)).not.toHaveProperty("revision");
   });
+});
+
+it("drags a whole fallback assignment while retaining primary and account/model pairs", () => {
+  const primary = { account: "primary-account", model: "primary-model" };
+  const first = { account: "one", model: "one-model" };
+  const second = { account: "two", model: "two-model" };
+  const update = vi.fn();
+  render(
+    <BindingEditor
+      field={{ id: "binding/main", label: "Main binding" } as ConfigField}
+      value={{ primary, fallback: [first, second] }}
+      accounts={[]}
+      onChange={update}
+      message={(key) => key}
+      disabled={false}
+    />,
+  );
+  const source = screen.getByRole("button", { name: "editor_drag: 2" });
+  const target = screen.getByRole("group", { name: "fallback_item 1" });
+  const values = new Map<string, string>();
+  const dataTransfer = {
+    setData: (key: string, value: string) => values.set(key, value),
+    getData: (key: string) => values.get(key) ?? "",
+  };
+  fireEvent.dragStart(source, { dataTransfer });
+  fireEvent.dragOver(target, { dataTransfer });
+  fireEvent.drop(target, { dataTransfer });
+  expect(update).toHaveBeenCalledWith({ primary, fallback: [second, first] });
+  expect(
+    screen.getByRole("button", { name: "editor_move_up: 2" }),
+  ).toBeEnabled();
 });

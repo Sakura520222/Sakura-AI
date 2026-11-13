@@ -1263,6 +1263,9 @@ def test_artifact_identity_uses_effective_protocol_without_snapshot():
 
 @pytest.mark.asyncio
 async def test_sticky_winner_does_not_change_requested_primary_candidate(monkeypatch):
+    from backend.core.ai_protocol.errors import AIError
+    from backend.core.ai_protocol.models import AIErrorCategory
+
     primary = _stream_candidate()
     fallback_provider = replace(
         primary.provider,
@@ -1285,7 +1288,9 @@ async def test_sticky_winner_does_not_change_requested_primary_candidate(monkeyp
         def serialize_request(self, request):
             return {"model": request.model}
 
-        async def chat(self, *_args, **_kwargs):
+        async def chat(self, _http, _endpoint, _credential, request, **_kwargs):
+            if request.model == primary.model.model_id:
+                raise AIError(AIErrorCategory.SERVER_ERROR, "Primary unavailable")
             return UnifiedResponse(
                 content="ok",
                 tool_calls=[],
@@ -1305,12 +1310,19 @@ async def test_sticky_winner_does_not_change_requested_primary_candidate(monkeyp
         fallback_config=FallbackConfig(
             enabled=True,
             max_candidates=2,
-            max_retries=1,
+            max_retries=0,
             sticky_candidate=True,
         ),
         logical_call_factory=lambda: "sticky-call",
     )
-    client._last_successful["reviewer"] = fallback.sticky_identity
+    # Establish history through a real primary failure and successful fallback.
+    await client.call_with_retry(
+        [primary, fallback],
+        [UnifiedMessage(role="user", content="initial")],
+        model="",
+        role="reviewer",
+    )
+    attempt_service.events.clear()
 
     await client.call_with_retry(
         [primary, fallback],

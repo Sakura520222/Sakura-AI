@@ -239,27 +239,26 @@ class AIApiClient:
 
     def _get_unified_client(self) -> Any:
         """延迟创建统一客户端 / Lazily create UnifiedAIClient."""
+        from backend.core.config import get_settings
+        from backend.services.ai_reviewer.unified_client import (
+            FallbackConfig,
+            UnifiedAIClient,
+        )
+
+        settings = get_settings()
+        config = FallbackConfig(
+            enabled=getattr(settings, "ai_fallback_enabled", True),
+            max_candidates=int(getattr(settings, "ai_fallback_max_candidates", 0)),
+            max_retries=settings.ai_api_max_retries,
+            total_timeout=settings.ai_api_total_timeout_seconds,
+            initial_retry_delay=settings.ai_api_initial_retry_delay_seconds,
+            sticky_candidate=getattr(settings, "ai_fallback_sticky_candidate", False),
+        )
         if self._unified_client is None:
-            from backend.core.config import get_settings
             from backend.services.ai_reviewer.compression.unified_compressor import (
                 UnifiedContextCompressor,
             )
-            from backend.services.ai_reviewer.unified_client import (
-                FallbackConfig,
-                UnifiedAIClient,
-            )
 
-            settings = get_settings()
-            config = FallbackConfig(
-                enabled=getattr(settings, "ai_fallback_enabled", True),
-                max_candidates=int(getattr(settings, "ai_fallback_max_candidates", 3)),
-                max_retries=settings.ai_api_max_retries,
-                total_timeout=settings.ai_api_total_timeout_seconds,
-                initial_retry_delay=settings.ai_api_initial_retry_delay_seconds,
-                sticky_candidate=getattr(
-                    settings, "ai_fallback_sticky_candidate", True
-                ),
-            )
             if not self._compressor_initialized:
                 self._compressor = UnifiedContextCompressor.from_settings()
                 self._compressor_initialized = True
@@ -270,6 +269,10 @@ class AIApiClient:
                 logical_call_factory=self._logical_call_factory,
                 compressor=self._compressor,
             )
+        elif isinstance(self._unified_client, UnifiedAIClient):
+            if self._unified_client.fallback_config != config:
+                self._unified_client.fallback_config = config
+                self._unified_client._last_successful.clear()
         return self._unified_client
 
     def refresh_runtime_config(self, settings: Any | None = None) -> None:
