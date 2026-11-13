@@ -6,7 +6,6 @@ import { api } from "../../api/client";
 import { useLocale } from "../../app/locale";
 import { useConfirm } from "../../components/ui/ConfirmProvider";
 import {
-  Disclosure,
   EmptyState,
   ErrorState,
   LoadingState,
@@ -16,6 +15,7 @@ import {
   StatusBadge,
   safeExternalUrl,
 } from "../../components/workflow/Workflow";
+import { Dialog } from "../../components/ui/Dialog";
 import { MutationError } from "../billing/BillingCommon";
 import "./community.css";
 
@@ -70,6 +70,8 @@ export default function CommunityPage() {
   const [selection, setSelection] = useState<string[] | null>(null);
   const [visible, setVisible] = useState(20);
   const [reason, setReason] = useState("");
+  const [manage, setManage] = useState(false);
+  const [picker, setPicker] = useState(false);
   const confirm = useConfirm();
   const query = useQuery({
     queryKey: ["community", params.toString()],
@@ -94,6 +96,7 @@ export default function CommunityPage() {
         window.location.assign(result.redirect);
       else {
         setSelection(null);
+        setPicker(false);
         void query.refetch();
       }
     },
@@ -181,206 +184,211 @@ export default function CommunityPage() {
               {t("授权 GitHub", "Authorize GitHub")}
             </a>
           )}
-          {data.is_super_admin && (
-            <button
-              className="button"
-              disabled={mutation.isPending}
-              onClick={async () => {
-                if (
-                  await confirm({
-                    title: data.feature_enabled
-                      ? t("关闭仓库互助？", "Disable repository community?")
-                      : t("开启仓库互助？", "Enable repository community?"),
-                    description: t(
-                      "更改全局仓库互助开关。",
-                      "Change the global repository community setting.",
-                    ),
-                  })
-                )
-                  mutation.mutate({
-                    path: "/feature",
-                    method: "PUT",
-                    body: { enabled: !data.feature_enabled },
-                  });
-              }}
-            >
-              {data.feature_enabled
-                ? t("关闭功能", "Disable feature")
-                : t("开启功能", "Enable feature")}
-            </button>
-          )}
         </div>
       </div>
-      <Section
-        title={t("我的展示仓库", "My shared repositories")}
-        aside={
+      {data.is_admin && (
+        <div
+          role="tablist"
+          aria-label={t("仓库互助", "Repository community")}
+          className="wf-actions community-tabs"
+        >
           <button
+            role="tab"
             className="button"
-            disabled={mutation.isPending || !data.feature_enabled}
-            onClick={() => mutation.mutate({ path: "/membership/sync" })}
+            aria-selected={!manage}
+            onClick={() => setManage(false)}
           >
-            {t("同步 GitHub 仓库", "Sync GitHub repositories")}
+            {t("社区项目", "Community projects")}
           </button>
-        }
-      >
-        <div className="community-selection">
-          {data.available_repos.map((repo) => (
-            <label key={repo.id}>
-              <input
-                type="checkbox"
-                checked={chosen.includes(repo.full_name)}
-                disabled={repo.disabled_by_admin || mutation.isPending}
-                onChange={() =>
-                  setSelection(
-                    chosen.includes(repo.full_name)
-                      ? chosen.filter((value) => value !== repo.full_name)
-                      : [...chosen, repo.full_name],
-                  )
-                }
-              />
-              <span>{repo.full_name}</span>
-            </label>
-          ))}
-        </div>
-        <div className="wf-actions">
           <button
-            className="button primary"
-            disabled={
-              mutation.isPending ||
-              !data.feature_enabled ||
-              data.credential_status !== "authorized"
-            }
-            onClick={() =>
-              void action(
-                `/membership/${joined ? "repositories" : "join"}`,
-                joined
-                  ? t("保存展示仓库？", "Save shared repositories?")
-                  : t("加入仓库互助计划？", "Join repository community?"),
-                { repositories: chosen },
-              )
+            role="tab"
+            className="button"
+            aria-selected={manage}
+            onClick={() => setManage(true)}
+          >
+            {t("管理", "Management")}
+          </button>
+        </div>
+      )}
+      {(!manage || !data.is_admin) && (
+        <>
+          <Section
+            title={t("我的互助计划", "My community plan")}
+            aside={
+              <button className="button" onClick={() => setPicker(true)}>
+                {t("我的展示仓库", "My shared repositories")}
+              </button>
             }
           >
-            {joined
-              ? t("保存选择", "Save selection")
-              : t("加入计划", "Join community")}
-          </button>
-          {joined && (
-            <>
+            <p>
+              {data.displayed_repos.length}{" "}
+              {t("个展示仓库", "shared repositories")}
+            </p>
+          </Section>
+          <Dialog
+            open={picker}
+            onOpenChange={setPicker}
+            title={t("我的展示仓库", "My shared repositories")}
+          >
+            <button
+              className="button"
+              disabled={mutation.isPending || !data.feature_enabled}
+              onClick={() => mutation.mutate({ path: "/membership/sync" })}
+            >
+              {t("同步 GitHub 仓库", "Sync GitHub repositories")}
+            </button>
+            <div className="community-selection">
+              {data.available_repos.map((repo) => (
+                <label key={repo.id}>
+                  <input
+                    type="checkbox"
+                    checked={chosen.includes(repo.full_name)}
+                    disabled={repo.disabled_by_admin || mutation.isPending}
+                    onChange={() =>
+                      setSelection(
+                        chosen.includes(repo.full_name)
+                          ? chosen.filter((value) => value !== repo.full_name)
+                          : [...chosen, repo.full_name],
+                      )
+                    }
+                  />
+                  <span>{repo.full_name}</span>
+                </label>
+              ))}
+            </div>
+            <div className="wf-actions">
               <button
-                className="button"
-                disabled={mutation.isPending}
+                className="button primary"
+                disabled={
+                  mutation.isPending ||
+                  !data.feature_enabled ||
+                  data.credential_status !== "authorized"
+                }
                 onClick={() =>
                   void action(
-                    "/membership/leave",
-                    t("退出互助计划？", "Leave repository community?"),
-                    { unstar_created: false },
-                    true,
+                    `/membership/${joined ? "repositories" : "join"}`,
+                    joined
+                      ? t("保存展示仓库？", "Save shared repositories?")
+                      : t("加入仓库互助计划？", "Join repository community?"),
+                    { repositories: chosen },
                   )
                 }
               >
-                {t("退出计划", "Leave community")}
+                {joined
+                  ? t("保存选择", "Save selection")
+                  : t("加入计划", "Join community")}
               </button>
-              <button
-                className="button danger-text"
-                disabled={mutation.isPending}
-                onClick={() =>
-                  void action(
-                    "/membership/leave",
-                    t(
-                      "退出并撤销本功能添加的 Star？",
-                      "Leave and remove stars added by this feature?",
-                    ),
-                    { unstar_created: true },
-                    true,
-                  )
-                }
-              >
-                {t("退出并撤销 Star", "Leave and remove stars")}
-              </button>
-            </>
-          )}
-        </div>
-      </Section>
-      <Section
-        title={t("社区项目", "Community projects")}
-        aside={
-          <input
-            type="search"
-            aria-label={t("搜索社区项目", "Search community projects")}
-            placeholder={t("搜索仓库…", "Search repositories…")}
-            value={search}
-            onChange={(event) => {
-              setSearch(event.target.value);
-              setVisible(20);
-            }}
-          />
-        }
-      >
-        {!repos.length ? (
-          <EmptyState title={t("暂无匹配的项目", "No matching projects")} />
-        ) : (
-          <div className="community-grid">
-            {repos.slice(0, visible).map((repo) => (
-              <article key={repo.id}>
-                <header>
-                  <a
-                    href={safeExternalUrl(repo.html_url)}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {repo.full_name}
-                  </a>
-                  <span>★ {repo.stargazers_count}</span>
-                </header>
-                <p>{repo.description}</p>
-                {repo.ai_summary && (
-                  <Disclosure title={t("项目摘要", "Project summary")}>
-                    <Markdown>{repo.ai_summary}</Markdown>
-                  </Disclosure>
-                )}
-                <footer>
-                  <span>{repo.primary_language}</span>
+              {joined && (
+                <>
                   <button
                     className="button"
-                    disabled={mutation.isPending || !data.feature_enabled}
+                    disabled={mutation.isPending}
                     onClick={() =>
                       void action(
-                        `/repositories/${repo.id}/star`,
-                        t("为 {0} 添加 Star？", "Star {0}?", [repo.full_name]),
+                        "/membership/leave",
+                        t("退出互助计划？", "Leave repository community?"),
+                        { unstar_created: false },
+                        true,
                       )
                     }
                   >
-                    <Star size={15} />
-                    Star
+                    {t("退出计划", "Leave community")}
                   </button>
-                  {(data.is_admin ||
-                    data.available_repos.some(
-                      (item) => item.id === repo.id,
-                    )) && (
-                    <button
-                      className="button"
-                      disabled={mutation.isPending}
-                      onClick={() =>
-                        mutation.mutate({
-                          path: `/repositories/${repo.id}/summary`,
-                        })
-                      }
-                    >
-                      {t("刷新摘要", "Refresh summary")}
-                    </button>
-                  )}
-                </footer>
-              </article>
-            ))}
-          </div>
-        )}
-        {repos.length > visible && (
-          <button className="button" onClick={() => setVisible(visible + 20)}>
-            {t("显示更多", "Show more")}
-          </button>
-        )}
-      </Section>
-      {data.is_admin && (
+                  <button
+                    className="button danger-text"
+                    disabled={mutation.isPending}
+                    onClick={() =>
+                      void action(
+                        "/membership/leave",
+                        t(
+                          "退出并撤销本功能添加的 Star？",
+                          "Leave and remove stars added by this feature?",
+                        ),
+                        { unstar_created: true },
+                        true,
+                      )
+                    }
+                  >
+                    {t("退出并撤销 Star", "Leave and remove stars")}
+                  </button>
+                </>
+              )}
+            </div>
+          </Dialog>
+          <Section
+            title={t("社区项目", "Community projects")}
+            aside={
+              <input
+                type="search"
+                aria-label={t("搜索社区项目", "Search community projects")}
+                placeholder={t("搜索仓库…", "Search repositories…")}
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setVisible(20);
+                }}
+              />
+            }
+          >
+            {!repos.length ? (
+              <EmptyState title={t("暂无匹配的项目", "No matching projects")} />
+            ) : (
+              <div className="community-grid">
+                {repos.slice(0, visible).map((repo) => (
+                  <article key={repo.id}>
+                    <header>
+                      <a
+                        href={safeExternalUrl(repo.html_url)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {repo.full_name}
+                      </a>
+                      <span>★ {repo.stargazers_count}</span>
+                    </header>
+                    <p>{repo.description}</p>
+                    {repo.ai_summary && (
+                      <RepositorySummary summary={repo.ai_summary} />
+                    )}
+                    <div className="community-topics">
+                      {repo.topics?.map((topic) => (
+                        <span key={topic}>{topic}</span>
+                      ))}
+                    </div>
+                    <footer>
+                      <span>{repo.primary_language}</span>
+                      <button
+                        className="button"
+                        disabled={mutation.isPending || !data.feature_enabled}
+                        onClick={() =>
+                          void action(
+                            `/repositories/${repo.id}/star`,
+                            t("为 {0} 添加 Star？", "Star {0}?", [
+                              repo.full_name,
+                            ]),
+                          )
+                        }
+                      >
+                        <Star size={15} />
+                        Star
+                      </button>
+                    </footer>
+                  </article>
+                ))}
+              </div>
+            )}
+            {repos.length > visible && (
+              <button
+                className="button"
+                onClick={() => setVisible(visible + 20)}
+              >
+                {t("显示更多", "Show more")}
+              </button>
+            )}
+          </Section>
+        </>
+      )}
+      {data.is_admin && manage && (
         <>
           <Section title={t("管理备注", "Moderation note")}>
             <label>
@@ -395,7 +403,9 @@ export default function CommunityPage() {
               />
             </label>
           </Section>
-          <Section title={t("成员管理", "Members")}>
+          <Section
+            title={`${t("成员管理", "Members")} · ${data.admin_member_page?.total ?? 0}`}
+          >
             <div className="wf-actions">
               <input
                 aria-label={t("搜索成员", "Search members")}
@@ -415,6 +425,29 @@ export default function CommunityPage() {
                     <option key={value}>{value}</option>
                   ),
                 )}
+              </select>
+            </div>
+            <div className="wf-actions">
+              <select
+                aria-label={t("成员排序", "Member sort")}
+                value={params.get("member_sort") || "joined_at"}
+                onChange={(event) =>
+                  parameter("member_sort", event.target.value)
+                }
+              >
+                <option value="joined_at">{t("加入时间", "Joined")}</option>
+                <option value="name">{t("用户名", "Username")}</option>
+                <option value="status">{t("成员状态", "Member status")}</option>
+              </select>
+              <select
+                aria-label={t("成员排序方向", "Member sort order")}
+                value={params.get("member_order") || "desc"}
+                onChange={(event) =>
+                  parameter("member_order", event.target.value)
+                }
+              >
+                <option value="desc">{t("降序", "Descending")}</option>
+                <option value="asc">{t("升序", "Ascending")}</option>
               </select>
             </div>
             <div className="wf-table-wrap">
@@ -463,7 +496,9 @@ export default function CommunityPage() {
               }}
             />
           </Section>
-          <Section title={t("展示仓库管理", "Shared repository management")}>
+          <Section
+            title={`${t("展示仓库管理", "Shared repository management")} · ${data.admin_repository_page?.total ?? 0}`}
+          >
             <div className="wf-actions">
               <input
                 aria-label={t("搜索管理仓库", "Search managed repositories")}
@@ -508,6 +543,19 @@ export default function CommunityPage() {
                     <tr key={repo.id}>
                       <td>{repo.full_name}</td>
                       <td>{repo.stargazers_count} ★</td>
+                      <td>
+                        <button
+                          className="button"
+                          disabled={mutation.isPending}
+                          onClick={() =>
+                            mutation.mutate({
+                              path: `/repositories/${repo.id}/summary`,
+                            })
+                          }
+                        >
+                          {t("刷新摘要", "Refresh summary")}
+                        </button>
+                      </td>
                       <td>
                         <button
                           className="button"
@@ -586,6 +634,27 @@ function CommunityPagination({
           {t("下一页", "Next")}
         </button>
       </div>
+    </div>
+  );
+}
+
+function RepositorySummary({ summary }: { summary: string }) {
+  const { t } = useLocale();
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div>
+      <div
+        className={expanded ? "community-summary" : "community-summary clamped"}
+      >
+        <Markdown>{summary}</Markdown>
+      </div>
+      <button
+        className="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(!expanded)}
+      >
+        {expanded ? t("收起", "Collapse") : t("展开摘要", "Expand summary")}
+      </button>
     </div>
   );
 }

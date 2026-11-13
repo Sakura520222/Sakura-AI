@@ -674,3 +674,8 @@ svg {
   font-size: 13px;
   line-height: 1.6;
 }
+
+.topbar-current-version { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.topbar-update-label.update-available { color: var(--accent); }
+.topbar-restart-status { position: absolute; top: 65px; right: 20px; z-index: 40; max-width: min(340px, calc(100vw - 32px)); padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); font-size: 13px; }
+.topbar-restart-status p { color: var(--muted); margin: 8px 0 12px; }

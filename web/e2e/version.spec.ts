@@ -138,3 +138,88 @@ test("updates recheck canonical targets and require host plus running-version ev
   expect(starts).toBe(1);
   expect(healthChecks).toBeGreaterThan(0);
 });
+
+test("running build channel, provenance and release notes stay visible on desktop and mobile", async ({
+  page,
+}) => {
+  const revision = "abcdef0123456789abcdef0123456789abcdef01";
+  const digest = `sha256:${"c".repeat(64)}`;
+  await page.route("**/api/v1/version/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/info"))
+      return route.fulfill({
+        json: {
+          current_version: "3.2.6",
+          build: {
+            channel: "development",
+            revision,
+            digest,
+            created_at: "2026-11-13T00:00:00Z",
+          },
+          deployment_type: "image",
+          update_supported: false,
+          updater_connected: false,
+          has_active_job: false,
+          active_job_id: null,
+          update_available: true,
+          last_checked: "2026-11-13T01:00:00Z",
+          next_check_at: "2026-11-13T02:00:00Z",
+          scheduler_running: true,
+          check_error: "timeout",
+        },
+      });
+    if (path.endsWith("/images"))
+      return route.fulfill({ json: { stale: false, heads: {}, images: [] } });
+    if (path.endsWith("/releases"))
+      return route.fulfill({
+        json: {
+          releases: [
+            {
+              tag_name: "v3.2.6",
+              name: "Fixture release",
+              body: "## Fixture changes\n\nRelease **notes** inline.",
+              published_at: "2026-11-13T00:00:00Z",
+            },
+          ],
+        },
+      });
+    return route.fulfill({ status: 404, json: {} });
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/app/admin/version");
+  await expect(page.getByRole("combobox", { name: "更新通道" })).toHaveValue(
+    "development",
+  );
+  await expect(page.locator(".version-build-details")).toContainText(revision);
+  await expect(page.locator(".version-build-details")).toContainText(digest);
+  await expect(page.locator(".topbar-current-version")).toHaveText("3.2.6");
+  await expect(page.locator(".topbar-update-label")).toHaveText("有可用更新");
+  await expect(page.getByText("检查失败，保留上次成功结果")).toBeVisible();
+  await page.getByRole("button", { name: "发布记录", exact: true }).click();
+  await page.getByRole("button", { name: "查看说明", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page
+      .locator(".version-release")
+      .getByRole("heading", { name: "Fixture changes" }),
+  ).toBeVisible();
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+  await page.screenshot({
+    animations: "disabled",
+    path: "artifacts/version-738-desktop.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".topbar-current-version")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBeTruthy();
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+  await page.screenshot({
+    animations: "disabled",
+    path: "artifacts/version-738-mobile.png",
+    fullPage: true,
+  });
+});

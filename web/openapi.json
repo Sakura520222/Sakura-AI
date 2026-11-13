@@ -4446,6 +4446,26 @@
               "default": 1,
               "title": "Member Page"
             }
+          },
+          {
+            "name": "member_sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "joined_at",
+              "title": "Member Sort"
+            }
+          },
+          {
+            "name": "member_order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "desc",
+              "title": "Member Order"
+            }
           }
         ],
         "responses": {

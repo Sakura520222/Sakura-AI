@@ -131,6 +131,23 @@ def build_version_info(
         reason = "unknown_deployment"
 
     build = get_build_info()
+    ui = update_info or {}
+    channel_result = ui.get("channel_result")
+    channel_data = (
+        channel_result.get("data", {}) if isinstance(channel_result, dict) else {}
+    )
+    cached_target = (
+        channel_data.get("target") if isinstance(channel_data, dict) else None
+    )
+    matching_channel_cache = (
+        isinstance(cached_target, dict)
+        and cached_target.get("channel") == build.get("channel")
+        and ui.get("channel_build") == build
+    )
+    if matching_channel_cache:
+        # This cache is written by both the scheduler and manual check. It is
+        # also the last-known-good when the host/registry is temporarily down.
+        updater_data = {**updater_data, **channel_data}
     if build.get("channel") == "development":
         # Stable Release discovery is not an update signal for a development
         # deployment. Only reuse an updater snapshot whose target belongs to
@@ -140,7 +157,7 @@ def build_version_info(
         readiness = updater_data.get("readiness")
         matching_target = (
             target
-            if protocol_compatible
+            if (protocol_compatible or matching_channel_cache)
             and isinstance(target, dict)
             and target.get("channel") == "development"
             else {}
@@ -153,13 +170,22 @@ def build_version_info(
             else None
         )
         available = target_newer if type(target_newer) is bool else None
-        ui = {}
+        if (
+            matching_channel_cache
+            and type(channel_data.get("update_available")) is bool
+        ):
+            available = channel_data["update_available"]
     else:
-        ui = update_info or {}
         latest = ui.get("latest_version")
         if ui:
             available = is_newer_version(__version__, latest) if latest else False
         else:
+            available = None
+    if matching_channel_cache:
+        latest_value = cached_target.get("version")
+        latest = latest_value if isinstance(latest_value, str) else None
+        available = channel_data.get("update_available")
+        if type(available) is not bool:
             available = None
     return {
         "current_version": __version__,
@@ -172,6 +198,7 @@ def build_version_info(
         "latest_version": latest,
         "last_checked": ui.get("last_checked"),
         "check_error": ui.get("check_error"),
+        "fetched_at": ui.get("channel_fetched_at") or ui.get("fetched_at"),
         "updater_connected": updater_connected,
         "updater_version": updater_version,
         "updater_compatibility": contract,
@@ -378,16 +405,26 @@ async def _check_current_channel(*, force_refresh: bool = False) -> dict:
 
 
 @router.get("/info")
-async def info(user: dict = Depends(require_api_auth)):
-    return await get_version_info(user=user)
+async def info(request: Request, user: dict = Depends(require_api_auth)):
+    return await get_version_info(user=user, request=request)
 
 
-async def get_version_info(user: dict):
+async def get_version_info(user: dict, request: Request | None = None):
     """当前版本 + 部署模式 + 更新可用性 + updater 连接状态（所有登录用户，驱动 navbar badge）。"""
     mode = get_settings().sakura_deploy_mode or "unknown"
     update_info = await read_cache()
     updater_info = await UpdaterClient().get_status()
     info = build_version_info(mode, update_info, updater_info)
+    checker = getattr(request.app.state, "update_checker", None) if request else None
+    info.update(
+        checker.status()
+        if checker
+        else {
+            "scheduler_running": False,
+            "checking": False,
+            "next_check_at": None,
+        }
+    )
     return JSONResponse(
         info,
         headers={"Cache-Control": "no-store, max-age=0"},
@@ -458,6 +495,20 @@ async def trigger_check(
     镜像部署按当前 build channel 强制刷新 GHCR head，并用结构化 digest
     目标调用 updater；源码/旧镜像回退到 Release checker。
     """
+    checker = getattr(request.app.state, "update_checker", None)
+    if checker is not None:
+        data = await checker.check_once()
+        if data.get("channel_check_error"):
+            return JSONResponse(
+                {"error": "update_check_failed"},
+                status_code=503,
+                headers={"Cache-Control": "no-store, max-age=0"},
+            )
+        return JSONResponse(
+            data.get("channel_result") or data,
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
     build = get_build_info()
     channel = build.get("channel") if isinstance(build, dict) else None
     mode = get_settings().sakura_deploy_mode or "unknown"
