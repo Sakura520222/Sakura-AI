@@ -630,6 +630,8 @@ class ConversationProjectionService:
                 "source_role": work_unit.purpose if work_unit else None,
                 "tool_execution_id": tool.id,
                 "tool_call_id": tool.tool_call_id,
+                "arguments_artifact_id": arguments_artifact_id,
+                "result_artifact_id": result_artifact_id,
                 "name": tool.name,
                 "status": tool.status,
                 "started_at": _iso(tool.started_at),

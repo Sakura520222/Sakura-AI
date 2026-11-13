@@ -38,6 +38,12 @@ export interface Entry {
   effort?: string;
   tokens?: number | null;
   message_kind?: string;
+  tool_call_id?: string;
+  tool_execution_id?: number;
+  arguments_artifact_id?: number | null;
+  result_artifact_id?: number | null;
+  started_at?: string | null;
+  completed_at?: string | null;
 }
 export interface Conversation {
   entries: Entry[];
