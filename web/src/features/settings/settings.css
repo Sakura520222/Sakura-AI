@@ -1183,3 +1183,31 @@
 .settings-about-legal a {
   color: var(--muted);
 }
+
+.settings-model-panel > h3 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 18px 22px;
+  font-size: 13px;
+  font-weight: 550;
+}
+.settings-model-picker {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+}
+.settings-model-picker select {
+  min-width: 0;
+  width: 100%;
+}
+.settings-drag-handle {
+  cursor: grab;
+}
+.settings-drag-handle:active {
+  cursor: grabbing;
+}
+@media (max-width: 600px) {
+  .settings-model-picker {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

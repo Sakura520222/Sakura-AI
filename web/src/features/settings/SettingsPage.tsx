@@ -20,7 +20,6 @@ import {
   ArrowRight,
   Bot,
   Check,
-  ChevronDown,
   DatabaseBackup,
   GitPullRequest,
   Info,
@@ -353,8 +352,6 @@ function CategoryPanel({
   const showFields = category !== "personal" || personalTab === "preferences";
   const [store] = useState(() => new SettingsStore());
   useSyncExternalStore(store.subscribe, store.snapshot);
-  const [group, setGroup] = useState("");
-  const [advanced, setAdvanced] = useState(false);
   const key = ["settings", category, language] as const;
   const read = useCallback(async () => {
     const response = await api<SettingsResponse>(
@@ -472,15 +469,6 @@ function CategoryPanel({
   ];
   const hash = safeHash(location.hash);
   const targeted = query.data?.fields.find((field) => field.id === hash);
-  const selectedGroup =
-    targeted?.group ?? (groups.includes(group) ? group : groups[0]);
-  const visible = (query.data?.fields ?? []).filter(
-    (field) => field.group === selectedGroup,
-  );
-  const showAdvanced =
-    advanced ||
-    targeted?.advanced === true ||
-    visible.every((field) => field.advanced);
   const targetId = targeted?.id;
   useEffect(() => {
     if (targetId)
@@ -630,68 +618,41 @@ function CategoryPanel({
           </button>
         </div>
       )}
-      {showFields && groups.length > 1 && (
-        <div className="settings-group-picker">
-          <label htmlFor="settings-group">
-            <SlidersHorizontal size={16} />
-            {t("设置分组", "Settings group")}
-          </label>
-          <select
-            id="settings-group"
-            value={selectedGroup}
-            onChange={(event) => {
-              setGroup(event.target.value);
-              setAdvanced(false);
-              if (location.hash)
-                void navigate(
-                  { pathname: location.pathname, hash: "" },
-                  { replace: true },
-                );
-            }}
+      {showFields &&
+        groups.map((group) => (
+          <section
+            className="settings-section"
+            key={group}
+            aria-label={query.data?.groups[group] ?? message(group)}
           >
-            {groups.map((name) => (
-              <option key={name} value={name}>
-                {query.data?.groups[name] ?? message(name)}
-              </option>
-            ))}
-          </select>
-          <span>
-            {visible.length} {t("项设置", "settings")}
-          </span>
-        </div>
+            <header>
+              <h3>{query.data?.groups[group] ?? message(group)}</h3>
+            </header>
+            {(query.data?.fields ?? [])
+              .filter((field) => field.group === group)
+              .map((field) => (
+                <FieldRow
+                  key={field.id}
+                  field={field}
+                  store={store}
+                  message={message}
+                  accounts={accounts.data?.data.accounts ?? []}
+                  onSave={save}
+                  onReload={reload}
+                  targeted={field.id === hash}
+                />
+              ))}
+          </section>
+        ))}
+      {category === "ai" && (
+        <ModelSettings
+          store={store}
+          accounts={accounts.data?.data.accounts ?? []}
+          accountsLoading={accounts.isPending}
+          accountsError={accounts.isError}
+          onRetryAccounts={() => void accounts.refetch()}
+        />
       )}
-      {showFields && !!visible.length && (
-        <section
-          className="settings-section"
-          aria-label={query.data?.groups[selectedGroup] ?? title}
-        >
-          {visible
-            .filter((field) => showAdvanced || !field.advanced)
-            .map((field) => (
-              <FieldRow
-                key={field.id}
-                field={field}
-                store={store}
-                message={message}
-                accounts={accounts.data?.data.accounts ?? []}
-                onSave={save}
-                onReload={reload}
-                targeted={field.id === hash}
-              />
-            ))}
-          {!showAdvanced && visible.some((field) => field.advanced) && (
-            <button
-              className="settings-advanced"
-              onClick={() => setAdvanced(true)}
-            >
-              <ChevronDown size={17} />
-              {t("显示高级设置", "Show advanced settings")}
-              <span>{visible.filter((field) => field.advanced).length}</span>
-            </button>
-          )}
-        </section>
-      )}
-      {category === "ai" && <ModelSettings store={store} />}
       {category === "agent" && <PluginsPanel store={store} />}
       {category === "system" && (
         <SystemPanel
@@ -968,22 +929,67 @@ function FieldRow({
   );
 }
 
-function ModelSettings({ store }: { store: SettingsStore }) {
+function ModelSettings({
+  store,
+  accounts,
+  accountsLoading,
+  accountsError,
+  onRetryAccounts,
+}: {
+  store: SettingsStore;
+  accounts: Account[];
+  accountsLoading: boolean;
+  accountsError: boolean;
+  onRetryAccounts: () => void;
+}) {
   const { language, t } = useLocale();
   const confirm = useConfirm();
-  const [provider, setProvider] = useState("");
-  const [model, setModel] = useState("");
   const [selection, setSelection] = useState<{
+    account: string;
     provider: string;
     model: string;
   } | null>(null);
-  const catalog = useQuery({
-    queryKey: ["ai-catalog"],
-    queryFn: () =>
-      api<{ data: { providers: { id: string; label: string }[] } }>(
-        "/api/v1/config/ai/catalog",
+  const modelsFor = (account: Account) => [
+    ...new Set(
+      [account.default_model, ...account.models].filter((model) =>
+        model?.trim(),
       ),
-  });
+    ),
+  ];
+  const available = accounts.filter(
+    (account) =>
+      account.enabled && account.provider_id && modelsFor(account).length > 0,
+  );
+  const selectedAccount = accounts.find(
+    (account) => account.id === selection?.account,
+  );
+  const selectionAvailable =
+    !!selection &&
+    !!selectedAccount?.enabled &&
+    selectedAccount.provider_id === selection.provider &&
+    modelsFor(selectedAccount).includes(selection.model);
+  const select = async (account: Account, model: string) => {
+    if (!account.enabled || !modelsFor(account).includes(model)) return;
+    if (selection?.account === account.id && selection.model === model) return;
+    const modelEntries = [...store.entries.values()].filter((entry) =>
+      entry.field.id.startsWith("model/"),
+    );
+    if (modelEntries.some((entry) => entry.saving)) return;
+    if (
+      modelEntries.some(isDirty) &&
+      !(await confirm({
+        title: t("切换模型？", "Switch model?"),
+        description: t(
+          "放弃当前模型的未保存修改？",
+          "Discard unsaved changes for this model?",
+        ),
+        destructive: true,
+      }))
+    )
+      return;
+    store.forget("model/");
+    setSelection({ account: account.id, provider: account.provider_id, model });
+  };
   const read = async () => {
     const data = await api<SettingsResponse>(
       `/api/v1/config-center?category=ai&language=${language}&provider=${encodeURIComponent(selection?.provider ?? "")}&model=${encodeURIComponent(selection?.model ?? "")}`,
@@ -994,17 +1000,18 @@ function ModelSettings({ store }: { store: SettingsStore }) {
   const query = useQuery({
     queryKey: ["settings-model", selection, language],
     queryFn: read,
-    enabled: !!selection,
+    enabled: selectionAvailable,
     refetchInterval: (query) =>
       query.state.data?.fields.some((field) => field.effect === "pending")
         ? Math.max(1000, query.state.data.syncIntervalMs)
         : false,
   });
   useEffect(() => {
-    if (query.data) store.reconcile(query.data.fields);
-  }, [query.data, selection, store]);
+    if (query.data && selectionAvailable) store.reconcile(query.data.fields);
+  }, [query.data, selectionAvailable, selection, store]);
   const message = (code: string) => query.data?.messages[code] ?? code;
   const save = async (field: ConfigField, reset = false) => {
+    if (!selectionAvailable) return;
     if (
       reset &&
       !(await confirm({
@@ -1038,71 +1045,106 @@ function ModelSettings({ store }: { store: SettingsStore }) {
     );
   };
   return (
-    <details className="settings-model-panel">
-      <summary>
-        <SlidersHorizontal size={17} />
-        <span>{t("单模型能力覆盖", "Per-model capabilities")}</span>
-        <ChevronDown size={16} />
-      </summary>
+    <section
+      className="settings-model-panel"
+      aria-label={t("单模型能力覆盖", "Per-model capabilities")}
+    >
+      <h3>
+        <SlidersHorizontal size={17} />{" "}
+        {t("单模型能力覆盖", "Per-model capabilities")}
+      </h3>
       <p>
         {t(
-          "按供应商与模型调整能力和上下文限制。使用恢复默认值以继承模型元数据。",
-          "Adjust capabilities and context limits for a specific model. Restore defaults to inherit model metadata.",
+          "从已配置的账号选择模型。能力覆盖由相同供应商和模型的所有账号共享。",
+          "Choose a model from a configured account. Capability overrides are shared by accounts using the same provider and model.",
         )}
       </p>
-      <form
-        className="settings-model-picker"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          const modelEntries = [...store.entries.values()].filter((entry) =>
-            entry.field.id.startsWith("model/"),
-          );
-          if (modelEntries.some((entry) => entry.saving)) return;
-          if (
-            modelEntries.some(isDirty) &&
-            !(await confirm({
-              title: t("切换模型？", "Switch model?"),
-              description: t(
-                "放弃当前模型的未保存修改？",
-                "Discard unsaved changes for this model?",
-              ),
-              destructive: true,
-            }))
-          )
-            return;
-          store.forget("model/");
-          setSelection({
-            provider: provider || catalog.data?.data.providers[0]?.id || "",
-            model: model.trim(),
-          });
-        }}
-      >
-        <label>
-          {t("供应商", "Provider")}
-          <select
-            value={provider || catalog.data?.data.providers[0]?.id || ""}
-            onChange={(event) => setProvider(event.target.value)}
-          >
-            {catalog.data?.data.providers.map((item) => (
-              <option value={item.id} key={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          {t("模型 ID", "Model ID")}
-          <input
-            value={model}
-            required
-            onChange={(event) => setModel(event.target.value)}
-            placeholder={t("输入模型标识符", "Enter model identifier")}
-          />
-        </label>
-        <button className="button button-secondary" disabled={!model.trim()}>
-          {t("加载", "Load")}
-        </button>
-      </form>
+      {accountsLoading ? (
+        <p role="status">{t("正在加载账号…", "Loading accounts…")}</p>
+      ) : accountsError ? (
+        <p role="alert">
+          {t("无法加载 AI 账号。", "Could not load AI accounts.")}{" "}
+          <button className="button" onClick={onRetryAccounts}>
+            {t("重试", "Retry")}
+          </button>
+        </p>
+      ) : (
+        <>
+          {!available.length && (
+            <p role="status">
+              {t(
+                "暂无可用的账号和模型，请先配置并启用 AI 账号。",
+                "No available accounts and models. Configure and enable an AI account first.",
+              )}
+            </p>
+          )}
+          <div className="settings-model-picker">
+            <label>
+              {t("AI 账号", "AI account")}
+              <select
+                value={selection?.account ?? ""}
+                onChange={(event) => {
+                  const account = available.find(
+                    (item) => item.id === event.target.value,
+                  );
+                  if (account) void select(account, modelsFor(account)[0]);
+                }}
+              >
+                <option value="">{t("选择账号", "Select account")}</option>
+                {accounts.map((account) => (
+                  <option
+                    key={account.id}
+                    value={account.id}
+                    disabled={!available.includes(account)}
+                  >
+                    {account.name} · {account.provider_id}
+                    {!account.enabled
+                      ? ` · ${t("已禁用", "Disabled")}`
+                      : !modelsFor(account).length
+                        ? ` · ${t("未配置模型", "No models configured")}`
+                        : ""}
+                  </option>
+                ))}
+                {selection && !selectedAccount && (
+                  <option value={selection.account} disabled>
+                    {selection.account} ·{" "}
+                    {t("账号不可用", "Account unavailable")}
+                  </option>
+                )}
+              </select>
+            </label>
+            <label>
+              {t("模型", "Model")}
+              <select
+                value={selection?.model ?? ""}
+                disabled={!selectedAccount?.enabled}
+                onChange={(event) => {
+                  if (selectedAccount)
+                    void select(selectedAccount, event.target.value);
+                }}
+              >
+                {!selection && (
+                  <option value="">{t("选择模型", "Select model")}</option>
+                )}
+                {selectedAccount &&
+                  modelsFor(selectedAccount).map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          </div>
+        </>
+      )}
+      {selection && !selectionAvailable && (
+        <p className="settings-error" role="alert">
+          {t(
+            "所选账号或模型已不可用。请选择可用模型；未保存的修改仍保留。",
+            "The selected account or model is unavailable. Select an available model; unsaved changes are retained.",
+          )}
+        </p>
+      )}
       {query.isFetching && <p role="status">{t("正在加载…", "Loading…")}</p>}
       {query.isError && (
         <p className="settings-error" role="alert">
@@ -1112,31 +1154,32 @@ function ModelSettings({ store }: { store: SettingsStore }) {
           )}
         </p>
       )}
-      {query.data?.fields.map((field) => (
-        <FieldRow
-          key={field.id}
-          field={field}
-          store={store}
-          message={message}
-          accounts={[]}
-          onSave={save}
-          onReload={async (field) => {
-            if (
-              await confirm({
-                title: t("重新加载设置？", "Reload setting?"),
-                description: message("confirm_discard"),
-                destructive: true,
-              })
-            ) {
-              const fresh = await query.refetch();
-              const current = fresh.data?.fields.find(
-                (item) => item.id === field.id,
-              );
-              if (current) store.accept(current);
-            }
-          }}
-        />
-      ))}
-    </details>
+      {selectionAvailable &&
+        query.data?.fields.map((field) => (
+          <FieldRow
+            key={field.id}
+            field={field}
+            store={store}
+            message={message}
+            accounts={[]}
+            onSave={save}
+            onReload={async (field) => {
+              if (
+                await confirm({
+                  title: t("重新加载设置？", "Reload setting?"),
+                  description: message("confirm_discard"),
+                  destructive: true,
+                })
+              ) {
+                const fresh = await query.refetch();
+                const current = fresh.data?.fields.find(
+                  (item) => item.id === field.id,
+                );
+                if (current) store.accept(current);
+              }
+            }}
+          />
+        ))}
+    </section>
   );
 }
