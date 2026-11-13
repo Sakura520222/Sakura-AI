@@ -23,7 +23,6 @@ import {
   EmptyState,
   ErrorState,
   LoadingState,
-  Markdown,
   PageHeader,
   RefreshButton,
   StatusBadge,
@@ -39,6 +38,7 @@ import {
   type Updates,
 } from "./types";
 import "./activity.css";
+import { ActivityContent } from "./ActivityContent";
 
 export default function ActivityPage() {
   const { id } = useParams();
@@ -279,16 +279,26 @@ function SessionDetail({ id }: { id: string }) {
   const groups: Record<string, string[]> = {
     messages: ["message"],
     model: ["attempt", "reasoning"],
-    tools: ["tool_call"],
+    tools: ["tool_call", "tool_result"],
+    results: ["tool_result"],
     context: ["context_operation", "thread_boundary", "invocation_boundary"],
   };
   const filtered = entries.filter(
     (entry) =>
-      entry.type !== "tool_result" &&
       (kind === "all" || groups[kind]?.includes(entry.type)) &&
       (role === "all" || (entry.source_role || entry.role) === role) &&
       (thread === "all" || String(entry.thread_id) === thread) &&
       (invocation === "all" || String(entry.invocation_id) === invocation),
+  );
+  const toolCalls = new Set(
+    filtered
+      .filter((entry) => entry.type === "tool_call")
+      .map((entry) => entry.tool_execution_id),
+  );
+  const toolResults = new Map(
+    filtered
+      .filter((entry) => entry.type === "tool_result")
+      .map((entry) => [entry.tool_execution_id, entry]),
   );
   const session = snapshot.data?.session;
   const connectionLabel =
@@ -354,6 +364,7 @@ function SessionDetail({ id }: { id: string }) {
               <option value="messages">{t("对话", "Messages")}</option>
               <option value="model">{t("模型调用", "Model calls")}</option>
               <option value="tools">{t("工具", "Tools")}</option>
+              <option value="results">{t("工具结果", "Tool results")}</option>
               <option value="context">{t("上下文", "Context")}</option>
             </select>
             <select
@@ -413,13 +424,29 @@ function SessionDetail({ id }: { id: string }) {
                   </p>
                 )}
                 {filtered.length ? (
-                  filtered.map((entry) => (
-                    <TimelineEntry
-                      key={entry.id}
-                      entry={entry}
-                      sessionId={id}
-                    />
-                  ))
+                  filtered
+                    .filter(
+                      (entry) =>
+                        !(
+                          kind !== "results" &&
+                          entry.type === "tool_result" &&
+                          entry.tool_execution_id != null &&
+                          toolCalls.has(entry.tool_execution_id)
+                        ),
+                    )
+                    .map((entry) => (
+                      <TimelineEntry
+                        key={entry.id}
+                        entry={entry}
+                        pairedResult={
+                          entry.type === "tool_call" &&
+                          entry.tool_execution_id != null
+                            ? toolResults.get(entry.tool_execution_id)
+                            : undefined
+                        }
+                        sessionId={id}
+                      />
+                    ))
                 ) : (
                   <EmptyState
                     title={t(
@@ -508,19 +535,21 @@ function SessionDetail({ id }: { id: string }) {
   );
 }
 
-function TimelineEntry({
+export function TimelineEntry({
   entry,
+  pairedResult,
   sessionId,
 }: {
   entry: Entry;
+  pairedResult?: Entry;
   sessionId: string;
 }) {
   const { t } = useLocale();
   const isMessage = entry.type === "message";
   const title = isMessage
     ? entry.source_role || entry.role
-    : entry.type === "tool_call"
-      ? entry.name
+    : ["tool_call", "tool_result"].includes(entry.type)
+      ? entry.name || t("工具结果", "Tool results")
       : {
           attempt: t("模型调用", "Model call"),
           reasoning: t("推理状态", "Reasoning status"),
@@ -529,7 +558,9 @@ function TimelineEntry({
           invocation_boundary: t("新的执行", "New invocation"),
         }[entry.type] || entry.type;
   return (
-    <article className={`activity-entry activity-entry-${entry.type}`}>
+    <article
+      className={`activity-entry activity-entry-${entry.type} ${["failed", "error", "cancelled"].includes(entry.status ?? "") ? "activity-entry-failed" : ""}`}
+    >
       <header>
         <span>
           <Circle size={8} fill="currentColor" />
@@ -541,22 +572,53 @@ function TimelineEntry({
       {isMessage &&
         (entry.content_visibility === "visible" && entry.content != null ? (
           <div className="activity-message-content">
-            <Markdown>{entry.content}</Markdown>
+            <ActivityContent content={entry.content} />
           </div>
-        ) : (
+        ) : entry.role === "user" &&
+          entry.artifacts?.some(
+            (artifact) =>
+              artifact.can_request &&
+              artifact.artifact_kind === "request_projection",
+          ) ? null : (
           <p className="activity-restricted">
             <LockKeyhole size={14} />
-            {t(
-              "此内容不可查看或未被记录。",
-              "This content is restricted or was not captured.",
-            )}
+            {entry.content_visibility === "restricted"
+              ? t(
+                  "你没有查看此内容的权限。",
+                  "You do not have permission to view this content.",
+                )
+              : t("此内容未被记录。", "This content was not captured.")}
           </p>
         ))}
+      {["tool_call", "tool_result"].includes(entry.type) && (
+        <>
+          <p className="muted">
+            {entry.tool_call_id}
+            {entry.started_at &&
+              entry.completed_at &&
+              ` · ${Math.max(0, Date.parse(entry.completed_at) - Date.parse(entry.started_at))} ms`}
+          </p>
+          {entry.content_visibility === "visible" && entry.content != null && (
+            <ActivityContent content={entry.content} />
+          )}
+          {entry.content_visibility !== "visible" &&
+            !entry.artifacts?.length && (
+              <p className="activity-restricted">
+                {t(
+                  "此内容不可查看或未被记录。",
+                  "This content is restricted or was not captured.",
+                )}
+              </p>
+            )}
+        </>
+      )}
       {entry.attempt && (
         <div className="activity-attempt">
           <span>
             {String(
-                entry.attempt.effective_model || entry.attempt.requested_model || "—",
+              entry.attempt.effective_model ||
+                entry.attempt.requested_model ||
+                "—",
             )}
           </span>
           <StatusBadge value={String(entry.attempt.status || "")} />
@@ -582,22 +644,53 @@ function TimelineEntry({
           {t("已压缩的历史记录", "Compacted history")}
         </p>
       )}
-      {entry.artifacts?.map((artifact) => (
-        <ArtifactView
-          key={artifact.artifact_id}
-          artifact={artifact}
-          sessionId={sessionId}
-        />
-      ))}
+      {entry.artifacts
+        ?.filter(
+          (artifact) =>
+            (!pairedResult ||
+              artifact.artifact_id !== pairedResult.result_artifact_id) &&
+            (entry.type !== "tool_result" ||
+              entry.result_artifact_id == null ||
+              artifact.artifact_id === entry.result_artifact_id),
+        )
+        .map((artifact) => (
+          <ArtifactView
+            key={artifact.artifact_id}
+            artifact={artifact}
+            automaticTool={
+              (entry.type === "tool_call" &&
+                artifact.artifact_id ===
+                  (entry.arguments_artifact_id ??
+                    pairedResult?.arguments_artifact_id) &&
+                artifact.artifact_kind === "request_projection") ||
+              (entry.type === "tool_result" &&
+                artifact.artifact_id === entry.result_artifact_id &&
+                artifact.artifact_kind === "response_projection")
+            }
+            automaticMessage={
+              isMessage &&
+              entry.role === "user" &&
+              artifact.artifact_kind === "request_projection"
+            }
+            sessionId={sessionId}
+          />
+        ))}
+      {pairedResult && (
+        <TimelineEntry entry={pairedResult} sessionId={sessionId} />
+      )}
     </article>
   );
 }
 
 function ArtifactView({
   artifact,
+  automaticMessage = false,
+  automaticTool = false,
   sessionId,
 }: {
   artifact: Artifact;
+  automaticMessage?: boolean;
+  automaticTool?: boolean;
   sessionId: string;
 }) {
   const { t } = useLocale();
@@ -612,6 +705,11 @@ function ArtifactView({
       ),
     gcTime: 0,
   });
+  const fetchArtifact = request.mutate;
+  useEffect(() => {
+    if ((automaticMessage || automaticTool) && artifact.can_request)
+      fetchArtifact();
+  }, [automaticMessage, automaticTool, artifact.can_request, fetchArtifact]);
   const resetArtifact = request.reset;
   useEffect(() => {
     const clear = () => resetArtifact();
@@ -623,7 +721,57 @@ function ArtifactView({
       <p className="muted">
         {t("详细内容未能记录", "Detailed content was not captured")}
       </p>
-    ) : null;
+    ) : (
+      <p className="activity-restricted">
+        {t(
+          "你没有查看此内容的权限。",
+          "You do not have permission to view this content.",
+        )}
+      </p>
+    );
+  if (automaticMessage || automaticTool) {
+    let content: string | null = null;
+    if (automaticTool)
+      content =
+        request.data?.payload ?? request.data?.payload_safe_summary ?? null;
+    else if (request.data?.payload) {
+      try {
+        const message: unknown = JSON.parse(request.data.payload);
+        if (
+          message &&
+          typeof message === "object" &&
+          "role" in message &&
+          message.role === "user" &&
+          "content" in message &&
+          typeof message.content === "string"
+        )
+          content = message.content;
+      } catch {
+        /* Do not fall back to displaying a native request. */
+      }
+    }
+    return (
+      <div className="activity-artifact">
+        {request.isPending ? (
+          <LoadingState />
+        ) : content != null ? (
+          <ActivityContent content={content} />
+        ) : (
+          <p className="activity-restricted">
+            {t(
+              "此内容当前无法读取。",
+              "This content cannot be read right now.",
+            )}
+          </p>
+        )}
+        {request.isError && (
+          <button className="button" onClick={() => request.mutate()}>
+            {t("重试", "Retry")}
+          </button>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="activity-artifact">
       {!request.data ? (
@@ -645,12 +793,14 @@ function ArtifactView({
           >
             <X size={16} />
           </button>
-          <pre>
-            {request.data.payload ||
-              request.data.payload_safe_summary ||
-              request.data.payload_unavailable_reason ||
-              "—"}
-          </pre>
+          <ActivityContent
+            content={
+              request.data.payload ??
+              request.data.payload_safe_summary ??
+              request.data.payload_unavailable_reason ??
+              "—"
+            }
+          />
         </div>
       )}
       {request.isError && (

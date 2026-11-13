@@ -242,3 +242,19 @@
     height: 32px;
   }
 }
+.activity-entry-failed {
+  border-color: var(--danger);
+}
+.activity-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.activity-json {
+  max-height: 480px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.activity-entry .activity-entry {
+  margin-top: 14px;
+  background: var(--surface-alt);
+}

@@ -1312,3 +1312,31 @@ async def test_artifact_route_returns_no_store_decrypted_view(monkeypatch):
         11,
         {"reader": "super-a", "require_trace": True},
     )
+
+
+@pytest.mark.asyncio
+async def test_tool_projection_exposes_exact_artifact_references_without_payload(db):
+    observed_session, _, _, _, _, artifact = _conversation_chain(db)
+    tool = db.session.query(ActivityToolExecution).one()
+    tool.arguments_storage_ref = f"artifact:{artifact.id}"
+    tool.result_storage_ref = f"artifact:{artifact.id}"
+    tool.status = "completed"
+    db.session.commit()
+    page = await ConversationProjectionService(
+        db, access_service=_service(db, ScopeAuthorizer())
+    ).get_conversation(
+        observed_session.id,
+        {"user_id": "user-a", "repo": "owner/repo-77", "role": "user"},
+        limit=50,
+    )
+    entries = [
+        entry
+        for entry in page["entries"]
+        if entry["type"] in {"tool_call", "tool_result"}
+    ]
+    assert len(entries) == 2
+    for entry in entries:
+        assert entry["arguments_artifact_id"] == artifact.id
+        assert entry["result_artifact_id"] == artifact.id
+        assert "content" not in entry
+        assert all(not item["can_request"] for item in entry["artifacts"])
