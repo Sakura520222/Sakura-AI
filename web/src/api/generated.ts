@@ -9199,6 +9199,8 @@ export interface operations {
                 member_q?: string;
                 member_status?: string;
                 member_page?: number;
+                member_sort?: string;
+                member_order?: string;
             };
             header?: never;
             path?: never;

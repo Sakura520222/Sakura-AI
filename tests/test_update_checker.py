@@ -337,4 +337,4 @@ async def test_check_once_lock_limits_concurrency(monkeypatch):
         await checker.stop()
     # lock 保证串行化：任何时刻最多 1 个并发 GitHub 调用
     assert max_active == 1
-    assert call_count == 2
+    assert call_count == 1

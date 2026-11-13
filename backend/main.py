@@ -340,6 +340,24 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.warning(f"⚠️ 知识提取配置自检失败: {e}")
 
+                # Manual checks remain available in local development even
+                # when the deployment explicitly disables background workers.
+                from backend.api.v1.version import _check_current_channel
+                from backend.core.build_info import get_build_info
+                from backend.services.update_checker import UpdateChecker
+
+                channel_check = None
+                if settings.sakura_deploy_mode == "image" and get_build_info().get(
+                    "channel"
+                ) in {"stable", "development"}:
+
+                    async def channel_check():
+                        return await _check_current_channel(force_refresh=True)
+
+                update_checker = UpdateChecker(channel_check=channel_check)
+                app.state.update_checker = update_checker
+                existing_supervisor.register_scheduler(update_checker)
+
                 if _should_start_background_tasks(settings):
                     from backend.services.config_runtime import (
                         config_runtime_sync,
@@ -532,12 +550,7 @@ async def lifespan(app: FastAPI):
 
                     # 启动更新检查调度器（Slice 2）—— 唯一实例挂 app.state，供手动端点共用
                     try:
-                        from backend.services.update_checker import UpdateChecker
-
-                        update_checker = UpdateChecker()
                         update_checker.start()
-                        app.state.update_checker = update_checker
-                        existing_supervisor.register_scheduler(update_checker)
                         logger.info("✅ 更新检查调度器已启动（60min 周期）")
                     except Exception as e:
                         logger.error(f"❌ 更新检查调度器启动失败: {e}")

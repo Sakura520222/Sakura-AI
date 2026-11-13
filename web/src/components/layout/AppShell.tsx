@@ -22,10 +22,11 @@ import {
   Search,
   Settings2,
   ShieldCheck,
+  Star,
   Sun,
   X,
 } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAuth } from "../../app/auth";
 import { useLocale } from "../../app/locale";
@@ -35,6 +36,8 @@ import { Dialog } from "../ui/Dialog";
 import { LoadingState } from "../common/states";
 import { BrandMark } from "../common/BrandMark";
 import { UserAvatar } from "../common/UserAvatar";
+import { RestartControl } from "./RestartControl";
+import type { VersionInfo } from "../../features/version/state";
 
 export default function AppShell() {
   const auth = useAuth();
@@ -47,6 +50,14 @@ export default function AppShell() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
+  const version = useQuery({
+    queryKey: ["version-info"],
+    queryFn: ({ signal }) =>
+      api<VersionInfo>("/api/v1/version/info", { signal }),
+    enabled: auth.permissions.super_admin,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
   const navigation = [
     { to: "/", label: t("概览", "Overview"), icon: House },
     ...(auth.permissions.admin
@@ -70,7 +81,7 @@ export default function AppShell() {
     {
       to: "/community",
       label: t("Star 互助", "Star community"),
-      icon: CircleDot,
+      icon: Star,
     },
     ...(auth.permissions.super_admin
       ? [
@@ -204,24 +215,34 @@ export default function AppShell() {
             <kbd>Ctrl K</kbd>
           </button>
           <div className="topbar-actions">
-            {auth.permissions.super_admin && (
-              <nav
-                className="topbar-version-links"
-                aria-label={t("版本更新", "Updates")}
-              >
-                {auth.permissions.super_admin && (
+            {auth.permissions.super_admin ? (
+              <>
+                <nav
+                  className="topbar-version-links"
+                  aria-label={t("版本更新", "Updates")}
+                >
                   <NavLink
                     to="/admin/version"
                     title={t("版本更新", "Updates")}
                     aria-label={t("版本更新", "Updates")}
                   >
+                    <span className="topbar-current-version">
+                      {version.data?.current_version || auth.version}
+                    </span>
                     <Download size={17} />
-                    <span className="topbar-update-label">
-                      {t("版本更新", "Updates")}
+                    <span
+                      className={`topbar-update-label${version.data?.update_available ? " update-available" : ""}`}
+                    >
+                      {version.data?.update_available
+                        ? t("有可用更新", "Update available")
+                        : t("版本更新", "Updates")}
                     </span>
                   </NavLink>
-                )}
-              </nav>
+                </nav>
+                <RestartControl />
+              </>
+            ) : (
+              <span className="topbar-current-version">{auth.version}</span>
             )}
             <NavLink
               className="icon-button"

@@ -31,25 +31,27 @@ const PAGE_SIZE = 6;
 export default function VersionBrowser({
   catalog,
   releases,
+  currentChannel,
   selected,
   selectionDisabled,
   onSelect,
 }: {
   catalog: UseQueryResult<Catalog, Error>;
   releases: UseQueryResult<{ releases: ReleaseRecord[] }, Error>;
+  currentChannel?: string;
   selected: Target | null;
   selectionDisabled: boolean;
   onSelect: (image: ImageEntry) => Promise<void>;
 }) {
   const { t } = useLocale();
   const [view, setView] = useState<"catalog" | "releases">("catalog");
-  const [channel, setChannel] = useState("stable");
+  const [channel, setChannel] = useState(
+    currentChannel === "development" ? "development" : "stable",
+  );
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [imageDetail, setImageDetail] = useState<ImageEntry | null>(null);
-  const [releaseDetail, setReleaseDetail] = useState<ReleaseRecord | null>(
-    null,
-  );
+  const [expandedRelease, setExpandedRelease] = useState<string | null>(null);
   const term = search.trim().toLowerCase();
   const images = (catalog.data?.images ?? []).filter(
     (image) =>
@@ -250,30 +252,58 @@ export default function VersionBrowser({
                 .slice(offset, offset + PAGE_SIZE)
                 .map((release, index) => (
                   <article
-                    className="version-row"
+                    className="version-release"
                     key={release.tag_name || `${offset}-${index}`}
                   >
-                    <div className="version-row-copy">
-                      <strong
-                        className="version-release-name"
-                        title={releaseTitle(release)}
+                    <div className="version-row">
+                      <div className="version-row-copy">
+                        <strong
+                          className="version-release-name"
+                          title={releaseTitle(release)}
+                        >
+                          {releaseTitle(release)}
+                        </strong>
+                        <span className="version-row-meta">
+                          {release.published_at ? (
+                            <Timestamp value={release.published_at} />
+                          ) : (
+                            release.tag_name || release.version || "—"
+                          )}
+                        </span>
+                      </div>
+                      <button
+                        className="button"
+                        aria-expanded={
+                          expandedRelease ===
+                          (release.tag_name || `${offset}-${index}`)
+                        }
+                        onClick={() =>
+                          setExpandedRelease((current) =>
+                            current ===
+                            (release.tag_name || `${offset}-${index}`)
+                              ? null
+                              : release.tag_name || `${offset}-${index}`,
+                          )
+                        }
                       >
-                        {releaseTitle(release)}
-                      </strong>
-                      <span className="version-row-meta">
-                        {release.published_at ? (
-                          <Timestamp value={release.published_at} />
-                        ) : (
-                          release.tag_name || release.version || "—"
-                        )}
-                      </span>
+                        {expandedRelease ===
+                        (release.tag_name || `${offset}-${index}`)
+                          ? t("收起说明", "Hide notes")
+                          : t("查看说明", "Read notes")}
+                      </button>
                     </div>
-                    <button
-                      className="button"
-                      onClick={() => setReleaseDetail(release)}
-                    >
-                      {t("查看说明", "Read notes")}
-                    </button>
+                    {expandedRelease ===
+                      (release.tag_name || `${offset}-${index}`) && (
+                      <div className="version-release-notes">
+                        <Markdown>
+                          {release.body ||
+                            t(
+                              "此版本没有发布说明。",
+                              "This release has no notes.",
+                            )}
+                        </Markdown>
+                      </div>
+                    )}
                   </article>
                 ))
             )}
@@ -347,29 +377,6 @@ export default function VersionBrowser({
               </>
             )}
           </dl>
-        )}
-      </Dialog>
-      <Dialog
-        open={!!releaseDetail}
-        onOpenChange={(open) => {
-          if (!open) setReleaseDetail(null);
-        }}
-        title={
-          releaseDetail
-            ? releaseTitle(releaseDetail)
-            : t("发布说明", "Release notes")
-        }
-      >
-        {releaseDetail && (
-          <>
-            {releaseDetail.published_at && (
-              <Timestamp value={releaseDetail.published_at} />
-            )}
-            <Markdown>
-              {releaseDetail.body ||
-                t("此版本没有发布说明。", "This release has no notes.")}
-            </Markdown>
-          </>
         )}
       </Dialog>
     </section>

@@ -1,8 +1,8 @@
 .version-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 24px;
-  padding: 20px 24px;
+  gap: 18px;
+  padding: 16px 20px;
 }
 .version-summary > div {
   display: flex;
@@ -308,5 +308,47 @@
   }
   .version-row-actions {
     gap: 5px;
+  }
+}
+
+.version-build-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin: 0;
+  padding: 0 20px 16px;
+  font-size: 12px;
+}
+.version-build-details div {
+  min-width: 0;
+}
+.version-build-details dt {
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.version-build-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.version-build-details code {
+  font-size: 11px;
+  user-select: all;
+}
+.version-release-notes {
+  padding: 4px 20px 16px;
+  max-height: 420px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.version-panel > .wf-section > .version-error {
+  margin: 0 20px 16px;
+  overflow-wrap: anywhere;
+}
+.version-release .version-row {
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 760px) {
+  .version-build-details {
+    grid-template-columns: 1fr;
   }
 }

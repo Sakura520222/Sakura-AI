@@ -312,6 +312,8 @@ async def get_admin_member_page(
     member_status: str = "all",
     member_page: int = 1,
     member_page_size: int = 20,
+    member_sort: str = "joined_at",
+    member_order: str = "desc",
 ) -> dict:
     """Return one filtered member page without loading the entire member table."""
     member_q = (member_q or "").strip()[:100]
@@ -349,12 +351,15 @@ async def get_admin_member_page(
         all_total = int(unfiltered.scalar_one())
     else:
         all_total = total
+    sort_column = {
+        "name": StarAidMember.github_username,
+        "status": StarAidMember.status,
+    }.get(member_sort, StarAidMember.joined_at)
+    sort_expression = sort_column.asc() if member_order == "asc" else sort_column.desc()
     result = await session.execute(
         select(StarAidMember)
         .where(*filters)
-        .order_by(
-            StarAidMember.status, StarAidMember.joined_at.desc(), StarAidMember.id
-        )
+        .order_by(sort_expression, StarAidMember.id)
         .offset((member_page - 1) * member_page_size)
         .limit(member_page_size)
     )

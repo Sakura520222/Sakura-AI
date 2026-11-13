@@ -289,6 +289,8 @@ async def state(
     member_q: str = "",
     member_status: str = "all",
     member_page: int = Query(1, ge=1),
+    member_sort: str = "joined_at",
+    member_order: str = "desc",
     user=Depends(require_api_auth),
     db: AsyncSession = Depends(get_db),
 ):
@@ -308,6 +310,8 @@ async def state(
             "member_status": member_status,
             "member_page": member_page,
             "member_page_size": 20,
+            "member_sort": member_sort,
+            "member_order": member_order,
         },
     )
     for key in ("admin_member_page", "admin_repository_page"):

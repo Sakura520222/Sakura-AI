@@ -199,7 +199,7 @@ def test_development_build_does_not_reuse_stable_release_update_state(monkeypatc
     assert info["build"]["channel"] == "development"
     assert info["latest_version"] is None
     assert info["update_available"] is None
-    assert info["last_checked"] is None
+    assert info["last_checked"] == "2026-08-14T01:00:00Z"
 
 
 def test_development_build_uses_matching_updater_digest_snapshot(monkeypatch):

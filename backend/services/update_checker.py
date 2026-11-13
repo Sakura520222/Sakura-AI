@@ -9,11 +9,15 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
+from datetime import timedelta
 
 import httpx
+from loguru import logger
 
 from backend import __version__
+from backend.core.log_sanitizer import sanitize_exception_text
 from backend.core.redis import get_async_redis
 from backend.core.time_service import format_rfc3339, now_utc
 
@@ -215,62 +219,115 @@ def _build_cache_data(
 
 
 class UpdateChecker:
-    """后台更新检查调度器（仿 ScanScheduler）。
+    """One scheduler and in-flight discovery shared by automatic/manual checks."""
 
-    唯一实例（main.py lifespan 创建挂 app.state）；scheduler 与手动端点共用；
-    _check_lock 串行化并发 check_once（防 scheduler + 多浏览器竞态打 GitHub）。
-    """
+    CHECK_INTERVAL_SECONDS = 3600
+    STARTUP_DELAY_SECONDS = 10
 
-    CHECK_INTERVAL_SECONDS = 3600  # 60 min
-    STARTUP_DELAY_SECONDS = 10  # 启动后非阻塞延迟
-
-    def __init__(self, repo: str | None = None):
+    def __init__(
+        self,
+        repo: str | None = None,
+        *,
+        channel_check: Callable[[], Awaitable[dict]] | None = None,
+    ):
         from backend.core.config import get_settings
 
+        self._repo = repo or get_settings().sakura_update_repo
         self._task: asyncio.Task | None = None
-        self._client = GitHubReleasesClient(repo or get_settings().sakura_update_repo)
-        self._check_lock = asyncio.Lock()
+        self._inflight: asyncio.Task[dict] | None = None
+        self._client = GitHubReleasesClient(self._repo)
+        self._channel_check = channel_check
+        self._next_check_at: str | None = None
+        self._closed = False
+
+    def status(self) -> dict:
+        running = self._task is not None and not self._task.done()
+        return {
+            "scheduler_running": running,
+            "checking": self._inflight is not None and not self._inflight.done(),
+            "next_check_at": self._next_check_at if running else None,
+        }
 
     def start(self) -> None:
-        if self._task is None:
+        if self._task is None or self._task.done():
             from backend.services.database_reset_runtime_service import (
                 create_registered_background_task,
             )
 
+            if self._closed:
+                self._client = GitHubReleasesClient(self._repo)
+                self._closed = False
+            self._next_check_at = format_rfc3339(
+                now_utc() + timedelta(seconds=self.STARTUP_DELAY_SECONDS)
+            )
             self._task = create_registered_background_task(
                 self._run(), "update_checker"
             )
 
     async def stop(self) -> None:
-        """干净关闭：cancel + await task + 关 client。"""
-        if self._task:
-            self._task.cancel()
+        tasks = [task for task in (self._task, self._inflight) if task is not None]
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
             try:
-                await self._task
+                await task
             except asyncio.CancelledError:
                 pass
-            self._task = None
+        self._task = None
+        self._inflight = None
+        self._next_check_at = None
         await self._client.aclose()
+        self._closed = True
 
     async def _run(self) -> None:
         await asyncio.sleep(self.STARTUP_DELAY_SECONDS)
         while True:
+            self._next_check_at = None
             try:
                 await self.check_once()
-            except Exception as e:  # 兜底防 scheduler 死
-                import logging
-
-                logging.getLogger(__name__).warning(f"UpdateChecker 循环异常: {e}")
+            except Exception as exc:
+                logger.opt(exception=exc).warning("Update checker cycle failed")
+            self._next_check_at = format_rfc3339(
+                now_utc() + timedelta(seconds=self.CHECK_INTERVAL_SECONDS)
+            )
             await asyncio.sleep(self.CHECK_INTERVAL_SECONDS)
 
     async def check_once(self) -> dict:
-        """一次检查 + 写缓存。_check_lock 串行化并发调用。返回缓存数据。"""
-        async with self._check_lock:
-            last_known = await read_cache()
+        # No await between inspecting and assigning: callers on this event loop
+        # share the same task, including when a waiting HTTP request is cancelled.
+        if self._inflight is None or self._inflight.done():
+            self._inflight = asyncio.create_task(self._check_once())
+        return await asyncio.shield(self._inflight)
+
+    async def _check_once(self) -> dict:
+        last_known = await read_cache()
+        errors: list[str] = []
+        try:
+            releases = await self._client.list_releases()
+            data = _build_cache_data(releases, None, last_known, success=True)
+        except Exception as exc:
+            error = sanitize_exception_text(exc)[:240]
+            errors.append(error)
+            data = _build_cache_data([], error, last_known, success=False)
+
+        if self._channel_check is not None:
+            previous = last_known or {}
             try:
-                releases = await self._client.list_releases()
-                data = _build_cache_data(releases, None, last_known, success=True)
-            except Exception as e:
-                data = _build_cache_data([], str(e), last_known, success=False)
-            await write_cache(data)
+                channel_result = await self._channel_check()
+                from backend.core.build_info import get_build_info
+
+                data["channel_result"] = channel_result
+                data["channel_build"] = get_build_info()
+                data["channel_fetched_at"] = format_rfc3339(now_utc())
+                data["channel_check_error"] = None
+            except Exception as exc:
+                error = sanitize_exception_text(exc)[:240]
+                errors.append(error)
+                data["channel_result"] = previous.get("channel_result")
+                data["channel_build"] = previous.get("channel_build")
+                data["channel_fetched_at"] = previous.get("channel_fetched_at")
+                data["channel_check_error"] = error
+            data["channel_last_checked"] = format_rfc3339(now_utc())
+        data["check_error"] = "; ".join(errors) or None
+        await write_cache(data)
         return data

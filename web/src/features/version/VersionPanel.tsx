@@ -61,7 +61,7 @@ export default function VersionPanel() {
   const info = useQuery({
     queryKey: ["version-info"],
     queryFn: ({ signal }) => api<VersionInfo>(base + "/info", { signal }),
-    refetchInterval: unknownSubmission ? 3000 : false,
+    refetchInterval: unknownSubmission ? 3000 : 60_000,
   });
   const catalog = useQuery({
     queryKey: ["version-catalog"],
@@ -241,6 +241,70 @@ export default function VersionPanel() {
             <Timestamp value={info.data.last_checked} />
           </div>
         </div>
+        <dl className="version-build-details">
+          <div>
+            <dt>{t("源码提交", "Source revision")}</dt>
+            <dd>
+              <code>{info.data.build.revision || "—"}</code>
+            </dd>
+          </div>
+          <div>
+            <dt>{t("镜像摘要", "Image digest")}</dt>
+            <dd>
+              <code>{info.data.build.digest || "—"}</code>
+            </dd>
+          </div>
+          {info.data.build.created_at && (
+            <div>
+              <dt>{t("构建时间", "Build time")}</dt>
+              <dd>
+                <Timestamp value={info.data.build.created_at} />
+              </dd>
+            </div>
+          )}
+          <div>
+            <dt>{t("自动检查", "Automatic checks")}</dt>
+            <dd>
+              {info.data.checking
+                ? t("正在检查", "Checking")
+                : info.data.scheduler_running
+                  ? t("已启用", "Enabled")
+                  : t("未运行", "Not running")}
+            </dd>
+          </div>
+          {info.data.next_check_at && (
+            <div>
+              <dt>{t("下次检查", "Next check")}</dt>
+              <dd>
+                <Timestamp value={info.data.next_check_at} />
+              </dd>
+            </div>
+          )}
+          <div>
+            <dt>{t("检查结果", "Check result")}</dt>
+            <dd>
+              {info.data.check_error
+                ? t(
+                    "检查失败，保留上次成功结果",
+                    "Check failed; keeping the last successful result",
+                  )
+                : info.data.last_checked
+                  ? info.data.update_available
+                    ? t("有可用更新", "Update available")
+                    : t("检查完成", "Check completed")
+                  : t("尚未检查", "Not checked yet")}
+            </dd>
+          </div>
+        </dl>
+        {info.data.check_error && (
+          <p className="version-error" role="alert">
+            {t(
+              "自动或手动更新检查失败，请稍后重试。",
+              "An automatic or manual update check failed. Try again later.",
+            )}{" "}
+            <code>{info.data.check_error}</code>
+          </p>
+        )}
         {!info.data.update_supported && (
           <p className="version-notice">
             {info.data.deployment_type === "source"
@@ -407,6 +471,7 @@ export default function VersionPanel() {
       <VersionBrowser
         catalog={catalog}
         releases={releases}
+        currentChannel={info.data.build.channel}
         selected={selected}
         selectionDisabled={!!busy || !info.data.update_supported}
         onSelect={select}

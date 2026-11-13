@@ -35,7 +35,7 @@ export interface Readiness {
 }
 export interface VersionInfo {
   current_version: string;
-  build: Partial<Target>;
+  build: Partial<Target> & { created_at?: string };
   deployment_type: string;
   update_supported: boolean;
   update_unsupported_reason: string | null;
@@ -47,6 +47,11 @@ export interface VersionInfo {
   has_active_job: boolean;
   active_job_id: string | null;
   last_checked: string | null;
+  fetched_at?: string | null;
+  check_error?: string | null;
+  scheduler_running?: boolean;
+  checking?: boolean;
+  next_check_at?: string | null;
 }
 export interface UpdateJob {
   job_id: string;
