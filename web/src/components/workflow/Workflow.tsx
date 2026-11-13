@@ -330,7 +330,7 @@ export function ReviewRows({ reviews }: { reviews: Review[] }) {
                 </Link>
                 <div className="wf-record-meta">
                   {review.repo_owner}/{review.repo_name}{" "}
-                  <span>#{review.pr_id}</span>
+                  <span>{review.pr_number ? `#${review.pr_number}` : "—"}</span>
                   {review.author && <span>· {review.author}</span>}
                 </div>
               </td>

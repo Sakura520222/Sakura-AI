@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, FolderGit2, Link2, Search, ShieldCheck } from 'lucide-react';
 import { api } from '../../api/client';
 import { useLocale } from '../../app/locale';
+import { useAuth } from '../../app/auth';
 import { Disclosure, EmptyState, ErrorState, LoadingState, PageHeader, RefreshButton, safeExternalUrl } from '../../components/workflow/Workflow';
 import './github.css';
 
@@ -11,7 +12,8 @@ interface Authorization { authorization: { status: string; github_username: stri
 
 export default function GitHubAppPage() {
   const { t } = useLocale();
-  const query = useQuery({ queryKey: ['github-authorization'], queryFn: ({ signal }) => api<Authorization>('/api/v1/github-app', { signal }), gcTime: 0 });
+  const { user } = useAuth();
+  const query = useQuery({ queryKey: ['github-authorization', user.id, user.username], queryFn: ({ signal }) => api<Authorization>('/api/v1/github-app', { signal }), gcTime: 0 });
   const data = query.data;
   const install = safeExternalUrl(data?.install_url);
   return <div><PageHeader title={t('GitHub 授权', 'GitHub authorization')} description={t('管理 Sakura AI 可以访问的账号和仓库。', 'Manage the accounts and repositories Sakura AI can access.')} actions={<RefreshButton busy={query.isFetching} onClick={() => void query.refetch()} />} />

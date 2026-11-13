@@ -54,6 +54,65 @@ beforeEach(() => {
 });
 
 describe("workflow behavior", () => {
+  it("uses repository PR numbers for GitHub links", async () => {
+    vi.mocked(api).mockResolvedValue(
+      result({
+        id: 5,
+        pr_id: 987654321,
+        pr_number: 42,
+        repo_owner: "alice",
+        repo_name: "app",
+        title: "Numbered review",
+      }),
+    );
+    renderPage(
+      <Routes>
+        <Route path="/reviews/:id" element={<ReviewsPage />} />
+      </Routes>,
+      "/reviews/5",
+    );
+    expect(await screen.findByRole("link", { name: "GitHub" })).toHaveAttribute(
+      "href",
+      "https://github.com/alice/app/pull/42",
+    );
+    expect(screen.getByText("alice/app · #42")).toBeInTheDocument();
+  });
+
+  it.each([
+    { pr_number: null },
+    { pr_number: 0 },
+    { pr_number: -2 },
+    { pr_number: 1.5 },
+    { repo_owner: "" },
+    { repo_name: null },
+  ])(
+    "does not invent a GitHub PR link with missing or invalid identity: %s",
+    async (missing) => {
+      vi.mocked(api).mockResolvedValue(
+        result({
+          id: 5,
+          pr_id: 987654321,
+          pr_number: 42,
+          repo_owner: "alice",
+          repo_name: "app",
+          title: "Incomplete review",
+          ...missing,
+        }),
+      );
+      renderPage(
+        <Routes>
+          <Route path="/reviews/:id" element={<ReviewsPage />} />
+        </Routes>,
+        "/reviews/5",
+      );
+      await screen.findByRole("heading", { name: "Incomplete review" });
+      expect(
+        screen.queryByRole("link", { name: "GitHub" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "GitHub" })).toBeDisabled();
+    },
+  );
+
   it("keeps a zero review score, URL filters and pagination meaningful", async () => {
     const user = userEvent.setup();
     vi.mocked(api).mockResolvedValue(
