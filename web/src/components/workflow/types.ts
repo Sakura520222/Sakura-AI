@@ -14,6 +14,7 @@ export interface PageData<T> {
 export interface Review {
   id: number;
   pr_id: number;
+  pr_number?: number | null;
   repo_name: string | null;
   repo_owner: string | null;
   author: string | null;

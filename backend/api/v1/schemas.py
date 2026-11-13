@@ -115,6 +115,7 @@ class ReviewResponse(BaseModel):
 
     id: int
     pr_id: int
+    pr_number: int | None = None
     repo_name: str | None = None
     repo_owner: str | None = None
     author: str | None = None

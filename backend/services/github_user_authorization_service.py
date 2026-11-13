@@ -117,7 +117,7 @@ class GitHubUserAuthorizationService:
         credential = await credential_service.get_credential(session, int(user_id))
         github_username = (credential.github_username or "") if credential else ""
         expected = expected_github_username or ""
-        credential_matches_user = not expected or (
+        credential_matches_user = bool(expected) and (
             github_username.casefold() == expected.casefold()
         )
         credential_matches_app = bool(credential) and (
@@ -133,12 +133,12 @@ class GitHubUserAuthorizationService:
             if not authorization_flow_configured:
                 return GitHubUserAuthorization(
                     status="unconfigured",
-                    github_username=expected or github_username,
+                    github_username=expected,
                     error_code="app_not_configured",
                 )
             return GitHubUserAuthorization(
                 status="needs_authorization",
-                github_username=expected or github_username,
+                github_username=expected,
                 error_code="credential_not_usable",
             )
 

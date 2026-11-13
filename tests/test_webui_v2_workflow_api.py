@@ -184,3 +184,50 @@ async def test_issue_repository_filter_distinguishes_same_name_and_keeps_acl():
             assert legacy.json()["data"]["total"] == 2
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_review_api_exposes_repository_number_separately_from_global_id():
+    from backend.models.database import ReviewComment
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(PRReview.__table__.create)
+            await connection.run_sync(ReviewComment.__table__.create)
+        async with sessions() as db:
+            db.add(
+                PRReview(
+                    id=1,
+                    pr_id=987654321,
+                    pr_number=42,
+                    repo_owner="alice",
+                    repo_name="app",
+                    strategy="standard",
+                )
+            )
+            await db.commit()
+        app = FastAPI()
+        app.include_router(reviews.router, prefix="/api/v1")
+        app.dependency_overrides[require_api_auth] = lambda: {
+            "user_id": 1,
+            "sub": "alice",
+            "role": "user",
+        }
+
+        async def request_db():
+            async with sessions() as db:
+                yield db
+
+        app.dependency_overrides[get_db] = request_db
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="https://test"
+        ) as client:
+            listing = (await client.get("/api/v1/reviews")).json()["data"]["items"][0]
+            detail = (await client.get("/api/v1/reviews/1")).json()["data"]
+            for record in (listing, detail):
+                assert record["pr_number"] == 42
+                assert record["pr_id"] == 987654321
+    finally:
+        await engine.dispose()

@@ -26,10 +26,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const client = useQueryClient();
   const [expired, setExpired] = useState(false);
   const [enrollment, setEnrollment] = useState(false);
+  const [activeIdentity, setActiveIdentity] = useState<string | null>(null);
   const query = useQuery({
     queryKey: ["bootstrap"],
-    queryFn: async () => {
-      const result = await api<Bootstrap>("/api/v1/webui/bootstrap");
+    queryFn: async ({ signal }) => {
+      const result = await api<Bootstrap>("/api/v1/webui/bootstrap", {
+        signal,
+      });
       setCsrfToken(result.csrf);
       return result;
     },
@@ -39,6 +42,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     staleTime: 60_000,
     enabled: !expired,
   });
+  const identity = query.data
+    ? JSON.stringify([
+        query.data.user.id,
+        query.data.user.username,
+        query.data.user.role,
+        query.data.permissions,
+      ])
+    : null;
+  useEffect(() => {
+    if (!identity || identity === activeIdentity) return;
+    // Keep old account data and component state out of the next authenticated tree.
+    const privateQueries = {
+      predicate: (q: { queryKey: readonly unknown[] }) =>
+        q.queryKey[0] !== "bootstrap",
+    };
+    client.removeQueries(privateQueries);
+    setActiveIdentity(identity);
+  }, [identity, activeIdentity, client]);
   useEffect(() => {
     const expire = () => {
       setExpired(true);
@@ -71,7 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         </a>
       </div>
     );
-  if (query.isPending)
+  if (query.isPending || (query.data && activeIdentity !== identity))
     return (
       <div className="auth-screen" role="status">
         <BrandMark size={38} />
@@ -107,7 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       </div>
     );
   return (
-    <AuthContext.Provider value={query.data}>
+    <AuthContext.Provider key={identity} value={query.data}>
       <LocaleProvider
         initial={query.data.preferences.language}
         timezone={query.data.timezone}

@@ -54,7 +54,11 @@ function ReviewList() {
         )}
         actions={
           <>
-            {permissions.admin && <Link className="wf-button" to="/queue">{t('审查队列', 'Review queue')}</Link>}
+            {permissions.admin && (
+              <Link className="wf-button" to="/queue">
+                {t("审查队列", "Review queue")}
+              </Link>
+            )}
             <a className="wf-button" href={`/api/v1/reviews/export?${params}`}>
               <Download size={16} />
               {t("导出 CSV", "Export CSV")}
@@ -161,6 +165,13 @@ function ReviewDetail({ id }: { id: string }) {
   if (review.isError || !review.data)
     return <ErrorState retry={() => void review.refetch()} />;
   const data = review.data.data;
+  const githubUrl =
+    data.repo_owner?.trim() &&
+    data.repo_name?.trim() &&
+    Number.isSafeInteger(data.pr_number) &&
+    (data.pr_number ?? 0) > 0
+      ? `https://github.com/${encodeURIComponent(data.repo_owner)}/${encodeURIComponent(data.repo_name)}/pull/${data.pr_number}`
+      : null;
   const comments = data.comments ?? [];
   const files = [
     ...new Set(comments.map((comment) => comment.file_path || "__overall__")),
@@ -178,18 +189,32 @@ function ReviewDetail({ id }: { id: string }) {
       </Link>
       <PageHeader
         title={data.title || t("无标题", "Untitled")}
-        description={`${data.repo_owner}/${data.repo_name} · #${data.pr_id}`}
+        description={`${data.repo_owner || "—"}/${data.repo_name || "—"} · ${githubUrl ? `#${data.pr_number}` : "—"}`}
         actions={
           <>
-            <a
-              className="wf-button"
-              target="_blank"
-              rel="noopener noreferrer"
-              href={`https://github.com/${encodeURIComponent(data.repo_owner ?? "")}/${encodeURIComponent(data.repo_name ?? "")}/pull/${data.pr_id}`}
-            >
-              <ExternalLink size={16} />
-              GitHub
-            </a>
+            {githubUrl ? (
+              <a
+                className="wf-button"
+                target="_blank"
+                rel="noopener noreferrer"
+                href={githubUrl}
+              >
+                <ExternalLink size={16} />
+                GitHub
+              </a>
+            ) : (
+              <button
+                className="wf-button"
+                disabled
+                title={t(
+                  "缺少 GitHub PR 信息",
+                  "GitHub PR information is unavailable",
+                )}
+              >
+                <ExternalLink size={16} />
+                GitHub
+              </button>
+            )}
             <RefreshButton
               busy={review.isFetching}
               onClick={() => void review.refetch()}
