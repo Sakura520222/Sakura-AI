@@ -2,7 +2,7 @@
 fastapi>=0.162.5,<1.0.0
 starlette>=1.10.0,<2.0.0
 uvicorn[standard]>=0.54.0
-python-multipart>=0.0.32
+python-multipart>=0.0.33
 
 # GitHub集成
 PyGithub>=2.10.0
