@@ -52,7 +52,7 @@ dependencies = [
     "tzdata==2026.6",
 
     # 日志
-    "loguru>=0.7.3",
+    "loguru>=0.8.0",
 
     # Telegram Bot
     "python-telegram-bot>=22.8",
