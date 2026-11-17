@@ -2270,63 +2270,71 @@ production_pull_dev_channel_images() {
     info "development 频道完整三镜像已验证: $PRODUCTION_DEV_VALIDATED_REVISION"
 }
 
+# The stable Web image is a multi-arch OCI index.  ``docker manifest inspect
+# --verbose`` surfaces only per-platform manifest digests (a JSON array of
+# descriptors), never the index digest Docker records in RepoDigests after a
+# pull, so pinning could never match on a multi-arch tag.  Read the registry
+# manifest bytes directly -- same bootstrap pattern as the development
+# resolver below -- and derive the top-level digest, the identity updater and
+# deployment.env pin.
 production_manifest_digest() {
-    local reference="$1" payload
+    local reference="$1"
     command -v python3 >/dev/null 2>&1 || {
         fail "python3 is required to verify production Web manifest identity" >&2
         return 1
     }
-    payload=$(docker manifest inspect --verbose "$reference") || {
-        fail "无法读取生产 Web manifest: $reference" >&2
-        return 1
-    }
-    python3 - "$payload" <<'PY'
+    if ! python3 - "$reference" <<'PYSTABLE'
+import hashlib
 import json
 import re
 import sys
+from urllib.request import Request, urlopen
 
-digest_pattern = re.compile(r"^sha256:[0-9a-f]{64}$")
+repository = "ghcr.io/sakura520222/sakura-ai"
+reference = sys.argv[1]
+prefix = repository + ":"
+if not reference.startswith(prefix):
+    raise SystemExit("unsupported production Web reference: " + reference)
+tag = reference[len(prefix):]
+if not re.fullmatch(r"latest|v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", tag):
+    raise SystemExit("invalid stable Web tag: " + tag)
+
+def request(url, headers):
+    with urlopen(Request(url, headers=headers), timeout=20) as response:
+        return response.read(), response.headers
 
 try:
-    payload = json.loads(sys.argv[1])
-except (IndexError, json.JSONDecodeError) as exc:
-    print(f"invalid Docker manifest JSON: {exc}", file=sys.stderr)
-    raise SystemExit(1)
-
-
-def direct_descriptor_digest(value):
-    if not isinstance(value, dict):
-        return None
-    for key in ("Descriptor", "descriptor"):
-        descriptor = value.get(key)
-        if isinstance(descriptor, dict) and descriptor.get("digest") is not None:
-            return descriptor.get("digest")
-    digest = value.get("digest")
-    return digest if digest is not None else None
-
-
-digests = []
-if isinstance(payload, dict):
-    direct = direct_descriptor_digest(payload)
-    if direct is not None:
-        digests.append(direct)
-    elif isinstance(payload.get("manifests"), list):
-        for item in payload["manifests"]:
-            digest = direct_descriptor_digest(item)
-            if digest is not None:
-                digests.append(digest)
-elif isinstance(payload, list):
-    for item in payload:
-        digest = direct_descriptor_digest(item)
-        if digest is not None:
-            digests.append(digest)
-
-if not digests or any(not isinstance(item, str) or not digest_pattern.fullmatch(item) for item in digests):
-    print("Docker manifest did not contain a complete sha256 digest", file=sys.stderr)
-    raise SystemExit(1)
-
-print(",".join(sorted(set(digests))))
-PY
+    raw, _ = request(
+        "https://ghcr.io/token?service=ghcr.io&scope=repository:sakura520222/sakura-ai:pull",
+        {},
+    )
+    token = json.loads(raw)["token"]
+    headers = {
+        "Authorization": "Bearer " + token,
+        # Index media types come first so the digest is the top-level manifest,
+        # matching what ``docker pull`` records in RepoDigests.
+        "Accept": ", ".join([
+            "application/vnd.oci.image.index.v1+json",
+            "application/vnd.docker.distribution.manifest.list.v2+json",
+            "application/vnd.oci.image.manifest.v1+json",
+            "application/vnd.docker.distribution.manifest.v2+json",
+        ]),
+    }
+    raw, response_headers = request(
+        "https://ghcr.io/v2/sakura520222/sakura-ai/manifests/" + tag, headers
+    )
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    reported = response_headers.get("Docker-Content-Digest")
+    if reported is not None and reported != digest:
+        raise ValueError("registry-reported digest does not match manifest bytes")
+    print(digest)
+except Exception as exc:
+    raise SystemExit("unable to read production Web manifest: " + str(exc))
+PYSTABLE
+    then
+        fail "无法读取生产 Web manifest: $reference" >&2
+        return 1
+    fi
 }
 
 production_verify_stable_web_alias() {

@@ -1010,11 +1010,11 @@ sandbox_load_deployment_config() { :; }
 sandbox_release_version() { printf '%s\n' '3.2.0'; }
 sandbox_lifecycle_enabled() { return 1; }
 sandbox_pull_image() { printf 'UNEXPECTED_PULL\n'; return 99; }
-docker() {
-    if [[ "$*" == *':latest' ]]; then
-        printf '%s\n' '{"Descriptor":{"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
+production_manifest_digest() {
+    if [[ "$1" == *':latest' ]]; then
+        printf '%s\n' 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
     else
-        printf '%s\n' '{"Descriptor":{"digest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}'
+        printf '%s\n' 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
     fi
 }
 if production_prepare_and_pull_images; then
@@ -1026,6 +1026,61 @@ fi
     assert result.returncode == 0, result.stdout + result.stderr
     assert "UNEXPECTED_PULL" not in result.stdout
     assert "manifest digest 不一致" in result.stderr
+
+
+def test_production_latest_alias_pins_top_level_manifest_digest():
+    """A multi-arch stable tag pins the registry index digest end to end.
+
+    Regression guard: ``docker manifest inspect --verbose`` used to feed the
+    pin check with per-platform digests while ``docker pull`` records the
+    top-level index digest, so every fresh ``--prod`` deployment failed the
+    alias/pin comparison.  The contract now is one shared top-level digest.
+    """
+
+    index_digest = (
+        "sha256:ea5f3e64c0abda2cfa06471a018cc3068e269f4b40edf6f55565b623e91f69d5"
+    )
+    result = _run_bash(
+        rf'''
+set -euo pipefail
+export _START_SH_SOURCED=1
+source ./start.sh
+case_dir=$(mktemp -d)
+trap 'rm -rf "$case_dir"' EXIT
+export DEPLOYMENT_ENV_FILE="$case_dir/deployment.env"
+printf '%s\n' \
+  'SAKURA_DEPLOY_MODE=image' \
+  'SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:latest' \
+  'COMPOSE_PROJECT_NAME=sakura-ai' > "$DEPLOYMENT_ENV_FILE"
+sandbox_release_version() {{ printf '%s\n' '3.2.6'; }}
+sandbox_pull_image() {{ printf 'PULLED:%s\n' "$2"; }}
+image_digest_of() {{ printf '%s\n' '{index_digest}'; }}
+PRODUCTION_STABLE_MANIFEST_DIGEST='{index_digest}'
+sandbox_pin_latest_web_image
+printf 'PINNED:%s\n' "$PRODUCTION_WEB_IMAGE"
+''',
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PULLED:ghcr.io/sakura520222/sakura-ai:v3.2.6" in result.stdout
+    assert (
+        f"PINNED:ghcr.io/sakura520222/sakura-ai:v3.2.6@{index_digest}"
+        in result.stdout
+    )
+
+
+def test_production_manifest_digest_reads_registry_bytes_not_verbose_platform_list():
+    """The stable digest resolver must not regress to docker manifest inspect.
+
+    ``--verbose`` output carries no top-level index digest for multi-arch
+    tags, so returning to it would break fresh production deployments again.
+    """
+
+    script = (ROOT / "start.sh").read_text(encoding="utf-8")
+    body = script.split("production_manifest_digest()", 1)[1].split("\n}", 1)[0]
+    assert "docker manifest inspect" not in body
+    assert "hashlib.sha256(raw).hexdigest()" in body
+    assert "application/vnd.oci.image.index.v1+json" in body
 
 
 def test_start_sh_help_documents_destructive_scope_and_lifecycle_commands():
