@@ -23,6 +23,8 @@ uv run python -m backend.main
 
 `uv sync` 会创建 `.venv` 并安装项目依赖，包括以 editable 方式安装的 Updater。实际运行应用需要 MySQL 和 Redis；测试会模拟这些外部服务。
 
+服务默认绑定 `127.0.0.1:8000`（仅本机访问）。监听地址与端口可通过 Setup 向导、「系统核心配置」页或 `APP_HOST`/`APP_PORT` 环境变量修改，也可用 `--host`/`--port` 显式指定；详见[部署指南 · 监听地址与端口](DEPLOYMENT.md#监听地址与端口)。
+
 首次启动后打开 `http://localhost:8000/setup`。从本机私有文件 `config/.setup-token` 读取验证 Token（PowerShell：`Get-Content config/.setup-token`；POSIX：`cat config/.setup-token`），按向导完成配置。Token 不会写入日志；文件位置与权限要求见[部署指南的安全验证](DEPLOYMENT.md#安全验证)。
 
 传统 pip 环境使用开发依赖清单：
@@ -59,7 +61,7 @@ pip 环境中去掉 `uv run` 前缀，使用 `python -m pytest -q`、`ruff check
 
 ## WebUI 开发
 
-发布的源码包和 Git checkout 会使用与后端版本匹配的预构建前端资源。一般运行后端不需要安装 Node.js，也不需要手动构建前端。修改 React 前端时，请按[WebUI 开发指南](webui-2.md)安装依赖并运行 Vite；该指南也说明前端构建、API 类型和翻译校验流程。
+发布的源码包和 Git checkout 会使用与后端版本匹配的预构建前端资源。一般运行后端不需要安装 Node.js，也不需要手动构建前端。修改 React 前端时，请按[WebUI 开发指南](webui-2.md)安装依赖并运行 Vite；该指南也说明前端构建、API 类型和翻译校验流程。Vite 开发服务器的后端代理默认指向 `127.0.0.1:8000`；后端改用非默认端口时，以 `APP_PORT=9000 npm run dev` 的方式同步代理目标。
 
 ## 热重载与重启
 

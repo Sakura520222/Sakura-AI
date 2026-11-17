@@ -4912,6 +4912,8 @@ export interface components {
             NOTIFICATION_RATE_LIMIT_SECONDS?: string | null;
             /** App Domain */
             APP_DOMAIN?: string | null;
+            /** App Host */
+            APP_HOST?: string | null;
             /** App Port */
             APP_PORT?: string | null;
             /** Log Level */

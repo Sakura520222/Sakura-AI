@@ -224,6 +224,8 @@ def test_system_backup_round_trip_includes_connection_secrets():
     [
         ("database_url", "sqlite:///tmp/app.db", "database_url 格式无效"),
         ("app_port", "70000", "app_port 必须在 1 到 65535"),
+        ("app_host", "not a host!", "app_host 无效"),
+        ("app_host", "", "app_host 不得为空"),
         ("log_level", "TRACE", "log_level 无效"),
     ],
 )

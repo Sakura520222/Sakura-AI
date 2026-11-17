@@ -13414,6 +13414,17 @@
             ],
             "title": "App Domain"
           },
+          "APP_HOST": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Host"
+          },
           "APP_PORT": {
             "anyOf": [
               {

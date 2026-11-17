@@ -78,6 +78,9 @@ class Settings(BaseSettings):
 
     # 应用配置
     app_domain: str = "localhost"
+    # HTTP 服务监听地址。默认仅绑定回环地址（本机访问）；需要对外暴露时
+    # Bind address of the HTTP service. Loopback-only by default.
+    app_host: str = "127.0.0.1"
     app_port: int = 8000
     # 用户可见时间的应用时区；system 在每次进程启动时解析为系统 IANA 区域。
     app_timezone: str = "system"
@@ -1964,6 +1967,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "notification_verification_max_attempts": "端点验证最大尝试次数",
     "webui_secret_key": "WebUI 密钥",
     "app_domain": "应用域名",
+    "app_host": "监听地址",
     "app_port": "应用端口",
     "log_level": "日志级别",
     "bot_username": "Bot 用户名",
@@ -2503,6 +2507,7 @@ CORE_CONFIG_KEYS = frozenset(
         "webui_secret_key",
         "activity_cursor_signing_secret",
         "app_domain",
+        "app_host",
         "app_port",
         "app_timezone",
         "log_level",

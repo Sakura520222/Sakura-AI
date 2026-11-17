@@ -1210,3 +1210,30 @@ async def test_frozen_listener_and_github_identity_require_restart(config_db):
         assert saved["effect"] == "restart_required"
         assert get_settings().app_port == original
         assert (await field(service, db, "global/github_app_id"))["requiresRestart"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_host", ["not a host!", "999.999.999.999", ""])
+async def test_app_host_rejects_invalid_values(config_db, bad_host):
+    service = ConfigCenterService()
+    async with config_db() as db:
+        current = await field(service, db, "global/app_host")
+        with pytest.raises(ValueError):
+            await service.mutate(
+                db, ADMIN, current["id"], version=current["version"], value=bad_host
+            )
+
+
+@pytest.mark.asyncio
+async def test_app_host_save_requires_restart_and_keeps_runtime_singleton(config_db):
+    service = ConfigCenterService()
+    original = get_settings().app_host
+    async with config_db() as db:
+        current = await field(service, db, "global/app_host")
+        assert current["requiresRestart"]
+        saved = await service.mutate(
+            db, ADMIN, current["id"], version=current["version"], value="0.0.0.0"
+        )
+        assert saved["effect"] == "restart_required"
+        # RESTART_REQUIRED 键不热应用到运行时单例，重启后由启动链路生效
+        assert get_settings().app_host == original

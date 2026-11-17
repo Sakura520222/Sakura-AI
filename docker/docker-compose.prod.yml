@@ -15,7 +15,14 @@ services:
         max-size: "50m"
         max-file: "3"
     ports:
-      - "8000:8000"
+      # 默认仅发布到宿主回环（127.0.0.1:8000），防止意外对外开启端口；
+      # 需要直连 :8000 的 Webhook 或局域网访问时，在 deployment.env 设
+      # SAKURA_HOST_BIND=0.0.0.0，或保持回环并配置反向代理对外。
+      # 容器内必须绑定 0.0.0.0（见 Dockerfile CMD）：bridge 网络的端口
+      # 发布经 DNAT 到容器网络接口，容器内绑回环会使发布端口静默失效。
+      # 仅支持 0.0.0.0/127.0.0.1：start.sh 健康门禁与 updater 探活走宿主
+      # 回环，其他地址会导致部署回滚。
+      - "${SAKURA_HOST_BIND:-127.0.0.1}:8000:8000"
     env_file:
       # Direct production activation uses a pending transaction file until
       # Web and sandboxd pass health checks.  start.sh supplies its absolute

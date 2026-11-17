@@ -19,6 +19,8 @@ from backend.webui.sse import sse_manager
 def _reset_server_runtime(monkeypatch):
     monkeypatch.setattr(server_runtime, "_server", None)
     monkeypatch.setattr(server_runtime, "_restart_requested", False)
+    monkeypatch.setattr(server_runtime, "_cli_host", None)
+    monkeypatch.setattr(server_runtime, "_cli_port", None)
 
 
 def _make_args(**overrides) -> argparse.Namespace:
@@ -194,3 +196,125 @@ def test_supervisor_stops_child_on_keyboard_interrupt():
 
     assert return_code == 130
     assert proc.terminated is True
+
+
+# ---------------------------------------------------------------------------
+# 监听地址/端口：哨兵默认值、子进程参数传播与 lifespan 回写桥
+# ---------------------------------------------------------------------------
+
+
+def test_parse_launch_args_bind_defaults_are_sentinels():
+    args = main_module._parse_launch_args([])
+
+    assert args.host is None
+    assert args.port is None
+
+    explicit = main_module._parse_launch_args(["--host", "0.0.0.0", "--port", "9000"])
+
+    assert explicit.host == "0.0.0.0"
+    assert explicit.port == 9000
+
+
+def test_parse_launch_args_treats_blank_host_as_unset():
+    # 空白 --host 若原样传给 uvicorn 会绑定全部网卡（含 IPv6），必须收敛为哨兵。
+    args = main_module._parse_launch_args(["--host", "   "])
+
+    assert args.host is None
+
+
+def test_resolve_bind_host_falls_back_to_loopback_on_blank():
+    # 遗留的空 APP_HOST=（Settings 值为 ""）同样不得扩大暴露面。
+    assert main_module._resolve_bind_host(None, "") == "127.0.0.1"
+    assert main_module._resolve_bind_host(None, "   ") == "127.0.0.1"
+    assert main_module._resolve_bind_host(None, None) == "127.0.0.1"
+    assert main_module._resolve_bind_host("", "0.0.0.0") == "127.0.0.1"
+
+    assert main_module._resolve_bind_host(None, "0.0.0.0") == "0.0.0.0"
+    assert main_module._resolve_bind_host("0.0.0.0", "127.0.0.1") == "0.0.0.0"
+
+
+def test_spawn_child_omits_unset_bind_arguments(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_popen(command, *, env):
+        captured["command"] = command
+        return _FakeProc(101, exit_code=0)
+
+    monkeypatch.setattr(main_module.subprocess, "Popen", fake_popen)
+
+    main_module._spawn_child(_make_args(host=None, port=None))
+
+    command = captured["command"]
+    assert "--host" not in command
+    assert "--port" not in command
+    # 子进程仍以 --serve 模式被拉起
+    assert "--serve" in command
+
+
+def test_spawn_child_forwards_explicit_bind_arguments(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_popen(command, *, env):
+        captured["command"] = command
+        return _FakeProc(101, exit_code=0)
+
+    monkeypatch.setattr(main_module.subprocess, "Popen", fake_popen)
+
+    main_module._spawn_child(_make_args(host="0.0.0.0", port=9000))
+
+    command = captured["command"]
+    assert command[command.index("--host") + 1] == "0.0.0.0"
+    assert command[command.index("--port") + 1] == "9000"
+
+
+def _fake_bind_server(host="0.0.0.0", port=8000):
+    return SimpleNamespace(
+        config=SimpleNamespace(host=host, port=port), should_exit=False
+    )
+
+
+def test_apply_configured_bind_without_server_is_noop():
+    assert server_runtime.apply_configured_bind("127.0.0.1", 8000) == (None, None)
+
+
+def test_apply_configured_bind_writes_configured_values():
+    server = _fake_bind_server()
+    server_runtime.register_server(server)
+
+    applied_host, applied_port = server_runtime.apply_configured_bind(
+        "192.168.1.10", 9000
+    )
+
+    assert applied_host == "192.168.1.10"
+    assert applied_port == 9000
+    assert server.config.host == "192.168.1.10"
+    assert server.config.port == 9000
+
+
+def test_apply_configured_bind_keeps_explicit_cli_overrides():
+    server = _fake_bind_server()
+    server_runtime.register_server(server, cli_host="0.0.0.0", cli_port=8000)
+
+    applied_host, applied_port = server_runtime.apply_configured_bind(
+        "127.0.0.1", 9000
+    )
+
+    assert applied_host is None
+    assert applied_port is None
+    assert server.config.host == "0.0.0.0"
+    assert server.config.port == 8000
+
+
+def test_apply_configured_bind_rejects_invalid_values():
+    server = _fake_bind_server()
+    server_runtime.register_server(server)
+
+    for bad_host in (None, "", "   "):
+        assert server_runtime.apply_configured_bind(bad_host, 8000)[0] is None
+
+    for bad_port in (0, -1, 70000, "8000", True, None):
+        assert server_runtime.apply_configured_bind(None, bad_port)[1] is None
+
+    # 非法输入不得污染原有绑定值
+    assert server.config.host == "0.0.0.0"
+    assert server.config.port == 8000
