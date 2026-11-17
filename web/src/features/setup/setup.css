@@ -96,6 +96,25 @@
 .setup-fields textarea::placeholder {
   color: var(--login-muted);
 }
+.setup-secret-multiline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.setup-secret-multiline textarea[readonly] {
+  cursor: default;
+}
+.setup-secret-toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--login-muted);
+  cursor: pointer;
+  font-size: 13px;
+  text-decoration: underline;
+}
 .setup-diagnostics {
   display: flex;
   flex-wrap: wrap;
@@ -128,6 +147,12 @@
 }
 .setup-backup {
   margin-top: 26px;
+}
+.setup-pending {
+  margin: 14px 0 0;
+  color: var(--login-muted);
+  font-size: 13px;
+  line-height: 1.6;
 }
 .setup-panel .public-auth-error {
   margin: 18px 0 0;
