@@ -756,12 +756,12 @@ async def create_tables_async():
             await conn.run_sync(Base.metadata.create_all)
             dropped = await conn.run_sync(_drop_legacy_activity_tables)
 
-        logger.info("✅ 数据库表已就绪")
+        logger.info("数据库表已就绪")
         if dropped:
-            logger.info("✅ 已移除旧版实时监控表: %s", ", ".join(dropped))
+            logger.info("已移除旧版实时监控表: %s", ", ".join(dropped))
 
     except Exception as e:
-        logger.error(f"❌ 数据库表创建失败: {e}")
+        logger.error(f"数据库表创建失败: {e}")
         raise
 
 
@@ -875,13 +875,13 @@ async def insert_default_configs_async():
             if added > 0:
                 await session.commit()
                 logger.info(
-                    f"✅ {'已插入默认配置' if existing_configs == 0 else f'补插 {added} 条缺失配置'}"
+                    f"{'已插入默认配置' if existing_configs == 0 else f'补插 {added} 条缺失配置'}"
                 )
             else:
                 logger.info("配置已是最新，无需补插")
 
     except Exception as e:
-        logger.error(f"❌ 插入默认配置失败: {e}")
+        logger.error(f"插入默认配置失败: {e}")
         raise
 
 
@@ -1015,10 +1015,10 @@ def init_async_db(database_url: str):
             info={"notification_outbox": True},
         )
 
-        logger.info("✅ 异步数据库引擎初始化成功")
+        logger.info("异步数据库引擎初始化成功")
 
     except Exception as e:
-        logger.error(f"❌ 异步数据库引擎初始化失败: {e}")
+        logger.error(f"异步数据库引擎初始化失败: {e}")
         raise
 
 

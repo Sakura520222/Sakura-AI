@@ -72,15 +72,15 @@ class ScoreExtractor:
                     score = int(match.group(1))
                     if self.validate_score(score):
                         logger.debug(
-                            f"✅ 从文本提取评分: {score}/10 (模式: {pattern.pattern})"
+                            f"从文本提取评分: {score}/10 (模式: {pattern.pattern})"
                         )
                         return score
                     else:
-                        logger.warning(f"⚠️ 提取到无效评分 {score}/10 (不在1-10范围)")
+                        logger.warning(f"提取到无效评分 {score}/10 (不在1-10范围)")
                 except (ValueError, IndexError) as e:
                     logger.debug(f"评分提取失败: {e}")
 
-        logger.debug("⚠️ 未能从文本中提取有效评分")
+        logger.debug("未能从文本中提取有效评分")
         return None
 
     def estimate_from_issues(self, issues: dict[str, Any]) -> int | None:
@@ -129,7 +129,7 @@ class ScoreExtractor:
                 return None
 
             logger.info(
-                f"📊 基于问题统计估算评分: {estimated_score}/10 "
+                f"基于问题统计估算评分: {estimated_score}/10 "
                 f"(C:{critical_count}, M:{major_count}, m:{minor_count}, S:{suggestion_count})"
             )
             return estimated_score
@@ -156,12 +156,12 @@ class ScoreExtractor:
         ]
 
         if not valid_scores:
-            logger.warning("⚠️ 没有有效的批次评分可用于计算平均值")
+            logger.warning("没有有效的批次评分可用于计算平均值")
             return None
 
         average = int(sum(valid_scores) / len(valid_scores))
         logger.info(
-            f"📊 计算批次平均评分: {average}/10 "
+            f"计算批次平均评分: {average}/10 "
             f"(基于 {len(valid_scores)} 个批次: {valid_scores})"
         )
         return average
@@ -186,25 +186,25 @@ class ScoreExtractor:
             提取到的评分（1-10），如果所有方法都失败则返回None
         """
         if not review_result or not isinstance(review_result, dict):
-            logger.warning("⚠️ review_result为空或不是字典")
+            logger.warning("review_result为空或不是字典")
             return None
 
         # 方法1: 直接使用 overall_score 字段
         score = review_result.get("overall_score")
         if score is not None:
             if self.validate_score(score):
-                logger.info(f"✅ 使用overall_score字段: {score}/10")
+                logger.info(f"使用overall_score字段: {score}/10")
                 self.extraction_stats["direct_field"] += 1
                 return score
             else:
-                logger.warning(f"⚠️ overall_score无效 ({score}/10)，尝试fallback")
+                logger.warning(f"overall_score无效 ({score}/10)，尝试fallback")
 
         # 方法2: 从 summary 文本中提取评分
         summary = review_result.get("summary", "")
         if summary:
             score = self.extract_from_text(summary)
             if score is not None:
-                logger.info(f"✅ 从summary文本提取评分: {score}/10")
+                logger.info(f"从summary文本提取评分: {score}/10")
                 self.extraction_stats["from_summary"] += 1
                 return score
 
@@ -213,7 +213,7 @@ class ScoreExtractor:
         if batch_scores:
             score = self.calculate_batch_average(batch_scores)
             if score is not None:
-                logger.info(f"✅ 使用批次平均评分: {score}/10")
+                logger.info(f"使用批次平均评分: {score}/10")
                 self.extraction_stats["from_batch_avg"] += 1
                 return score
 
@@ -222,12 +222,12 @@ class ScoreExtractor:
         if issues:
             score = self.estimate_from_issues(issues)
             if score is not None:
-                logger.info(f"✅ 使用问题统计估算评分: {score}/10")
+                logger.info(f"使用问题统计估算评分: {score}/10")
                 self.extraction_stats["from_issues"] += 1
                 return score
 
         # 所有方法都失败
-        logger.warning("❌ 无法从任何来源提取评分")
+        logger.warning("无法从任何来源提取评分")
         self.extraction_stats["fallback_zero"] += 1
         return None
 
@@ -263,7 +263,7 @@ def get_score_extractor() -> ScoreExtractor:
     global _score_extractor
     if _score_extractor is None:
         _score_extractor = ScoreExtractor()
-        logger.info("✅ ScoreExtractor单例已初始化")
+        logger.info("ScoreExtractor单例已初始化")
     return _score_extractor
 
 

@@ -431,13 +431,13 @@ class PRAnalyzer:
                 changed_lines[file_info.path] = file_changed_lines
                 original_indent[file_info.path] = file_original_indent
                 logger.info(
-                    f"✅ 文件 {file_info.path}: {hunk_count} 个 hunk, "
+                    f"文件 {file_info.path}: {hunk_count} 个 hunk, "
                     f"提取 {len(file_changed_lines)} 个行号"
                 )
             else:
-                logger.warning(f"⚠️  文件 {file_info.path} 未提取到任何行号")
+                logger.warning(f"文件 {file_info.path} 未提取到任何行号")
 
-        logger.info(f"🎯 构建 Diff 安全区完成，覆盖 {len(changed_lines)} 个文件")
+        logger.info(f"构建 Diff 安全区完成，覆盖 {len(changed_lines)} 个文件")
         return changed_lines, hunk_boundaries, original_indent
 
     @staticmethod

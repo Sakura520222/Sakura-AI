@@ -89,7 +89,7 @@ class CodeIndexService:
                     )
                     if remaining > 0:
                         logger.warning(
-                            f"⚠️  Embedding 服务连续失败 {consecutive_failures} 次，"
+                            f"Embedding 服务连续失败 {consecutive_failures} 次，"
                             f"跳过剩余 {remaining} 个文件"
                         )
                         failed_count += remaining
@@ -200,11 +200,11 @@ class CodeIndexService:
                     indexed_count += 1
                     consecutive_failures = 0
                     logger.debug(
-                        f"✅ 已索引文件 {file_path}，生成 {len(chunks)} 个代码块"
+                        f"已索引文件 {file_path}，生成 {len(chunks)} 个代码块"
                     )
 
                 except Exception as e:
-                    logger.error("❌ 索引文件 {} 失败: {}", file_path, e)
+                    logger.error("索引文件 {} 失败: {}", file_path, e)
                     failed_count += 1
                     consecutive_failures += 1
 
@@ -349,7 +349,7 @@ class CodeIndexService:
                     indexed_count += 1
 
                 except Exception as e:
-                    logger.error("❌ 索引文件 {} 失败: {}", file_path, e)
+                    logger.error("索引文件 {} 失败: {}", file_path, e)
                     failed_count += 1
 
             # 差异清理：比对当前文件列表与数据库索引，清理已删除文件
@@ -768,12 +768,12 @@ class CodeIndexService:
                     await session.commit()
 
             logger.info(
-                "✅ 已删除文件 {} 的索引 ({} 个代码块)", file_path, deleted_count
+                "已删除文件 {} 的索引 ({} 个代码块)", file_path, deleted_count
             )
             return True
 
         except Exception as e:
-            logger.error("❌ 删除文件索引失败 (file: {}): {}", file_path, e)
+            logger.error("删除文件索引失败 (file: {}): {}", file_path, e)
             return False
 
     async def _cleanup_stale_file_chunks(

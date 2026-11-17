@@ -633,6 +633,6 @@ async def quiesce_database_reset_runtime(app: Any) -> None:
         supervisor.quiesced = True
         supervisor.quiescing = True
         supervisor.accepting = False
-        logger.info("✅ 数据库重置/应用关闭前 runtime 已安全静默")
+        logger.info("数据库重置/应用关闭前 runtime 已安全静默")
     finally:
         reset_runtime_supervisor(token)

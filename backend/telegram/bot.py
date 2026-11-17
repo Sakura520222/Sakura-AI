@@ -24,7 +24,7 @@ async def register_bot_commands(bot: Bot):
     ]
 
     await bot.set_my_commands(commands)
-    logger.info("✅ Bot 命令菜单已注册")
+    logger.info("Bot 命令菜单已注册")
 
 
 async def _telegram_error_handler(update: object, context) -> None:
@@ -46,9 +46,9 @@ async def _telegram_error_handler(update: object, context) -> None:
             TimedOut,
         ),
     ):
-        logger.warning(f"⚡ Telegram 网络瞬态错误（将自动重试）: {error}")
+        logger.warning(f"Telegram 网络瞬态错误（将自动重试）: {error}")
     else:
-        logger.opt(exception=error).error(f"❌ Telegram Bot 未预期的错误: {error}")
+        logger.opt(exception=error).error(f"Telegram Bot 未预期的错误: {error}")
 
 
 async def start_telegram_bot():
@@ -58,11 +58,11 @@ async def start_telegram_bot():
     if not getattr(settings, "telegram_enabled", True) or not getattr(
         settings, "telegram_bot_token", None
     ):
-        logger.info("ℹ️ Telegram Provider 未启用或缺少 token，跳过 Bot 启动")
+        logger.info("Telegram Provider 未启用或缺少 token，跳过 Bot 启动")
         return
 
     try:
-        logger.info("🤖 启动 Telegram Bot...")
+        logger.info("启动 Telegram Bot...")
 
         # 创建 Bot 实例
         _telegram_bot = Bot(token=settings.telegram_bot_token)
@@ -103,10 +103,10 @@ async def start_telegram_bot():
         except Exception as e:
             logger.warning(f"获取 Telegram Bot 用户名失败: {e}")
 
-        logger.info("✅ Telegram Bot 启动成功")
+        logger.info("Telegram Bot 启动成功")
 
     except Exception as e:
-        logger.error(f"❌ Telegram Bot 启动失败: {e}")
+        logger.error(f"Telegram Bot 启动失败: {e}")
         raise
 
 
@@ -119,9 +119,9 @@ async def stop_telegram_bot():
             await _telegram_app.updater.stop()
             await _telegram_app.stop()
             await _telegram_app.shutdown()
-            logger.info("👋 Telegram Bot 已停止")
+            logger.info("Telegram Bot 已停止")
         except Exception as e:
-            logger.error(f"❌ 停止 Telegram Bot 时出错: {e}")
+            logger.error(f"停止 Telegram Bot 时出错: {e}")
         finally:
             _telegram_app = None
 

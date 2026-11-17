@@ -91,7 +91,7 @@ class DocumentService:
             except Exception as e:
                 logger.warning(f"读取文件失败 {md_file}: {e}")
 
-        logger.info(f"📄 扫描到 {len(files_info)} 个 Markdown 文件")
+        logger.info(f"扫描到 {len(files_info)} 个 Markdown 文件")
         return files_info
 
     async def calculate_file_hash(self, file_path: str) -> str:
@@ -163,7 +163,7 @@ class DocumentService:
             except Exception as e:
                 logger.warning(f"解析文档失败 {file_info['file_path']}: {e}")
 
-        logger.info(f"✅ 成功解析 {len(documents)} 个文档")
+        logger.info(f"成功解析 {len(documents)} 个文档")
         return documents
 
     def _extract_title(self, content: str, file_path: str) -> str:
@@ -276,7 +276,7 @@ class DocumentService:
         # 处理超长块
         chunks = await self._split_long_chunks(chunks, metadata)
 
-        logger.debug(f"📦 文档已分块: {len(chunks)} 个块")
+        logger.debug(f"文档已分块: {len(chunks)} 个块")
         return chunks
 
     async def _split_long_chunks(
@@ -410,7 +410,7 @@ class DocumentService:
             except Exception as e:
                 logger.warning(f"处理文档失败 {doc['metadata'].get('file_path')}: {e}")
 
-        logger.info(f"📦 准备了 {len(all_chunks)} 个文档块用于索引")
+        logger.info(f"准备了 {len(all_chunks)} 个文档块用于索引")
         return all_chunks
 
 

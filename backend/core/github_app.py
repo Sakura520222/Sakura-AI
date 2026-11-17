@@ -95,7 +95,7 @@ class GitHubAppClient:
                 integration_id=app_id,  # 传入字符串，不转换为int
                 private_key=private_key,
             )
-            logger.info(f"✓ GitHub Integration创建成功, App ID: {app_id}")
+            logger.info(f"GitHub Integration创建成功, App ID: {app_id}")
             return integration
 
         except ReviewCancelledError:
@@ -365,7 +365,7 @@ class GitHubAppClient:
 
                 # 创建客户端
                 client = Github(login_or_token=token)
-                logger.info(f"✓ 成功获取仓库 {repo_owner}/{repo_name} 的访问令牌")
+                logger.info(f"成功获取仓库 {repo_owner}/{repo_name} 的访问令牌")
                 return client
 
             except ReviewCancelledError:
@@ -920,7 +920,7 @@ class GitHubAppClient:
             pr.create_review(event=event, body=body)
 
             logger.info(
-                f"✅ 成功提交Review: {repo_owner}/{repo_name}#{pr_number}, "
+                f"成功提交Review: {repo_owner}/{repo_name}#{pr_number}, "
                 f"event={event}, body_length={len(body)}"
             )
             return True
@@ -1031,7 +1031,7 @@ class GitHubAppClient:
             )
 
             logger.info(
-                f"✅ 成功提交Review: {repo_owner}/{repo_name}#{pr_number}, "
+                f"成功提交Review: {repo_owner}/{repo_name}#{pr_number}, "
                 f"event={event}, body_length={len(body)}, inline_comments={len(comments)}"
             )
             result = {
@@ -1101,7 +1101,7 @@ class GitHubAppClient:
                             comments=[],
                         )
                         logger.info(
-                            f"✅ 降级成功: 已提交无行内评论的 Review "
+                            f"降级成功: 已提交无行内评论的 Review "
                             f"({repo_owner}/{repo_name}#{pr_number})"
                         )
                         result = {

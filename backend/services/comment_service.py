@@ -71,7 +71,7 @@ class CommentService:
             comment = await asyncio.to_thread(pr.create_issue_comment, placeholder_body)
 
             logger.info(
-                f"✓ 已创建占位评论到PR: {pr.base.repo.full_name}#{pr.number} "
+                f"已创建占位评论到PR: {pr.base.repo.full_name}#{pr.number} "
                 f"(Comment ID: {comment.id})"
             )
 
@@ -89,7 +89,7 @@ class CommentService:
         """
         try:
             await asyncio.to_thread(comment.delete)
-            logger.info("✓ 已删除占位评论 (Comment ID: {})", comment.id)
+            logger.info("已删除占位评论 (Comment ID: {})", comment.id)
         except Exception as e:
             logger.opt(exception=True).error("删除占位评论时出错: {}", e)
             # 不抛出异常，因为占位评论删除失败不应影响主流程
@@ -129,7 +129,7 @@ class CommentService:
                 try:
                     # 1. 删除占位 comment
                     await asyncio.to_thread(comment.delete)
-                    logger.info("✓ 已删除占位评论 (Comment ID: {})", comment.id)
+                    logger.info("已删除占位评论 (Comment ID: {})", comment.id)
 
                     # 2. 构建整体评论内容
                     review_body = self._format_comment(
@@ -167,7 +167,7 @@ class CommentService:
                                 output_language=output_language,
                             )
                             logger.info(
-                                "✓ 已创建带行内评论的审查 (Review ID: {})",
+                                "已创建带行内评论的审查 (Review ID: {})",
                                 review.id,
                             )
                         else:
@@ -179,7 +179,7 @@ class CommentService:
                                 event="COMMENT",
                                 comments=[],
                             )
-                            logger.info("✓ 已创建普通审查 (Review ID: {})", review.id)
+                            logger.info("已创建普通审查 (Review ID: {})", review.id)
                     else:
                         # 没有行内评论，创建普通 review
                         review = await asyncio.to_thread(
@@ -188,7 +188,7 @@ class CommentService:
                             event="COMMENT",
                             comments=[],
                         )
-                        logger.info("✓ 已创建正式审查评论 (Review ID: {})", review.id)
+                        logger.info("已创建正式审查评论 (Review ID: {})", review.id)
 
                 except Exception as e:
                     logger.opt(exception=True).error(
@@ -205,7 +205,7 @@ class CommentService:
                         pr.create_issue_comment,
                         "⚠️ 审查评论更新失败，已降级为普通评论\n\n" + review_body,
                     )
-                    logger.info("✓ 已降级为普通评论")
+                    logger.info("已降级为普通评论")
             else:
                 logger.warning("无法更新评论：没有 PR 对象")
 
@@ -266,11 +266,11 @@ Please check system logs or contact the administrator.
                 try:
                     # 1. 删除占位 comment
                     await asyncio.to_thread(comment.delete)
-                    logger.info("✓ 已删除占位评论 (Comment ID: {})", comment.id)
+                    logger.info("已删除占位评论 (Comment ID: {})", comment.id)
 
                     # 2. 创建错误评论
                     await asyncio.to_thread(pr.create_issue_comment, error_body)
-                    logger.info("✓ 已创建错误评论")
+                    logger.info("已创建错误评论")
 
                 except Exception as e:
                     logger.opt(exception=True).error(
@@ -278,7 +278,7 @@ Please check system logs or contact the administrator.
                     )
                     # 降级方案：直接创建新的错误评论
                     await asyncio.to_thread(pr.create_issue_comment, error_body)
-                    logger.info("✓ 已降级为直接创建错误评论")
+                    logger.info("已降级为直接创建错误评论")
             else:
                 logger.warning("无法更新错误评论：没有 PR 对象")
 
@@ -313,7 +313,7 @@ Please check system logs or contact the administrator.
             )
 
             logger.info(
-                "✓ 成功发布审查评论到PR: {}#{}", pr.base.repo.full_name, pr.number
+                "成功发布审查评论到PR: {}#{}", pr.base.repo.full_name, pr.number
             )
 
         except Exception as e:
@@ -481,7 +481,7 @@ Please check system logs or contact the administrator.
                 comments=comments,
             )
 
-            logger.info("✓ 成功批量创建 {} 条行内评论", len(comments))
+            logger.info("成功批量创建 {} 条行内评论", len(comments))
             return review
 
         except Exception as e:
@@ -599,7 +599,7 @@ Please check system logs or contact the administrator.
             # 5. 一键应用 suggestion 块的缩进兜底（AI 偶尔丢失缩进，按原代码补齐）
             self._realign_suggestion_indentation(validated_comment, analysis)
             validated.append(validated_comment)
-            logger.debug("✓ 验证通过: {}:{}", matched_path, line_number)
+            logger.debug("验证通过: {}:{}", matched_path, line_number)
 
         return validated
 

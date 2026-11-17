@@ -78,7 +78,7 @@ class EmbeddingService:
                     max_retries=0,
                 )
                 logger.info(
-                    f"✅ 嵌入服务初始化成功: {self.provider} ({settings.embedding_model})"
+                    f"嵌入服务初始化成功: {self.provider} ({settings.embedding_model})"
                 )
 
             elif self.provider == "openai":
@@ -89,7 +89,7 @@ class EmbeddingService:
                     max_retries=0,
                 )
                 logger.info(
-                    f"✅ 嵌入服务初始化成功: {self.provider} ({settings.embedding_model})"
+                    f"嵌入服务初始化成功: {self.provider} ({settings.embedding_model})"
                 )
 
             elif self.provider == "ollama":
@@ -99,13 +99,13 @@ class EmbeddingService:
                     api_key=settings.embedding_api_key or "ollama",  # Ollama 不需要 key
                     max_retries=0,
                 )
-                logger.info("✅ 嵌入服务初始化成功: {}", self.provider)
+                logger.info("嵌入服务初始化成功: {}", self.provider)
 
             else:
                 raise ValueError(f"不支持的嵌入提供商: {self.provider}")
 
         except Exception as e:
-            logger.error("❌ 嵌入服务初始化失败: type={}", type(e).__name__)
+            logger.error("嵌入服务初始化失败: type={}", type(e).__name__)
             raise
 
     async def embed_texts(
@@ -146,7 +146,7 @@ class EmbeddingService:
                 )
             raise ValueError(f"不支持的嵌入提供商: {self.provider}")
         except Exception as e:
-            logger.error("❌ 生成嵌入向量失败: type={}", type(e).__name__)
+            logger.error("生成嵌入向量失败: type={}", type(e).__name__)
             raise
 
     @staticmethod
@@ -251,12 +251,12 @@ class EmbeddingService:
                             batch_embeddings.append(vector)
                 all_embeddings.extend(batch_embeddings)
 
-            logger.debug("✅ 成功生成 {} 个嵌入向量", len(all_embeddings))
+            logger.debug("成功生成 {} 个嵌入向量", len(all_embeddings))
             return all_embeddings
 
         except Exception as e:
             logger.error(
-                "❌ Embedding API 请求失败 (provider={}, model={}): type={}",
+                "Embedding API 请求失败 (provider={}, model={}): type={}",
                 self.provider,
                 settings.embedding_model,
                 type(e).__name__,
@@ -345,20 +345,20 @@ class RerankerService:
                     follow_redirects=True,
                 )
                 logger.info(
-                    f"✅ 重排序服务初始化成功: {self.provider} ({settings.rerank_model})"
+                    f"重排序服务初始化成功: {self.provider} ({settings.rerank_model})"
                 )
 
             elif self.provider == "none" or self.provider is None:
                 # 禁用重排序
-                logger.info("ℹ️  重排序服务已禁用")
+                logger.info("重排序服务已禁用")
                 self.client = None
 
             else:
-                logger.warning("⚠️  不支持的重排序提供商: {}，已禁用", self.provider)
+                logger.warning("不支持的重排序提供商: {}，已禁用", self.provider)
                 self.client = None
 
         except Exception as e:
-            logger.warning("⚠️  重排序服务初始化失败: {}，已禁用", e)
+            logger.warning("重排序服务初始化失败: {}，已禁用", e)
             self.client = None
 
     async def rerank(
@@ -418,7 +418,7 @@ class RerankerService:
                 raise
             if strict:
                 raise
-            logger.warning("⚠️  重排序失败: {}，返回原始结果", e)
+            logger.warning("重排序失败: {}，返回原始结果", e)
             return docs[:top_k]
 
     async def _rerank_via_siliconflow(
