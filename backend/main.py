@@ -120,7 +120,13 @@ def _format_duration(seconds: float) -> str:
 
 
 def _get_allowed_origins(app_settings: Settings) -> list[str]:
-    """构造 CORS origin 列表。开发模式下放行本地调试地址。"""
+    """构造 CORS origin 列表。开发模式下放行本地调试地址。
+
+    已知偏差（仅开发模式）：origins 在模块导入时按 Settings 的 app_port
+    计算，早于 lifespan 的数据库配置加载；若通过数据库把 app_port 改为
+    非默认值并重启，实际监听端口与这里的 origin 端口会不一致——开发环境
+    请用 APP_PORT 环境变量改端口以保持两者同步。
+    """
     origins = {f"https://{app_settings.sanitized_app_domain}"}
     if app_settings.is_development:
         port = app_settings.app_port
@@ -193,7 +199,7 @@ async def lifespan(app: FastAPI):
         _startup_started_instant_utc = startup_clock.now_utc()
         _startup_started_monotonic = startup_clock.monotonic()
         _startup_started_at = _startup_started_instant_utc.timestamp()
-        logger.info("🚀 Sakura AI 启动中...")
+        logger.info("Sakura AI 启动中...")
 
         # Install the admission gate before any background task can be created. A
         # reset request may race startup/shutdown, so the supervisor is always
@@ -233,20 +239,20 @@ async def lifespan(app: FastAPI):
             database_url = conn_config.get("database_url", "")
             if database_url:
                 settings.database_url = database_url
-                logger.info("📊 从 connection.json 加载 DATABASE_URL")
+                logger.info("从 connection.json 加载 DATABASE_URL")
             else:
                 logger.warning(
-                    "⚠️ connection.json 中无 DATABASE_URL，尝试从 Settings 默认值加载"
+                    "connection.json 中无 DATABASE_URL，尝试从 Settings 默认值加载"
                 )
                 database_url = settings.database_url
 
             if not database_url:
                 logger.error(
-                    "❌ 无法获取 DATABASE_URL，请检查 config/connection.json 或访问 /setup 完成初始配置"
+                    "无法获取 DATABASE_URL，请检查 config/connection.json 或访问 /setup 完成初始配置"
                 )
                 # 无法连接数据库，进入 bootstrap 模式引导用户配置
                 logger.warning(
-                    "🔧 因缺少 DATABASE_URL 进入 bootstrap 模式，请访问 /setup"
+                    "因缺少 DATABASE_URL 进入 bootstrap 模式，请访问 /setup"
                 )
             else:
                 # 2. 初始化数据库
@@ -254,9 +260,9 @@ async def lifespan(app: FastAPI):
                     from backend.models import init_db
 
                     await init_db()
-                    logger.info("✅ 数据库初始化成功")
+                    logger.info("数据库初始化成功")
                 except Exception:
-                    logger.exception("❌ 数据库初始化失败，停止启动")
+                    logger.exception("数据库初始化失败，停止启动")
                     raise
 
                 # 3. 从数据库加载全部配置到 Settings 单例
@@ -269,12 +275,31 @@ async def lifespan(app: FastAPI):
                     # app_timezone is restart-required: this new process reads
                     # it once during bootstrap and freezes the resulting zone.
                     initialize_time_service(settings.app_timezone)
-                    logger.info("✅ 配置已从数据库加载到 Settings")
+                    logger.info("配置已从数据库加载到 Settings")
+
+                    # 3.1 监听地址/端口回写桥：uvicorn 在 lifespan 启动后才
+                    # 创建监听 socket，此处把数据库配置的 app_host/app_port
+                    # 回写到已登记的 Server（显式 CLI 参数保持优先）。uvicorn
+                    # 直启（Docker CMD）未登记 Server，此调用为空操作。
+                    try:
+                        from backend.core import server_runtime
+
+                        bind_host, bind_port = server_runtime.apply_configured_bind(
+                            settings.app_host, settings.app_port
+                        )
+                        if bind_host is not None or bind_port is not None:
+                            logger.info(
+                                "已应用数据库监听配置: host={}, port={}",
+                                bind_host if bind_host is not None else "（CLI 指定）",
+                                bind_port if bind_port is not None else "（CLI 指定）",
+                            )
+                    except Exception:
+                        logger.warning("应用监听配置失败，沿用启动参数绑定")
                 except Exception:
                     # A configured timezone is part of the process-wide time
                     # contract.  Continuing with the bootstrap zone would make
                     # only some components use the requested setting.
-                    logger.exception("❌ 加载应用时区配置失败，停止启动")
+                    logger.exception("加载应用时区配置失败，停止启动")
                     raise
 
                 # 3.5 加载统一配置节覆盖（strategy.*/label.*）并刷新 facade 单例
@@ -300,26 +325,26 @@ async def lifespan(app: FastAPI):
                     # LabelService 自身还缓存了一份冲突规则快照，必须在
                     # section store 加载后同步刷新，否则重启后仍使用内置规则。
                     label_service.reload_labels()
-                    logger.info("✅ 统一配置节存储已加载（strategy/label）")
+                    logger.info("统一配置节存储已加载（strategy/label）")
                 except Exception:
-                    logger.exception("❌ 加载统一配置节存储失败，停止启动")
+                    logger.exception("加载统一配置节存储失败，停止启动")
                     raise
 
                 # 打印关键配置（在动态配置加载后，确保显示实际值）
-                logger.info(f"📊 日志级别: {settings.log_level}")
-                logger.info(f"🌐 应用域名: {settings.app_domain}")
+                logger.info(f"日志级别: {settings.log_level}")
+                logger.info(f"应用域名: {settings.app_domain}")
 
                 # 检测默认 JWT 密钥（必须在动态配置加载后检查）
                 if settings.webui_secret_key == "change-me-in-production":
                     logger.warning(
-                        "⚠️  WebUI JWT 密钥使用默认值！请通过 WebUI 配置页面设置 WEBUI_SECRET_KEY。"
+                        "WebUI JWT 密钥使用默认值！请通过 WebUI 配置页面设置 WEBUI_SECRET_KEY。"
                     )
 
                 # 4. 动态配置加载后再次校验必填字段（仅警告，不阻止启动）
                 missing = settings.validate_required_fields()
                 if missing:
                     logger.warning(
-                        f"⚠️ 以下配置项未设置: {', '.join(missing)}，部分功能可能不可用"
+                        f"以下配置项未设置: {', '.join(missing)}，部分功能可能不可用"
                     )
 
                 # 知识提取配置自检 / Knowledge extraction config self-check
@@ -330,15 +355,15 @@ async def lifespan(app: FastAPI):
                     ke_enabled = ke_config.get("enabled", True)
                     ke_interval = ke_config.get("min_reflections", 15)
                     logger.info(
-                        f"📚 知识提取配置: enabled={ke_enabled}, interval={ke_interval}"
+                        f"知识提取配置: enabled={ke_enabled}, interval={ke_interval}"
                     )
                     if ke_enabled and not ke_interval:
                         logger.warning(
-                            "⚠️ 知识提取已启用但 min_reflections 为 0 或空，"
+                            "知识提取已启用但 min_reflections 为 0 或空，"
                             "请检查 strategy.context_enhancement.sakura_memory 配置"
                         )
                 except Exception as e:
-                    logger.warning(f"⚠️ 知识提取配置自检失败: {e}")
+                    logger.warning(f"知识提取配置自检失败: {e}")
 
                 if _should_start_background_tasks(settings):
                     from backend.services.config_runtime import (
@@ -369,11 +394,11 @@ async def lifespan(app: FastAPI):
                             telegram_task = create_registered_background_task(
                                 start_telegram_bot(), "telegram_listener"
                             )
-                            logger.info("✅ Telegram Bot 已启动")
+                            logger.info("Telegram Bot 已启动")
                         except Exception as e:
-                            logger.error(f"❌ Telegram Bot 启动失败: {e}")
+                            logger.error(f"Telegram Bot 启动失败: {e}")
                     else:
-                        logger.info("ℹ️ Telegram 通知未配置，跳过 Bot 启动")
+                        logger.info("Telegram 通知未配置，跳过 Bot 启动")
 
                     # Published announcement rows are durable, but the
                     # in-memory task created by the publishing request is not.
@@ -394,9 +419,9 @@ async def lifespan(app: FastAPI):
                                 "announcement.recovery",
                             )
                         )
-                        logger.info("✅ 公告待投递恢复任务已启动")
+                        logger.info("公告待投递恢复任务已启动")
                     except Exception as e:
-                        logger.error(f"❌ 公告待投递恢复任务启动失败: {e}")
+                        logger.error(f"公告待投递恢复任务启动失败: {e}")
 
                     # 启动 Redis Pub/Sub 监听（SSE 多进程支持）
                     try:
@@ -405,9 +430,9 @@ async def lifespan(app: FastAPI):
                         redis_listener_task = create_registered_background_task(
                             start_redis_listener(), "sse_redis_listener"
                         )
-                        logger.info("✅ SSE Redis Pub/Sub 监听已启动")
+                        logger.info("SSE Redis Pub/Sub 监听已启动")
                     except Exception as e:
-                        logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
+                        logger.error(f"SSE Redis Pub/Sub 监听启动失败: {e}")
 
                     # 自愈活动 cursor signing secret（已部署实例可能 Setup 时未生成）
                     try:
@@ -417,7 +442,7 @@ async def lifespan(app: FastAPI):
 
                         await ensure_activity_cursor_signing_secret()
                     except Exception as e:
-                        logger.warning(f"⚠️ 活动 cursor signing secret 自愈失败: {e}")
+                        logger.warning(f"活动 cursor signing secret 自愈失败: {e}")
 
                     # 启动活动观测 Outbox dispatcher（授权器由应用注入）
                     try:
@@ -476,7 +501,7 @@ async def lifespan(app: FastAPI):
                             app.state.activity_outbox_task = asyncio.create_task(
                                 outbox_dispatcher.run()
                             )
-                            logger.info("✅ 活动观测 Outbox dispatcher 已启动")
+                            logger.info("活动观测 Outbox dispatcher 已启动")
                         elif not settings.activity_cursor_signing_secret:
                             logger.warning(
                                 "活动 cursor signing secret 缺失，跳过新版 dispatcher"
@@ -486,7 +511,7 @@ async def lifespan(app: FastAPI):
                                 "活动 repository scope authorizer 未注入，跳过新版 dispatcher"
                             )
                     except Exception as e:
-                        logger.error(f"❌ 活动观测 Outbox dispatcher 启动失败: {e}")
+                        logger.error(f"活动观测 Outbox dispatcher 启动失败: {e}")
 
                     # 启动仓库扫描调度器
                     try:
@@ -502,7 +527,7 @@ async def lifespan(app: FastAPI):
                         app.state.scan_scheduler = scan_scheduler
                         existing_supervisor.register_scheduler(scan_scheduler)
                     except Exception as e:
-                        logger.error(f"❌ 仓库扫描调度器启动失败: {e}")
+                        logger.error(f"仓库扫描调度器启动失败: {e}")
 
                     # 启动配额重置调度器
                     try:
@@ -513,7 +538,7 @@ async def lifespan(app: FastAPI):
                         app.state.quota_reset_scheduler = quota_reset_scheduler
                         existing_supervisor.register_scheduler(quota_reset_scheduler)
                     except Exception as e:
-                        logger.error(f"❌ 配额重置调度器启动失败: {e}")
+                        logger.error(f"配额重置调度器启动失败: {e}")
 
                     # 启动仓库互助调度器
                     try:
@@ -538,13 +563,13 @@ async def lifespan(app: FastAPI):
                         update_checker.start()
                         app.state.update_checker = update_checker
                         existing_supervisor.register_scheduler(update_checker)
-                        logger.info("✅ 更新检查调度器已启动（60min 周期）")
+                        logger.info("更新检查调度器已启动（60min 周期）")
                     except Exception as e:
-                        logger.error(f"❌ 更新检查调度器启动失败: {e}")
+                        logger.error(f"更新检查调度器启动失败: {e}")
                 else:
-                    logger.warning("🧪 本地开发模式：已跳过后台任务启动")
+                    logger.warning("本地开发模式：已跳过后台任务启动")
         else:
-            logger.warning("🔧 Bootstrap 模式：仅 Setup Wizard 可用")
+            logger.warning("Bootstrap 模式：仅 Setup Wizard 可用")
             logger.info("请访问 /setup 完成初始配置")
             # Generate the private local Setup credential (never log its value).
             generate_setup_token()
@@ -572,14 +597,14 @@ async def lifespan(app: FastAPI):
             - (_startup_started_monotonic or _startup_finished_monotonic),
         )
         logger.info(
-            "✅ Sakura AI 启动完成，耗时 {}",
+            "Sakura AI 启动完成，耗时 {}",
             _format_duration(_startup_duration),
         )
 
         yield
 
         # 关闭时
-        logger.info("👋 Sakura AI 关闭中...")
+        logger.info("Sakura AI 关闭中...")
 
         # Close admission and await all DB-backed schedulers/workers before the
         # remaining clients are torn down. The reset path calls the same helper;
@@ -588,7 +613,7 @@ async def lifespan(app: FastAPI):
             await quiesce_database_reset_runtime(app)
         except Exception as exc:
             logger.error(
-                "❌ 运行时静默未完成，应用关闭将继续但数据库重置必须停止: {}",
+                "运行时静默未完成，应用关闭将继续但数据库重置必须停止: {}",
                 exc,
             )
 
@@ -601,9 +626,9 @@ async def lifespan(app: FastAPI):
         try:
             await close_embedding_service()
             await close_reranker_service()
-            logger.info("✅ 服务客户端已关闭")
+            logger.info("服务客户端已关闭")
         except Exception as e:
-            logger.error(f"❌ 关闭服务客户端时出错: {e}")
+            logger.error(f"关闭服务客户端时出错: {e}")
 
         # 停止 Telegram Bot
         try:
@@ -615,7 +640,7 @@ async def lifespan(app: FastAPI):
                 except asyncio.CancelledError:
                     pass
         except Exception as e:
-            logger.error(f"❌ 停止 Telegram Bot 时出错: {e}")
+            logger.error(f"停止 Telegram Bot 时出错: {e}")
 
         # 停止 SSE Redis Pub/Sub 监听
         if redis_listener_task:
@@ -832,7 +857,9 @@ def _parse_launch_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="以应用子进程模式运行（由监督循环拉起，一般不手动使用）",
     )
-    parser.add_argument("--host", default="0.0.0.0", help="监听地址")
+    parser.add_argument(
+        "--host", default=None, help="监听地址，默认读取配置 app_host（127.0.0.1）"
+    )
     parser.add_argument(
         "--port", type=int, default=None, help="监听端口，默认读取配置 app_port"
     )
@@ -842,7 +869,24 @@ def _parse_launch_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="关闭代码热重载（子进程内模块级 reload）",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    # 空白 --host 视为未指定：uvicorn 对空字符串 host 会绑定所有网卡（含
+    # IPv6），静默绕过“默认仅本机”的安全默认，必须在此收敛为哨兵。
+    if args.host is not None and not args.host.strip():
+        args.host = None
+    return args
+
+
+def _resolve_bind_host(cli_host: str | None, settings_host: str | None) -> str:
+    """解析最终监听地址：CLI 显式值 > Settings（env/DB 载入）> 回环默认。
+
+    空白值（如遗留的 ``APP_HOST=``）一律回落 ``127.0.0.1``：uvicorn 收到
+    空字符串会绑定全部网卡与 IPv6，与“默认仅本机”的契约相反。
+    """
+
+    if cli_host is not None:
+        return cli_host.strip() or "127.0.0.1"
+    return (settings_host or "").strip() or "127.0.0.1"
 
 
 def _run_serve(args: argparse.Namespace) -> int:
@@ -862,7 +906,7 @@ def _run_serve(args: argparse.Namespace) -> int:
         settings.log_level = args.log_level.upper()
     config = uvicorn.Config(
         "backend.main:app",
-        host=args.host,
+        host=_resolve_bind_host(args.host, settings.app_host),
         port=args.port if args.port is not None else settings.app_port,
         # Admission stays open at the bridge; both sinks enforce the live level.
         # Otherwise a startup WARNING threshold permanently drops later DEBUG.
@@ -871,7 +915,9 @@ def _run_serve(args: argparse.Namespace) -> int:
         timeout_graceful_shutdown=15,
     )
     server = uvicorn.Server(config)
-    server_runtime.register_server(server)
+    # Record explicit CLI overrides so the lifespan bind bridge can keep them
+    # authoritative over database-configured app_host/app_port.
+    server_runtime.register_server(server, cli_host=args.host, cli_port=args.port)
     server.run()
     if server_runtime.restart_requested():
         return server_runtime.RESTART_EXIT_CODE
@@ -879,14 +925,12 @@ def _run_serve(args: argparse.Namespace) -> int:
 
 
 def _spawn_child(args: argparse.Namespace) -> subprocess.Popen:
-    command = [
-        sys.executable,
-        "-m",
-        "backend.main",
-        "--serve",
-        "--host",
-        args.host,
-    ]
+    command = [sys.executable, "-m", "backend.main", "--serve"]
+    # Only forward explicitly given bind arguments. Unset values let each
+    # child resolve host/port from database config (falling back to the
+    # Settings defaults), so config-page/setup changes survive restarts.
+    if args.host is not None:
+        command += ["--host", args.host]
     if args.port is not None:
         command += ["--port", str(args.port)]
     if args.log_level is not None:

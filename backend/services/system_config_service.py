@@ -3,6 +3,7 @@
 封装系统核心配置的数据库读写操作，供路由层调用。
 """
 
+import ipaddress
 import math
 import re
 from collections.abc import Mapping
@@ -52,6 +53,7 @@ RESTART_REQUIRED_KEYS = frozenset(
         "webui_secret_key",
         "activity_cursor_signing_secret",
         "app_timezone",
+        "app_host",
         "app_port",
         "chroma_persist_dir",
     }
@@ -134,6 +136,7 @@ SYSTEM_CONFIG_GROUPS = [
         "id": "application",
         "keys": [
             "app_domain",
+            "app_host",
             "app_port",
             "app_timezone",
             "log_level",
@@ -156,6 +159,38 @@ SYSTEM_CONFIG_UPDATE_KEYS = SYSTEM_CONFIG_KEYS | frozenset({"star_aid_enabled"})
 
 _INTEGER_RE = re.compile(r"^[+-]?[0-9]+$")
 _GITHUB_APP_SLUG_RE = re.compile(r"^[A-Za-z0-9-]+$")
+# 主机名：保守的 DNS 标签形式（IPv4/IPv6/localhost 之外的唯一允许形态）。
+_HOSTNAME_RE = re.compile(
+    r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
+
+
+def validate_bind_host(value: str) -> str:
+    """校验并标准化监听地址（localhost / IPv4 / IPv6 / DNS 主机名）。
+
+    返回标准化（去空白、小写）后的值；非法输入抛出 ``ValueError``。
+    供系统配置校验与配置备份导入两条路径共用。
+    """
+
+    host = value.strip().lower()
+    if not host:
+        raise ValueError("监听地址不能为空")
+    if host == "localhost":
+        return host
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        # 全数字标签（如 999.999.999.999）不是合法主机名：与 IPv4 字面量
+        # 无法区分，且绑定层解析必然失败，必须显式拒绝。
+        if (
+            len(host) > 253
+            or not _HOSTNAME_RE.fullmatch(host)
+            or all(label.isdigit() for label in host.split("."))
+        ):
+            raise ValueError(
+                "监听地址必须是 IP 地址、localhost 或有效主机名"
+            ) from None
+    return host
 
 
 class SystemConfigValidationError(ValueError):
@@ -361,6 +396,16 @@ class SystemConfigService:
         elif key == "app_port":
             # Store the canonical integer representation, as the old route did.
             value = str(numeric_value)
+        elif key == "app_host":
+            try:
+                value = validate_bind_host(value)
+            except ValueError as exc:
+                raise SystemConfigValidationError(
+                    key,
+                    str(exc),
+                    toast_key="system_config.invalid_bind_host",
+                    field_key=key,
+                ) from exc
         elif key == "database_url" and value:
             if not value.startswith(
                 (

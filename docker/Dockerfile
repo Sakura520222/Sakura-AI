@@ -102,5 +102,10 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # 启动命令；即使第三方或未知长连接未主动退出，也限制优雅停机等待时间。
+# 容器内必须绑定 0.0.0.0：端口发布经 DNAT/docker-proxy 到容器网络接口，
+# 绑定回环会让发布端口静默失效（HEALTHCHECK 走 localhost 仍通过）。容器
+# 内 0.0.0.0 不会直接对外——宿主暴露面由 compose 的 ports 映射控制，默认
+# 仅发布到 127.0.0.1（SAKURA_HOST_BIND 可改）；host 网络的开发 Compose 用
+# command 覆盖为 127.0.0.1。
 ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "15"]

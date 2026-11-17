@@ -49,6 +49,7 @@ from backend.services.system_config_service import (
     RESTART_REQUIRED_KEYS,
     SYSTEM_CONFIG_KEYS,
     SYSTEM_SENSITIVE_KEYS,
+    validate_bind_host,
 )
 
 BACKUP_FORMAT = "sakura-ai-config-backup"
@@ -392,6 +393,16 @@ def _validate_system_record(record: BackupRecord) -> None:
             raise ConfigBackupError(
                 "系统配置 app_timezone 必须是 system 或有效 IANA 时区"
             ) from exc
+        return
+    if record.key == "app_host":
+        # 与系统配置页路径保持等价：空值在此处显式拒绝（不能走到下面的
+        # 通用空值提前返回，否则页面校验声明非法的值会原样入库）。
+        if record.value is None or not record.value.strip():
+            raise ConfigBackupError("系统配置 app_host 不得为空")
+        try:
+            record.value = validate_bind_host(record.value)
+        except ValueError as exc:
+            raise ConfigBackupError(f"系统配置 app_host 无效：{exc}") from exc
         return
     if record.value is None or not record.value.strip():
         return

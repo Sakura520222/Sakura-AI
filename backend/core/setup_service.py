@@ -58,6 +58,7 @@ _ENV_TO_SETTINGS_KEY: dict[str, str] = {
     "WEBUI_SECRET_KEY": "webui_secret_key",
     "ACTIVITY_CURSOR_SIGNING_SECRET": "activity_cursor_signing_secret",
     "APP_DOMAIN": "app_domain",
+    "APP_HOST": "app_host",
     "APP_PORT": "app_port",
     "APP_TIMEZONE": "app_timezone",
     "LOG_LEVEL": "log_level",

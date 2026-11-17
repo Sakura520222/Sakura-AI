@@ -152,6 +152,7 @@ class CompleteSetupRequest(BaseModel):
     NOTIFICATION_RETRY_BACKOFF_FACTOR: str | None = None
     NOTIFICATION_RATE_LIMIT_SECONDS: str | None = None
     APP_DOMAIN: str | None = None
+    APP_HOST: str | None = None
     APP_PORT: str | None = None
     LOG_LEVEL: str | None = None
     ADMIN_GITHUB_USERNAME: str | None = None

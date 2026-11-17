@@ -15,6 +15,19 @@ services:
         max-size: "50m"
         max-file: "3"
     network_mode: host  # 使用宿主机网络,可直接访问 localhost
+    # host 网络下没有端口映射，应用绑定地址即宿主暴露面：覆盖镜像 CMD，
+    # 默认仅绑定回环，防止意外对外开启端口（需要对外时改回 0.0.0.0）。
+    command:
+      [
+        "uvicorn",
+        "backend.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+        "--timeout-graceful-shutdown",
+        "15",
+      ]
     env_file:
       - ../.deploy/deployment.env
     group_add:

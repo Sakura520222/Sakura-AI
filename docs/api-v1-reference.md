@@ -796,6 +796,7 @@ Setup 阶段按 AI 厂商获取模型列表，并尽可能提取上下文窗口�
 | `SUMMARY_PROVIDER` | string | Summary 使用的 AI 厂商 ID |
 | `TELEGRAM_BOT_TOKEN` | string | Telegram Bot Token |
 | `APP_DOMAIN` | string | 应用域名 |
+| `APP_HOST` | string | HTTP 服务监听地址（默认 127.0.0.1） |
 | `APP_PORT` | string | 应用端口 |
 | `LOG_LEVEL` | string | 日志级别 |
 | `ADMIN_GITHUB_USERNAME` | string | 管理员 GitHub 用户名 |

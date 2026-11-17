@@ -367,7 +367,9 @@ settings. Account and model storage formats remain compatible.
 
 **application** — `app`
 
-`app_domain`, `app_port`, `app_timezone`, `log_level`, `webui_secret_key`, `activity_cursor_signing_secret`, `bot_username`。
+`app_domain`, `app_host`, `app_port`, `app_timezone`, `log_level`, `webui_secret_key`, `activity_cursor_signing_secret`, `bot_username`。
+
+其中 `app_host` 为 HTTP 服务监听地址（默认 `127.0.0.1`，仅本机访问；接受 IP/`localhost`/主机名），与 `app_port` 一样修改后需重启应用生效。该配置对源码运行（`python -m backend.main`）生效；容器部署以容器命令与 compose 端口映射为准。
 
 
 ### 个人设置

@@ -134,7 +134,7 @@ macOS、Windows 和其他仅容器部署可以自动显示新版本，但不能�
 **Linux / macOS**：
 
 ```bash
-docker run -d -p 8000:8000 \
+docker run -d -p 127.0.0.1:8000:8000 \
   -e DATABASE_URL=mysql+asyncmy://user:pass@host:3306/sakura_ai \
   -e REDIS_URL=redis://host:6379/0 \
   -v $(pwd)/config:/app/config \
@@ -149,7 +149,7 @@ New-Item -ItemType Directory -Force $ConfigPath | Out-Null
 docker run -d `
   --name sakura-ai `
   --restart unless-stopped `
-  -p 8000:8000 `
+  -p 127.0.0.1:8000:8000 `
   -e "DATABASE_URL=mysql+asyncmy://user:pass@host:3306/sakura_ai" `
   -e "REDIS_URL=redis://host:6379/0" `
   -v "${ConfigPath}:/app/config" `
@@ -210,7 +210,7 @@ Email/SMTP 通知自 3.2.0 起提供。请在「系统核心配置」页设置 S
 1. 访问 [GitHub Apps 设置](https://github.com/settings/apps)，点击 **New GitHub App**
 2. 填写名称、Homepage URL
 3. **Repository permissions**：Pull requests `Read and write`，Contents `Read and write`，Checks `Read and write`，Actions `Read`，Issues `Read and write`（可选）
-4. **Webhook URL**：`https://your-domain.com:8000/api/webhook/github`，填写 Webhook secret
+4. **Webhook URL**：`https://your-domain.com/api/webhook/github`（默认部署仅监听宿主回环，GitHub Webhook 需经反向代理转发到 `127.0.0.1:8000`；直连 `https://your-domain.com:8000` 需按[监听地址与端口](#监听地址与端口)设 `SAKURA_HOST_BIND=0.0.0.0` 并放行防火墙），填写 Webhook secret
 5. **Webhook events**：勾选 Pull requests、Pull request reviews、Check runs、Workflow jobs、Issues（可选）、Issue comments（可选）
 6. 创建后，在 App 页面底部 **Generate a private key**，下载 `.pem` 文件（Setup Wizard 中需粘贴完整私钥内容）
 7. 点击左侧 **Install App**，选择要启用审查的仓库
@@ -300,7 +300,7 @@ python -m pip install -r requirements-dev.txt
 python -m backend.main
 ```
 
-> 首次启动将进入 Bootstrap 模式，访问 `http://localhost:8000/setup` 通过 Setup Wizard 完成配置。
+> 首次启动将进入 Bootstrap 模式，访问 `http://localhost:8000/setup` 通过 Setup Wizard 完成配置。源码运行默认只绑定 `127.0.0.1`（见下文[监听地址与端口](#监听地址与端口)）；远程服务器上请用 SSH 端口转发（`ssh -L 8000:127.0.0.1:8000`）访问 Setup，或在启动时显式指定 `--host`。
 >
 > 也可通过 `./start.sh`（开发模式）或 `./start.sh --prod`（生产镜像模式）启动。
 
@@ -317,6 +317,24 @@ py scripts/dev_bootstrap.py
 ```bash
 py scripts/dev_bootstrap.py --reset
 ```
+
+### 监听地址与端口
+
+源码运行（`python -m backend.main`）默认绑定 `127.0.0.1:8000`，即仅本机可访问。绑定地址与端口的修改途径（优先级从高到低）：
+
+1. **显式 CLI 参数**：`python -m backend.main --host 0.0.0.0 --port 9000`。显式参数跨监督循环重启保持有效。
+2. **数据库配置 `app_host` / `app_port`**：初始化时在 Setup Wizard「管理员」步骤填写「监听地址」「应用端口」；后续在 WebUI「系统核心配置」→「应用」分组修改。保存后需重启应用（管理员「重启应用」按钮，监督循环会自动重新拉起并应用新值）。
+3. **环境变量 `APP_HOST` / `APP_PORT`**：数据库中没有对应配置行时生效。
+
+远程服务器首次初始化：默认仅本机可访问，推荐 `ssh -L 8000:127.0.0.1:8000` 端口转发后访问 `http://127.0.0.1:8000/setup`，并在向导中按需填写对外监听地址；也可启动时显式 `--host` 或设置 `APP_HOST`。
+
+Docker 部署：容器内固定绑定 `0.0.0.0`（bridge 网络端口发布的前提，容器内绑定回环会使发布端口静默失效；容器内的 `0.0.0.0` 本身不对外），`app_host`/`app_port` 配置对容器内直启的 uvicorn 不生效。宿主侧暴露由 Compose 端口映射控制，默认仅发布到回环 `127.0.0.1:8000`，防止意外对外开启端口；需要直连 `:8000`（如 GitHub Webhook 不经反向代理直接回调 `https://your-domain.com:8000/...`）或局域网访问时，在 `.deploy/deployment.env` 设 `SAKURA_HOST_BIND=0.0.0.0`，推荐做法是保持回环并用反向代理（nginx/Caddy → `127.0.0.1:8000`）对外提供 HTTPS。
+
+> **升级提示**：从旧版本升级后端口默认改为仅回环发布。如果现有部署的 GitHub Webhook 或用户直连 `http://服务器IP:8000`，升级后会被切断——在 `deployment.env` 显式设置 `SAKURA_HOST_BIND=0.0.0.0` 恢复直连，或改用反向代理接入。
+
+`SAKURA_HOST_BIND` 仅支持 `0.0.0.0` 或 `127.0.0.1`：`start.sh` 的部署健康门禁、Setup URL 与 Host Updater 探活都通过宿主回环 `localhost:8000` 访问，设为其他网卡地址会使部署健康检查超时并回滚。开发 Compose（`docker-compose.yml`）使用 `network_mode: host` 且没有 `ports` 映射，已通过 `command` 覆盖把应用绑定到 `127.0.0.1`（`SAKURA_HOST_BIND` 与 `app_host` 对其不适用）；需要对外时修改该 `command` 为 `0.0.0.0`。
+
+修改端口前请确认目标端口未被占用，主机名地址需可解析：绑定失败（端口占用、DNS 解析失败等）会使应用以启动失败退出（uvicorn 退出码 3），监督循环不会无限重试；此时只能通过修正配置（数据库 `app_config` 行或环境变量）后重新启动恢复。
 
 ---
 
@@ -357,8 +375,11 @@ MySQL 已提交的部分 DDL 会保留，失败不会写 Setup 完成标记；�
 ## 七、验证部署
 
 ```bash
-curl http://your-domain.com:8000/health
+# 默认部署仅发布到宿主回环，在宿主机本地验证：
+curl http://127.0.0.1:8000/health
 # {"status":"healthy","service":"sakura-ai"}
+# 对外经反向代理域名验证（或直连 :8000，需 SAKURA_HOST_BIND=0.0.0.0）：
+curl https://your-domain.com/health
 ```
 
 WebUI：`https://your-domain.com/`
