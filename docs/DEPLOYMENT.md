@@ -523,6 +523,13 @@ sudo ./start.sh updater install  # 获取并校验当前版本 binary，安装�
 sudo ./start.sh updater start     # 确认/启动 systemd service
 ```
 
+**`/run/sakura-ai` 受管形态**：updater 对已存在的 run directory 采用 fail-closed 接管策略，只接受自身先前创建的形态（属主 `root:9472`、mode `0770`），绝不改写其他目录。Compose 对缺失的 bind 源路径会以 `root:root 0755` 自动补建该目录，因此 `start.sh` 会在任何 `compose up` 之前预置受管形态（缺失时创建；Docker 自动补建的空目录收敛为受管形态；非空或非 root 属主则拒绝并提示）。若宿主机已残留错误形态的目录（例如旧版本部署失败遗留），可手工修复后重跑安装：
+
+```bash
+sudo ls -la /run/sakura-ai                       # 确认内容（通常应为空）
+sudo chown root:9472 /run/sakura-ai && sudo chmod 0770 /run/sakura-ai
+```
+
 安装优先选择部署版本对应 Release 的 updater，不直接下载 `latest` updater。版本解析是 **deployment-mode-aware** 的，选择安装包不等于验证运行中容器的身份：
 
 - `SAKURA_DEPLOY_MODE=image`：优先使用 `deployment.env` 中 `SAKURA_AI_IMAGE=:vX.Y.Z`（可带 digest），或完整固定的 `:dev-<UTC timestamp>-vX.Y.Z-<40 位 SHA>@sha256:...` 引用中的版本；这两类具体引用都不依赖 `/health` 或宿主源码。镜像为 `:latest` 等不能直接提取版本的引用时，读取已健康运行服务的 `/health` 版本；服务尚未就绪时才回退到 `backend/__init__.py` 的 `__version__`。

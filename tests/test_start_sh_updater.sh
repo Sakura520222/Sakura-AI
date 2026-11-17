@@ -5,6 +5,10 @@ export _START_SH_SOURCED=1
 source "$SCRIPT_DIR/start.sh"
 set +e
 
+# 真实 updater_prepare_run_dir 供底部 RD 系列用例使用；上方 install 流程测试
+# 用 stub 隔离，避免触碰宿主真实 /run/sakura-ai。
+_UPDATER_PREPARE_RUN_DIR_REAL="$(declare -f updater_prepare_run_dir)"
+
 # The historical resolver/daemon-flow cases exercise the manual lifecycle and
 # must not depend on whether the test host itself boots systemd (CI containers
 # commonly do not).  Dedicated production systemd cases below opt in through
@@ -58,6 +62,8 @@ updater_binary_mode() {
 updater_directory_owner_uid() { printf '%s\n' "$FAKE_STATE_OWNER"; }
 updater_directory_mode() { printf '%s\n' "$FAKE_STATE_MODE"; }
 updater_chown() { :; }
+# install 流程测试不预置真实 run dir（RD 系列恢复真实实现后单独覆盖）。
+updater_prepare_run_dir() { :; }
 updater_binary_is_safe() {
     local binary="$1" owner mode
     [[ -f "$binary" && ! -L "$binary" ]] || return 1
@@ -541,6 +547,7 @@ run_state_dir_migration_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         updater_uses_systemd() { return 1; }
         set +e
         local state_dir="$case_dir/state"
@@ -583,6 +590,7 @@ run_state_dir_unsafe_existing_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         updater_uses_systemd() { return 1; }
         set +e
         local state_dir="$case_dir/state"
@@ -614,6 +622,7 @@ NONROOT_STATE_DIR="$TMPDIR/state-mig-nonroot"
 (
     export _START_SH_SOURCED=1
     source "$SCRIPT_DIR/start.sh"
+    updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
     set +e
     mkdir -p "$NONROOT_STATE_DIR/state"
     export UPDATER_STATE_DIR="$NONROOT_STATE_DIR/state"
@@ -636,6 +645,7 @@ SYMLINK_STATE_DIR="$TMPDIR/state-mig-symlink"
 (
     export _START_SH_SOURCED=1
     source "$SCRIPT_DIR/start.sh"
+    updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
     set +e
     mkdir -p "$SYMLINK_STATE_DIR/state"
     export UPDATER_STATE_DIR="$SYMLINK_STATE_DIR/state"
@@ -788,6 +798,7 @@ run_real_flock_busy_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         set +e
         local state_dir="$case_dir/state"
         local binary="$state_dir/sakura-ai-updater"
@@ -850,6 +861,7 @@ run_checksum_failure_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         set +e
         local state_dir="$case_dir/state"
         local binary="$state_dir/sakura-ai-updater"
@@ -930,6 +942,7 @@ run_precommit_failure_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         set +e
         local state_dir="$case_dir/state"
         local binary="$state_dir/sakura-ai-updater"
@@ -1036,6 +1049,7 @@ run_postcommit_final_safety_failure_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         set +e
         local state_dir="$case_dir/state"
         local binary="$state_dir/sakura-ai-updater"
@@ -1110,6 +1124,7 @@ run_stable_fallback_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         set +e
         local state_dir="$case_dir/state"
         local binary="$state_dir/sakura-ai-updater"
@@ -1230,6 +1245,7 @@ run_install_start_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         updater_uses_systemd() { return 1; }
         set +e
         mkdir -p "$state_dir"
@@ -1281,6 +1297,7 @@ run_install_running_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         updater_uses_systemd() { return 1; }
         set +e
         mkdir -p "$state_dir"
@@ -1329,6 +1346,7 @@ run_systemd_install_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         set +e
         mkdir -p "$state_dir"
         export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
@@ -1388,6 +1406,7 @@ run_systemd_unavailable_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         set +e
         mkdir -p "$state_dir"
         export UPDATER_STATE_DIR="$state_dir" UPDATER_BINARY="$binary"
@@ -1422,6 +1441,7 @@ run_systemd_old_binary_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         set +e
         mkdir -p "$state_dir"
         printf '#!/bin/sh\nold-updater\n' > "$binary"
@@ -1473,6 +1493,7 @@ run_systemd_uninstall_order_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         set +e
         mkdir -p "$state_dir"
         printf '#!/bin/sh\nmanaged-updater\n' > "$binary"
@@ -1520,6 +1541,7 @@ run_systemd_reinstall_order_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         set +e
         mkdir -p "$case_dir"
         export UPDATER_SYSTEMD_UNIT_PATH="$case_dir/sakura-ai-updater.service"
@@ -1561,6 +1583,7 @@ run_systemd_residual_link_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         set +e
         mkdir -p "$state_dir" "$(dirname "$wants_path")"
         printf '#!/bin/sh\nmanaged-updater\n' > "$binary"
@@ -1609,6 +1632,7 @@ run_legacy_repeat_uninstall_case() {
     (
         export _START_SH_SOURCED=1
         source "$SCRIPT_DIR/start.sh"
+        updater_prepare_run_dir() { return 0; }  # RD 系列之外：install 流程不预置真实 run dir
         set +e
         mkdir -p "$state_dir"
         printf '#!/bin/sh\nlegacy-updater\n' > "$binary"
@@ -1643,6 +1667,258 @@ case_rc=$?
 [ "$case_rc" -eq 0 ] \
     && report 0 "U10: legacy 无 unit 重复卸载保持幂等" \
     || report 1 "U10: legacy 无 unit 重复卸载保持幂等"
+
+# --- updater run dir 预置 / pre-shape（RD 系列：compose 自动补建防护） ---
+
+# 恢复真实实现（顶部 install 流程测试使用隔离 stub）。
+eval "$_UPDATER_PREPARE_RUN_DIR_REAL"
+
+RD_ROOT="$TMPDIR/rd"
+mkdir -p "$RD_ROOT"
+RD_LOG="$RD_ROOT/calls.log"
+
+# 注入点约定：metadata/uid 走 FAKE_* 或本地重定义；getent/groupadd/chown/chmod
+# 全部落 RD_LOG 断言调用序列（managed 形态必须零副作用）。
+
+run_rd_fresh_create_case() {
+    local dir="$RD_ROOT/rd1"
+    rm -rf "$dir"
+    (
+        : > "$RD_LOG"
+        updater_getent_group() { return 2; }
+        updater_groupadd() { printf 'GROUPADD:%s:%s\n' "$1" "$2" >> "$RD_LOG"; }
+        updater_chown() { printf 'CHOWN:%s:%s:%s\n' "$1" "$2" "$3" >> "$RD_LOG"; }
+        updater_chmod() { printf 'CHMOD:%s\n' "$*" >> "$RD_LOG"; chmod "$@"; }
+        updater_prepare_run_dir "$dir"
+        rc=$?
+        # MSYS 目录 chmod 不落盘，真实 mode 断言不可移植 → 断言调用契约
+        #（chmod/chown 均经注入 seam 落日志）。
+        [ "$rc" -eq 0 ] \
+            && [ -d "$dir" ] \
+            && grep -q '^GROUPADD:9472:sakura-ai$' "$RD_LOG" \
+            && grep -qF "CHOWN:$dir:0:9472" "$RD_LOG" \
+            && grep -qF "CHMOD:0770 $dir" "$RD_LOG"
+    )
+}
+run_rd_fresh_create_case
+[ $? -eq 0 ] && report 0 "RD1: run dir 缺失时按受管形态创建（0770 + chown 0:9472 + 组自举）" || report 1 "RD1"
+
+run_rd_managed_noop_case() {
+    local dir="$RD_ROOT/rd2"
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    chmod 0770 "$dir"
+    (
+        : > "$RD_LOG"
+        updater_directory_owner_uid() { printf '%s\n' 0; }
+        updater_directory_owner_gid() { printf '%s\n' 9472; }
+        updater_directory_mode() { printf '%s\n' 770; }
+        updater_getent_group() { printf 'GETENT-UNEXPECTED\n' >> "$RD_LOG"; return 2; }
+        updater_groupadd() { printf 'GROUPADD\n' >> "$RD_LOG"; }
+        updater_chown() { printf 'CHOWN\n' >> "$RD_LOG"; }
+        updater_chmod() { printf 'CHMOD\n' >> "$RD_LOG"; }
+        updater_prepare_run_dir "$dir" \
+            && [ ! -s "$RD_LOG" ]
+    )
+}
+run_rd_managed_noop_case
+[ $? -eq 0 ] && report 0 "RD2: 已是受管形态 → 幂等通过，零副作用" || report 1 "RD2"
+
+run_rd_docker_artifact_case() {
+    local dir="$RD_ROOT/rd3"
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    chmod 0755 "$dir"
+    (
+        : > "$RD_LOG"
+        updater_directory_owner_uid() { printf '%s\n' 0; }
+        updater_directory_owner_gid() { printf '%s\n' 0; }
+        updater_directory_mode() { printf '%s\n' 755; }
+        updater_getent_group() {
+            case "$1" in
+                9472|sakura-ai) printf 'sakura-ai:x:9472:\n'; return 0 ;;
+                *) return 2 ;;
+            esac
+        }
+        updater_groupadd() { printf 'GROUPADD\n' >> "$RD_LOG"; }
+        updater_chown() { printf 'CHOWN:%s:%s:%s\n' "$1" "$2" "$3" >> "$RD_LOG"; }
+        updater_chmod() { printf 'CHMOD:%s\n' "$*" >> "$RD_LOG"; chmod "$@"; }
+        updater_prepare_run_dir "$dir"
+        rc=$?
+        [ "$rc" -eq 0 ] \
+            && grep -qF "CHOWN:$dir:0:9472" "$RD_LOG" \
+            && grep -qF "CHMOD:0770 $dir" "$RD_LOG" \
+            && ! grep -q 'GROUPADD' "$RD_LOG"
+    )
+}
+run_rd_docker_artifact_case
+[ $? -eq 0 ] && report 0 "RD3: Docker 自动补建的空 root:root 0755 目录 → 收敛为受管形态" || report 1 "RD3"
+
+run_rd_nonempty_refuse_case() {
+    local dir="$RD_ROOT/rd4"
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    touch "$dir/foreign-entry"
+    (
+        : > "$RD_LOG"
+        updater_directory_owner_uid() { printf '%s\n' 0; }
+        updater_directory_owner_gid() { printf '%s\n' 0; }
+        updater_directory_mode() { printf '%s\n' 755; }
+        updater_groupadd() { printf 'GROUPADD\n' >> "$RD_LOG"; }
+        updater_chown() { printf 'CHOWN\n' >> "$RD_LOG"; }
+        updater_chmod() { printf 'CHMOD\n' >> "$RD_LOG"; }
+        updater_prepare_run_dir "$dir" >/dev/null 2>&1
+        rc=$?
+        [ "$rc" -ne 0 ] \
+            && [ -e "$dir/foreign-entry" ] \
+            && [ "$(stat -c '%a' "$dir")" = "755" ] \
+            && [ ! -s "$RD_LOG" ]
+    )
+}
+run_rd_nonempty_refuse_case
+[ $? -eq 0 ] && report 0 "RD4: 非受管且非空 → fail-closed 拒绝且不改动" || report 1 "RD4"
+
+run_rd_foreign_owner_refuse_case() {
+    local dir="$RD_ROOT/rd5"
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    (
+        : > "$RD_LOG"
+        updater_directory_owner_uid() { printf '%s\n' 1000; }
+        updater_directory_owner_gid() { printf '%s\n' 1000; }
+        updater_directory_mode() { printf '%s\n' 755; }
+        updater_groupadd() { printf 'GROUPADD\n' >> "$RD_LOG"; }
+        updater_chown() { printf 'CHOWN\n' >> "$RD_LOG"; }
+        updater_chmod() { printf 'CHMOD\n' >> "$RD_LOG"; }
+        updater_prepare_run_dir "$dir" >/dev/null 2>&1
+        rc=$?
+        [ "$rc" -ne 0 ] && [ ! -s "$RD_LOG" ]
+    )
+}
+run_rd_foreign_owner_refuse_case
+[ $? -eq 0 ] && report 0 "RD5: 非 root 属主的空目录 → 拒绝接管" || report 1 "RD5"
+
+run_rd_symlink_refuse_case() {
+    local dir="$RD_ROOT/rd6"
+    local target="$RD_ROOT/rd6-target"
+    rm -rf "$dir" "$target"
+    mkdir -p "$target"
+    ln -s "$target" "$dir"
+    (
+        : > "$RD_LOG"
+        updater_groupadd() { printf 'GROUPADD\n' >> "$RD_LOG"; }
+        updater_chown() { printf 'CHOWN\n' >> "$RD_LOG"; }
+        updater_chmod() { printf 'CHMOD\n' >> "$RD_LOG"; }
+        updater_prepare_run_dir "$dir" >/dev/null 2>&1
+        rc=$?
+        # Git Bash 的 ln -s 默认是复制而非符号链接：此时复制出的空目录带真实
+        # 非 root uid，同样落入拒绝分支。两条路径都断言 rc!=0 且零副作用。
+        # / On Linux this exercises the symlink refusal; under Git Bash (ln -s
+        # copies) the copied dir carries a real non-root uid and is refused too.
+        [ "$rc" -ne 0 ] && [ ! -s "$RD_LOG" ]
+    )
+}
+run_rd_symlink_refuse_case
+[ $? -eq 0 ] && report 0 "RD6: 符号链接/异属主目录 → 拒绝" || report 1 "RD6"
+
+run_rd_nondir_refuse_case() {
+    local dir="$RD_ROOT/rd6b"
+    rm -rf "$dir"
+    printf 'not-a-dir\n' > "$dir"
+    (
+        : > "$RD_LOG"
+        updater_groupadd() { printf 'GROUPADD\n' >> "$RD_LOG"; }
+        updater_chown() { printf 'CHOWN\n' >> "$RD_LOG"; }
+        updater_chmod() { printf 'CHMOD\n' >> "$RD_LOG"; }
+        updater_prepare_run_dir "$dir" >/dev/null 2>&1
+        rc=$?
+        [ "$rc" -ne 0 ] && [ -f "$dir" ] && [ ! -s "$RD_LOG" ]
+    )
+}
+run_rd_nondir_refuse_case
+[ $? -eq 0 ] && report 0 "RD6b: 非目录普通文件 → 拒绝" || report 1 "RD6b"
+
+run_rd_non_root_skip_case() {
+    local dir="$RD_ROOT/rd7"
+    rm -rf "$dir"
+    (
+        : > "$RD_LOG"
+        FAKE_UID=1000
+        updater_groupadd() { printf 'GROUPADD\n' >> "$RD_LOG"; }
+        updater_prepare_run_dir "$dir" \
+            && [ ! -e "$dir" ] \
+            && [ ! -s "$RD_LOG" ]
+    )
+}
+run_rd_non_root_skip_case
+[ $? -eq 0 ] && report 0 "RD7: 非 root 调用方 → 跳过（dev 工作站不阻断）" || report 1 "RD7"
+
+# --- 组自举 / host group bootstrap（G 系列：镜像 ensure_group 语义） ---
+
+run_group_gid_conflict_case() {
+    (
+        : > "$RD_LOG"
+        updater_getent_group() {
+            case "$1" in
+                9472) printf 'www-data:x:9472:\n'; return 0 ;;
+                *) return 2 ;;
+            esac
+        }
+        updater_groupadd() { printf 'GROUPADD\n' >> "$RD_LOG"; }
+        updater_ensure_host_group >/dev/null 2>&1
+        rc=$?
+        [ "$rc" -ne 0 ] && [ ! -s "$RD_LOG" ]
+    )
+}
+run_group_gid_conflict_case
+[ $? -eq 0 ] && report 0 "G1: GID 9472 已属于其他组名 → 拒绝且不 groupadd" || report 1 "G1"
+
+run_group_name_gid_mismatch_case() {
+    (
+        : > "$RD_LOG"
+        updater_getent_group() {
+            case "$1" in
+                9472) return 2 ;;
+                sakura-ai) printf 'sakura-ai:x:1234:\n'; return 0 ;;
+                *) return 2 ;;
+            esac
+        }
+        updater_groupadd() { printf 'GROUPADD\n' >> "$RD_LOG"; }
+        updater_ensure_host_group >/dev/null 2>&1
+        rc=$?
+        [ "$rc" -ne 0 ] && [ ! -s "$RD_LOG" ]
+    )
+}
+run_group_name_gid_mismatch_case
+[ $? -eq 0 ] && report 0 "G2: 组名存在但 GID 不一致 → 拒绝" || report 1 "G2"
+
+run_group_create_case() {
+    (
+        : > "$RD_LOG"
+        updater_getent_group() { return 2; }
+        updater_groupadd() { printf 'GROUPADD:%s:%s\n' "$1" "$2" >> "$RD_LOG"; }
+        updater_ensure_host_group \
+            && grep -q '^GROUPADD:9472:sakura-ai$' "$RD_LOG"
+    )
+}
+run_group_create_case
+[ $? -eq 0 ] && report 0 "G3: name/GID 均缺失 → groupadd -g 9472 sakura-ai" || report 1 "G3"
+
+run_group_idempotent_case() {
+    (
+        : > "$RD_LOG"
+        updater_getent_group() {
+            case "$1" in
+                9472|sakura-ai) printf 'sakura-ai:x:9472:\n'; return 0 ;;
+                *) return 2 ;;
+            esac
+        }
+        updater_groupadd() { printf 'GROUPADD\n' >> "$RD_LOG"; }
+        updater_ensure_host_group && [ ! -s "$RD_LOG" ]
+    )
+}
+run_group_idempotent_case
+[ $? -eq 0 ] && report 0 "G4: 双向一致 → 幂等通过，不 groupadd" || report 1 "G4"
 
 rm -rf "$TMPDIR"
 echo ""

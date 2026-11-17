@@ -2896,6 +2896,12 @@ cmd_sandbox() {
 UPDATER_STATE_DIR="${UPDATER_STATE_DIR:-$UPDATER_PROJECT_ROOT/$DEPLOY_DIR/updater}"
 UPDATER_BINARY="$UPDATER_STATE_DIR/sakura-ai-updater"
 UPDATER_SOCKET_PATH="/run/sakura-ai/updater.sock"
+# 与 updater DEFAULT_GID/DEFAULT_GROUP（backends/daemon.py）及两个 compose 的
+# bind 挂载保持同步；start.sh 需要在 compose up 前预置受管形态的 run dir。
+# / Keep in sync with updater daemon.py DEFAULT_GID/DEFAULT_GROUP and the
+# compose bind mounts; start.sh pre-shapes the run dir before compose up.
+UPDATER_GID="9472"
+UPDATER_GROUP="sakura-ai"
 UPDATER_SOURCE_COMPOSE_FILE="$UPDATER_PROJECT_ROOT/docker/docker-compose.yml"
 UPDATER_PROD_COMPOSE_FILE="$UPDATER_PROJECT_ROOT/docker/docker-compose.prod.yml"
 UPDATER_DEPLOYMENT_ENV_FILE="${UPDATER_DEPLOYMENT_ENV_FILE:-$UPDATER_PROJECT_ROOT/$DEPLOYMENT_ENV_FILE}"
@@ -3203,6 +3209,7 @@ updater_current_uid() { id -u; }
 updater_binary_owner_uid() { stat -c '%u' "$1"; }
 updater_binary_mode() { stat -c '%a' "$1"; }
 updater_directory_owner_uid() { stat -c '%u' "$1"; }
+updater_directory_owner_gid() { stat -c '%g' "$1"; }
 updater_directory_mode() { stat -c '%a' "$1"; }
 updater_path_is_symlink() { [[ -L "$1" ]]; }
 updater_path_exists() { [[ -e "$1" || -L "$1" ]]; }
@@ -3212,6 +3219,115 @@ updater_sync_temp() { sync "$1"; }
 updater_sync_state_dir() { sync "$1"; }
 updater_flock() { flock -n "$1"; }
 updater_mv() { mv -f -- "$1" "$2"; }
+
+# getent/groupadd 隔离层：与 owner/mode helper 同理，Git Bash 测试可注入。
+# / getent/groupadd seam so tests can stub NSS results off-Linux.
+updater_getent_group() { getent group "$1"; }
+updater_groupadd() { groupadd -g "$1" "$2"; }
+
+# 宿主 sakura-ai 组自举，语义镜像 updater DaemonBackend.ensure_group：
+# name/GID 双向校验，冲突即拒绝；二者都不存在才 groupadd；getent 非 0/1/2
+# 退出码视为 NSS 故障（fail-closed，绝不盲跑 groupadd）。
+# / Mirror ensure_group: bidirectional name/GID validation, groupadd only when
+# both lookups miss, any other getent exit code is a hard failure.
+updater_ensure_host_group() {
+    local out rc name gid
+    out=$(updater_getent_group "$UPDATER_GID"); rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+        name="${out%%:*}"
+        if [[ "$name" != "$UPDATER_GROUP" ]]; then
+            fail "group ID $UPDATER_GID is owned by '$name', expected '$UPDATER_GROUP'" >&2
+            return 1
+        fi
+    elif [[ "$rc" -ne 1 && "$rc" -ne 2 ]]; then
+        fail "cannot query group ID $UPDATER_GID: getent exited $rc" >&2
+        return 1
+    fi
+    out=$(updater_getent_group "$UPDATER_GROUP"); rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+        gid=$(printf '%s\n' "$out" | cut -d: -f3)
+        if [[ "$gid" != "$UPDATER_GID" ]]; then
+            fail "group '$UPDATER_GROUP' exists with GID $gid, expected $UPDATER_GID" >&2
+            return 1
+        fi
+        return 0
+    fi
+    if [[ "$rc" -ne 1 && "$rc" -ne 2 ]]; then
+        fail "cannot query group '$UPDATER_GROUP': getent exited $rc" >&2
+        return 1
+    fi
+    if ! updater_groupadd "$UPDATER_GID" "$UPDATER_GROUP"; then
+        fail "groupadd -g $UPDATER_GID $UPDATER_GROUP failed" >&2
+        return 1
+    fi
+}
+
+# 在任何 ``$COMPOSE up`` 之前把 updater run dir 预置为受管形态（root:<gid> 0770）。
+# Compose 对缺失的 bind 源路径默认 ``create_host_path: true``，Docker 会以
+# root:root 0755 自动补建 /run/sakura-ai；而 updater install 对已存在目录采用
+# fail-closed 接管策略（仅接受 root:9472 0770），全新宿主机首次部署的 bootstrap
+# 因此必然被拒。此处提前收敛：缺失→创建；已受管→幂等；空的 root-owned 非受管
+# 目录（Docker 自动补建痕迹）→ 收敛；其余（非空/非 root-owned/符号链接）→ 拒绝。
+# / Pre-shape the updater run dir before compose can auto-create it as
+# root:root 0755: create when missing, accept the managed shape, converge an
+# empty root-owned artifact, and refuse anything foreign (fail-closed).
+updater_prepare_run_dir() {
+    local dir="${1:-$(dirname "$UPDATER_SOCKET_PATH")}"
+    local owner_uid owner_gid mode
+    # 非 root 只能跳过（dev 工作站）：无法 chown root:<gid>，生产部署要求 root。
+    # / Non-root cannot chown to root:<gid>; production deploys run as root.
+    [[ "$(updater_current_uid)" == "0" ]] || return 0
+    if updater_path_exists "$dir"; then
+        if updater_path_is_symlink "$dir" || [[ ! -d "$dir" ]]; then
+            fail "refusing non-directory updater run dir: $dir" >&2
+            return 1
+        fi
+        owner_uid=$(updater_directory_owner_uid "$dir")
+        owner_gid=$(updater_directory_owner_gid "$dir")
+        mode=$(updater_directory_mode "$dir")
+        if [[ "$owner_uid" == "0" && "$owner_gid" == "$UPDATER_GID" ]] \
+            && [[ "$mode" =~ ^[0-7]+$ ]] \
+            && (( (8#$mode & 8#777) == 8#770 )); then
+            return 0
+        fi
+        if [[ "$owner_uid" != "0" ]]; then
+            fail "refusing to adopt updater run dir $dir owned by uid $owner_uid (expected root); inspect it, then: chown root:$UPDATER_GID $dir && chmod 0770 $dir" >&2
+            return 1
+        fi
+        if [[ -n "$(ls -A "$dir" 2>/dev/null)" ]]; then
+            fail "refusing to adopt non-empty updater run dir $dir (uid=$owner_uid gid=$owner_gid mode=$mode); inspect it, then: chown root:$UPDATER_GID $dir && chmod 0770 $dir" >&2
+            return 1
+        fi
+        # 空、root-owned、非受管形态 → Docker/compose 自动补建的 bind 源目录。
+        updater_ensure_host_group || return 1
+        if ! updater_chown "$dir" 0 "$UPDATER_GID"; then
+            fail "cannot chown updater run dir $dir to root:$UPDATER_GID" >&2
+            return 1
+        fi
+        if ! updater_chmod 0770 "$dir"; then
+            fail "cannot chmod updater run dir $dir to 0770" >&2
+            return 1
+        fi
+        return 0
+    fi
+    updater_ensure_host_group || return 1
+    # mkdir + 显式 chmod（而非 ``install -d -m``）：chmod 走 updater_chmod 注入
+    # seam 供测试断言，且规避 MSYS/Git Bash 对目录 fchmod 的兼容性问题。
+    # / mkdir + explicit chmod keeps the updater_chmod test seam and avoids
+    # ``install -m`` quirks on directory permissions under MSYS.
+    if ! mkdir -p "$dir"; then
+        fail "cannot create updater run dir $dir" >&2
+        return 1
+    fi
+    if ! updater_chmod 0770 "$dir"; then
+        fail "cannot chmod updater run dir $dir to 0770" >&2
+        return 1
+    fi
+    if ! updater_chown "$dir" 0 "$UPDATER_GID"; then
+        fail "cannot chown updater run dir $dir to root:$UPDATER_GID" >&2
+        return 1
+    fi
+}
 
 # Curl is constrained to the fixed HTTPS release endpoint and bounded time.
 # curl 仅允许固定 HTTPS 发布地址，并设置有界超时与重试。
@@ -3956,6 +4072,15 @@ updater_install_release() {
         fi
     fi
 
+    # 手动 install 路径（如最小 curl+compose 部署后补装 updater）同样可能面对
+    # Docker 自动补建的 root:root run dir；先收敛为受管形态再交给 backend，
+    # 与 build_runner 中 compose up 前的预置保持同一契约。
+    # / Manual installs (e.g. after a minimal curl+compose deploy) can face the
+    # same Docker auto-created run dir; converge it before the backend install.
+    if ! updater_prepare_run_dir; then
+        return 1
+    fi
+
     if updater_binary_is_safe "$binary"; then
         if updater_backend is-running \
             --state-dir "$UPDATER_STATE_DIR" \
@@ -4620,6 +4745,17 @@ build_runner() {
         else
             ok "依赖未变更，跳过构建"
         fi
+    fi
+
+    # 两个 compose 都 bind 挂载 /run/sakura-ai；必须先于任何 ``$COMPOSE up``
+    # 预置受管形态，否则 Docker 自动补建的 root:root 0755 目录会让后续
+    # updater install 的 fail-closed 接管校验必然失败（全新宿主机必现）。
+    # / Both compose files bind-mount /run/sakura-ai; shape it before any
+    # ``$COMPOSE up`` or Docker's auto-created root:root 0755 source directory
+    # breaks the updater install's fail-closed adoption check.
+    if ! updater_prepare_run_dir; then
+        set_phase "start" "fail"
+        return 1
     fi
 
     # --- build ---
