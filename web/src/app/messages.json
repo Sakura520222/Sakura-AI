@@ -1411,6 +1411,10 @@
     "提交中…",
     "Submitting…"
   ],
+  "[\"监听地址（默认 127.0.0.1，仅本机访问）\",\"Bind address (defaults to 127.0.0.1, loopback only)\"]": [
+    "监听地址（默认 127.0.0.1，仅本机访问）",
+    "Bind address (defaults to 127.0.0.1, loopback only)"
+  ],
   "[\"通知渠道\",\"Delivery channels\"]": [
     "通知渠道",
     "Delivery channels"
@@ -2418,6 +2422,10 @@
   "[\"未设置默认模型\",\"No default model\"]": [
     "未设置默认模型",
     "No default model"
+  ],
+  "[\"正在保存配置…\",\"Saving configuration…\"]": [
+    "正在保存配置…",
+    "Saving configuration…"
   ],
   "[\"启用全局强制验证\",\"Require verification globally\"]": [
     "启用全局强制验证",
@@ -4315,6 +4323,10 @@
     "重试查询",
     "Check again"
   ],
+  "[\"显示明文\",\"Reveal\"]": [
+    "显示明文",
+    "Reveal"
+  ],
   "[\"未填写原因\",\"No reason provided\"]": [
     "未填写原因",
     "No reason provided"
@@ -4342,6 +4354,10 @@
   "[\"标签定义、推荐与仓库扫描\",\"Label definitions, recommendations and repository scans\"]": [
     "标签定义、推荐与仓库扫描",
     "Label definitions, recommendations and repository scans"
+  ],
+  "[\"正在保存配置并初始化数据，完成后应用会自动重启，请勿关闭页面…\",\"Saving configuration and initializing data. The application will restart automatically — please keep this page open…\"]": [
+    "正在保存配置并初始化数据，完成后应用会自动重启，请勿关闭页面…",
+    "Saving configuration and initializing data. The application will restart automatically — please keep this page open…"
   ],
   "[\"刷新状态\",\"Refresh status\"]": [
     "刷新状态",
@@ -4698,6 +4714,10 @@
   "[\"时间\",\"Date\"]": [
     "时间",
     "Date"
+  ],
+  "[\"隐藏\",\"Hide\"]": [
+    "隐藏",
+    "Hide"
   ],
   "[\"试试其他关键词。\",\"Try another search.\"]": [
     "试试其他关键词。",

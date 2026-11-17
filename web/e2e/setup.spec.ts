@@ -31,6 +31,7 @@ const localizedCopy = {
     databaseUrl: "Database URL",
     preflight: "Check database connection",
     confirm: "Confirm",
+    next: "Next",
     finish: "Finish setup",
     complete: "Setup complete",
   },
@@ -42,6 +43,7 @@ const localizedCopy = {
     databaseUrl: "数据库连接地址",
     preflight: "检查数据库连接",
     confirm: "确认",
+    next: "下一步",
     finish: "完成配置",
     complete: "配置已完成",
   },
@@ -173,6 +175,12 @@ for (const language of ["en", "zh-CN"] as const) {
     await page.getByRole("button", { name: copy.preflight, exact: true }).click();
     await expect(page.getByRole("status")).toHaveText("database_preflight_ready");
 
+    // “完成配置”只在最后一步出现：逐页前进到检索步骤。
+    for (const _step of ["github", "admin", "notifications", "rag"]) {
+      await page
+        .getByRole("button", { name: copy.next, exact: true })
+        .click();
+    }
     await page.getByRole("button", { name: copy.finish, exact: true }).click();
     await page.getByRole("dialog").getByRole("button", { name: copy.confirm, exact: true }).click();
     await expect(page.getByRole("heading", { name: copy.complete, exact: true })).toBeVisible();

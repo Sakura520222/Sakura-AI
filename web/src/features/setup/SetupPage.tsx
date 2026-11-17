@@ -28,7 +28,12 @@ type Result = {
   setup_values?: Record<string, string>;
   total_count?: number;
 };
-type Field = [string, string, string, ("secret" | "text" | "multiline")?];
+type Field = [
+  string,
+  string,
+  string,
+  ("secret" | "text" | "multiline" | "secret-multiline")?,
+];
 const groups: { id: string; label: [string, string]; fields: Field[] }[] = [
   {
     id: "database",
@@ -47,7 +52,7 @@ const groups: { id: string; label: [string, string]; fields: Field[] }[] = [
         "GITHUB_PRIVATE_KEY",
         "GitHub App 私钥",
         "GitHub App private key",
-        "multiline",
+        "secret-multiline",
       ],
       ["GITHUB_WEBHOOK_SECRET", "Webhook 密钥", "Webhook secret", "secret"],
       [
@@ -79,6 +84,11 @@ const groups: { id: string; label: [string, string]; fields: Field[] }[] = [
         "Administrator Telegram ID (optional)",
       ],
       ["APP_DOMAIN", "应用域名", "Application domain"],
+      [
+        "APP_HOST",
+        "监听地址（默认 127.0.0.1，仅本机访问）",
+        "Bind address (defaults to 127.0.0.1, loopback only)",
+      ],
       ["APP_PORT", "应用端口", "Application port"],
       [
         "APP_TIMEZONE",
@@ -185,6 +195,45 @@ function GateIntro({
   );
 }
 
+function SecretMultilineField({
+  value,
+  revealed,
+  placeholder,
+  onValue,
+  onToggle,
+}: {
+  value: string;
+  revealed: boolean;
+  placeholder: string;
+  onValue: (next: string) => void;
+  onToggle: () => void;
+}) {
+  const { t } = useLocale();
+  return (
+    <div className="setup-secret-multiline">
+      <textarea
+        rows={7}
+        readOnly={!revealed}
+        value={revealed ? value : value.replace(/[^\n]/g, "•")}
+        placeholder={placeholder}
+        onPaste={
+          revealed
+            ? undefined
+            : (event) => {
+                // 掩码态保留粘贴路径：PEM 依赖换行，不能改用单行 password 输入。
+                event.preventDefault();
+                onValue(event.clipboardData.getData("text"));
+              }
+        }
+        onChange={(event) => onValue(event.target.value)}
+      />
+      <button type="button" className="setup-secret-toggle" onClick={onToggle}>
+        {revealed ? t("隐藏", "Hide") : t("显示明文", "Reveal")}
+      </button>
+    </div>
+  );
+}
+
 function SetupWizard() {
   const { t } = useLocale();
   const confirm = useConfirm();
@@ -192,6 +241,9 @@ function SetupWizard() {
   const [token, setToken] = useState("");
   const [authorized, setAuthorized] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
+  const [revealedSecrets, setRevealedSecrets] = useState<Record<string, boolean>>(
+    {},
+  );
   const [group, setGroup] = useState(0);
   const [backup, setBackup] = useState<string | null>(null);
   const [importCount, setImportCount] = useState(0);
@@ -201,6 +253,7 @@ function SetupWizard() {
     string,
     unknown
   > | null>(null);
+  const [finishing, setFinishing] = useState(false);
   const headers = () => ({ "X-Setup-Token": credential.current });
   const state = useQuery({
     queryKey: ["setup-browser-state", authorized],
@@ -311,24 +364,31 @@ function SetupWizard() {
       }))
     )
       return;
-    await run(async () => {
-      const result = await api<Result>("/api/v1/setup/browser/complete", {
-        method: "POST",
-        headers: headers(),
-        body: JSON.stringify({
-          ...values,
-          ...(backup ? { CONFIG_BACKUP: backup } : {}),
-        }),
+    setFinishing(true);
+    try {
+      await run(async () => {
+        const result = await api<Result>("/api/v1/setup/browser/complete", {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({
+            ...values,
+            ...(backup ? { CONFIG_BACKUP: backup } : {}),
+          }),
+        });
+        if (!result.success) {
+          setMessage(
+            result.message || t("配置未完成", "Setup did not complete"),
+          );
+          return;
+        }
+        credential.current = "";
+        setValues({});
+        setBackup(null);
+        setComplete(true);
       });
-      if (!result.success) {
-        setMessage(result.message || t("配置未完成", "Setup did not complete"));
-        return;
-      }
-      credential.current = "";
-      setValues({});
-      setBackup(null);
-      setComplete(true);
-    });
+    } finally {
+      setFinishing(false);
+    }
   }
   if (complete || state.data?.state === "completed")
     return (
@@ -478,7 +538,27 @@ function SetupWizard() {
                 className={kind === "multiline" ? "setup-field-full" : undefined}
               >
                 {t(zh, en)}
-                {kind === "multiline" ? (
+                {kind === "secret-multiline" ? (
+                  <SecretMultilineField
+                    value={values[key] || ""}
+                    revealed={!!revealedSecrets[key]}
+                    placeholder={
+                      state.data?.configured?.[key]
+                        ? t(
+                            "已配置，留空沿用",
+                            "Configured; leave blank to keep",
+                          )
+                        : ""
+                    }
+                    onValue={(next) => setValues({ ...values, [key]: next })}
+                    onToggle={() =>
+                      setRevealedSecrets({
+                        ...revealedSecrets,
+                        [key]: !revealedSecrets[key],
+                      })
+                    }
+                  />
+                ) : kind === "multiline" ? (
                   <textarea
                     rows={7}
                     value={values[key] || ""}
@@ -545,14 +625,26 @@ function SetupWizard() {
                 {t("下一步", "Next")}
               </button>
             )}
-            <button
-              className="login-button login-button-main"
-              disabled={mutation.isPending}
-              onClick={() => void finish()}
-            >
-              {t("完成配置", "Finish setup")}
-            </button>
+            {group === groups.length - 1 && (
+              <button
+                className="login-button login-button-main"
+                disabled={mutation.isPending}
+                onClick={() => void finish()}
+              >
+                {finishing
+                  ? t("正在保存配置…", "Saving configuration…")
+                  : t("完成配置", "Finish setup")}
+              </button>
+            )}
           </div>
+          {finishing && (
+            <p className="setup-pending" role="status">
+              {t(
+                "正在保存配置并初始化数据，完成后应用会自动重启，请勿关闭页面…",
+                "Saving configuration and initializing data. The application will restart automatically — please keep this page open…",
+              )}
+            </p>
+          )}
           <div className="setup-backup">
             <Disclosure title={t("从备份恢复", "Restore from backup")}>
               <p>

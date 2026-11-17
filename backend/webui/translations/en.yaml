@@ -1410,6 +1410,7 @@ system_config:
   database_reset_open_setup: "Open Setup"
   invalid_db_url: "Invalid database URL. Must start with mysql+aiomysql://, mysql+asyncmy://, mysql://, postgresql+asyncpg:// or postgresql://"
   invalid_port: "Invalid port number. Must be between 1 and 65535."
+  invalid_bind_host: "Invalid bind address. Must be an IP address, localhost, or a valid hostname."
   invalid_log_level: "Invalid log level. Allowed: DEBUG, INFO, WARNING, ERROR, CRITICAL"
   invalid_smtp_security: "Invalid SMTP security mode. Allowed: ssl (implicit TLS), starttls, none (plaintext)"
   group_database: "Database & Cache"
@@ -1511,6 +1512,8 @@ system_config:
   key_notification_verification_max_attempts_desc: Managed by system configuration; changes apply to new notification operations.
   key_app_domain: "App Domain"
   key_app_domain_desc: "Deployment domain or IP for generating Webhook URL and OAuth callbacks"
+  key_app_host: "Bind Address"
+  key_app_host_desc: "HTTP service bind address (IP/localhost/hostname). Defaults to 127.0.0.1 (loopback only); a restart is required after changes. Container deployments follow the container command and port mapping instead."
   key_app_port: "App Port"
   key_app_port_desc: "HTTP service listening port"
   key_app_timezone: "Application Timezone"
@@ -2702,6 +2705,7 @@ webui_v2:
   m_3a62d40c7c9d: You have unsaved changes. Discard them and leave?
   m_3b04fa6d2099: Update sensitive setting?
   m_3b110dfdcd8f: Submitting…
+  m_3b74618ec9dc: Bind address (defaults to 127.0.0.1, loopback only)
   m_3b7a97b70972: Delivery channels
   m_3ba7ddfe6e1a: Configure connections and your administrator to get started. Manage AI accounts in Settings.
   m_3bc63cd8a759: 'For example: My laptop'
@@ -2954,6 +2958,7 @@ webui_v2:
   m_68043f88235c: No external channels yet
   m_6839525b28fb: Unable to load this page
   m_684549cc0cef: No default model
+  m_6858329a428a: Saving configuration…
   m_686fee1b5706: Require verification globally
   m_687d91fc8373: Calls
   m_68c1ce795077: Positive adds Credits; negative deducts Credits.
@@ -3428,6 +3433,7 @@ webui_v2:
   m_bbc0d2bbb472: Update requirements are not met
   m_bbd7ff70a013: To
   m_bc19ed365dd7: Check again
+  m_bc4f5ca95cf5: Reveal
   m_bc662c08e369: No reason provided
   m_bca3d4a94a8c: Paid
   m_bcf71ecce0b3: Used redemption codes cannot be deleted. Applied and unapplied items are reported separately.
@@ -3435,6 +3441,7 @@ webui_v2:
   m_bd103c2be075: Connected
   m_bd270c72228e: Pushing
   m_be1877c8a04f: Label definitions, recommendations and repository scans
+  m_be1bdaf3b998: Saving configuration and initializing data. The application will restart automatically — please keep this page open…
   m_be8886f09463: Refresh status
   m_beee9b52d339: No audit records
   m_bf014482c474: Monthly
@@ -3524,6 +3531,7 @@ webui_v2:
   m_cfa67756244a: Remaining legacy benefits
   m_cff6ba5e1b83: Update channel
   m_d01340fcd7f7: Date
+  m_d01f9ee2380a: Hide
   m_d02bf106bc32: Try another search.
   m_d0747c01a92f: New task
   m_d08487b96896: Repositories appear here once they are authorized through your GitHub App.

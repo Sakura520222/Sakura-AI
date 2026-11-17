@@ -1411,6 +1411,7 @@ system_config:
   database_reset_open_setup: "打开 Setup"
   invalid_db_url: "数据库连接字符串格式错误，需以 mysql+aiomysql://、mysql+asyncmy://、mysql://、postgresql+asyncpg:// 或 postgresql:// 开头"
   invalid_port: "端口号无效，需为 1-65535 之间的整数"
+  invalid_bind_host: "监听地址无效，需为 IP 地址、localhost 或有效主机名"
   invalid_log_level: "日志级别无效，允许值：DEBUG、INFO、WARNING、ERROR、CRITICAL"
   invalid_smtp_security: "SMTP 安全模式无效，允许值：ssl（隐式 TLS）、starttls、none（明文）"
   group_database: "数据库 & 缓存"
@@ -1512,6 +1513,8 @@ system_config:
   key_notification_verification_max_attempts_desc: 由系统配置统一管理，修改后对新的通知操作生效。
   key_app_domain: "应用域名"
   key_app_domain_desc: "部署域名或 IP，用于生成 Webhook URL 和 OAuth 回调"
+  key_app_host: "监听地址"
+  key_app_host_desc: "HTTP 服务监听地址（IP/localhost/主机名），默认 127.0.0.1 仅本机可访问；修改后必须重启应用。容器部署时以容器命令与端口映射为准。"
   key_app_port: "应用端口"
   key_app_port_desc: "HTTP 服务监听端口"
   key_app_timezone: "应用时区"
@@ -2701,6 +2704,7 @@ webui_v2:
   m_3a62d40c7c9d: 有未保存的修改。放弃修改并离开？
   m_3b04fa6d2099: 更新敏感配置？
   m_3b110dfdcd8f: 提交中…
+  m_3b74618ec9dc: 监听地址（默认 127.0.0.1，仅本机访问）
   m_3b7a97b70972: 通知渠道
   m_3ba7ddfe6e1a: 完成基础连接与管理员配置后即可开始使用。AI 账号可在设置中管理。
   m_3bc63cd8a759: 例如：我的笔记本
@@ -2953,6 +2957,7 @@ webui_v2:
   m_68043f88235c: 尚未添加外部渠道
   m_6839525b28fb: 暂时无法加载
   m_684549cc0cef: 未设置默认模型
+  m_6858329a428a: 正在保存配置…
   m_686fee1b5706: 启用全局强制验证
   m_687d91fc8373: 调用数
   m_68c1ce795077: 正数增加，负数扣减。
@@ -3427,6 +3432,7 @@ webui_v2:
   m_bbc0d2bbb472: 尚不满足更新条件
   m_bbd7ff70a013: 至
   m_bc19ed365dd7: 重试查询
+  m_bc4f5ca95cf5: 显示明文
   m_bc662c08e369: 未填写原因
   m_bca3d4a94a8c: 已支付
   m_bcf71ecce0b3: 已经使用的兑换码不能删除。操作结果会分别列出成功和未处理的项目。
@@ -3434,6 +3440,7 @@ webui_v2:
   m_bd103c2be075: 已连接
   m_bd270c72228e: 推送中
   m_be1877c8a04f: 标签定义、推荐与仓库扫描
+  m_be1bdaf3b998: 正在保存配置并初始化数据，完成后应用会自动重启，请勿关闭页面…
   m_be8886f09463: 刷新状态
   m_beee9b52d339: 暂无操作记录
   m_bf014482c474: 每月
@@ -3523,6 +3530,7 @@ webui_v2:
   m_cfa67756244a: 剩余历史权益
   m_cff6ba5e1b83: 更新通道
   m_d01340fcd7f7: 时间
+  m_d01f9ee2380a: 隐藏
   m_d02bf106bc32: 试试其他关键词。
   m_d0747c01a92f: 新建任务
   m_d08487b96896: 通过 GitHub App 授权仓库后，即可在此查看。
