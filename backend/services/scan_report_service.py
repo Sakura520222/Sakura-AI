@@ -519,7 +519,7 @@ class ScanReportService:
                     return None
 
             if issue:
-                logger.info(f"✅ 已创建扫描报告 Issue: {scan.repo_name}#{issue.number}")
+                logger.info(f"已创建扫描报告 Issue: {scan.repo_name}#{issue.number}")
 
                 # 只有新 Issue 创建成功后，才关闭上一次扫描的报告 Issue。
                 # 关闭失败由 helper 记录并吞掉，不能阻断新报告交付。

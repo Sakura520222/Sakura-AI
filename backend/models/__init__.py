@@ -264,8 +264,8 @@ async def init_db():
         # 4. 异步插入默认配置
         await insert_default_configs_async()
 
-        logger.info("✅ 数据库初始化成功")
+        logger.info("数据库初始化成功")
 
     except Exception as e:
-        logger.error(f"❌ 数据库初始化失败: {e}")
+        logger.error(f"数据库初始化失败: {e}")
         raise

@@ -73,7 +73,7 @@ class TokenTracker:
         usage = getattr(response, "usage", None)
         if usage is None:
             logger.info(
-                "📊 当前请求上下文: Provider 未返回 usage | 轮次: {}",
+                "当前请求上下文: Provider 未返回 usage | 轮次: {}",
                 iteration,
             )
             return None
@@ -81,7 +81,7 @@ class TokenTracker:
         reported_fields = getattr(usage, "reported_fields", None)
         if reported_fields is not None and "input_tokens" not in reported_fields:
             logger.info(
-                "📊 当前请求上下文: Provider 未报告精确 input_tokens | 轮次: {}",
+                "当前请求上下文: Provider 未报告精确 input_tokens | 轮次: {}",
                 iteration,
             )
             return None
@@ -95,7 +95,7 @@ class TokenTracker:
             or current_tokens < 0
         ):
             logger.info(
-                "📊 当前请求上下文: Provider 未报告精确 input_tokens | 轮次: {}",
+                "当前请求上下文: Provider 未报告精确 input_tokens | 轮次: {}",
                 iteration,
             )
             return None
@@ -131,15 +131,15 @@ class TokenTracker:
 
         if percentage is None:
             logger.info(
-                "📊 当前请求上下文: {:,} tokens | 完整上下文窗口未知 | "
+                "当前请求上下文: {:,} tokens | 完整上下文窗口未知 | "
                 "轮次: {} | 来源: Provider",
                 current_tokens,
                 iteration,
             )
         elif percentage >= 90:
             logger.warning(
-                "📊 当前请求上下文: {:,} / {:,} tokens ({:.1f}%) | "
-                "轮次: {} | 来源: Provider ⚠️ 接近上限",
+                "当前请求上下文: {:,} / {:,} tokens ({:.1f}%) | "
+                "轮次: {} | 来源: Provider 接近上限",
                 current_tokens,
                 context_window_tokens,
                 percentage,
@@ -147,7 +147,7 @@ class TokenTracker:
             )
         else:
             logger.info(
-                "📊 当前请求上下文: {:,} / {:,} tokens ({:.1f}%) | "
+                "当前请求上下文: {:,} / {:,} tokens ({:.1f}%) | "
                 "轮次: {} | 来源: Provider",
                 current_tokens,
                 context_window_tokens,

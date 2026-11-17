@@ -47,14 +47,14 @@ class ScanScheduler:
             )
 
             self._scheduler.start()
-            logger.info(f"✅ 仓库扫描调度器已启动，间隔: {interval_minutes} 分钟")
+            logger.info(f"仓库扫描调度器已启动，间隔: {interval_minutes} 分钟")
 
         except ImportError:
             logger.warning(
                 "APScheduler 未安装，跳过扫描调度器启动。请安装: pip install APScheduler"
             )
         except Exception as e:
-            logger.error(f"❌ 扫描调度器启动失败: {e}")
+            logger.error(f"扫描调度器启动失败: {e}")
 
     def reconfigure(self):
         """Reconcile future scans without cancelling an already running scan."""
@@ -93,7 +93,7 @@ class ScanScheduler:
             # cross into DROP while an already-started scan still owns a DB
             # session; the runtime supervisor then awaits the coroutine task.
             self._scheduler.shutdown(wait=True)
-            logger.info("✅ 仓库扫描调度器已停止")
+            logger.info("仓库扫描调度器已停止")
 
     async def _run_scheduled_scan(self):
         """定时扫描入口"""
@@ -104,7 +104,7 @@ class ScanScheduler:
         if register_current_background_task("scan_scheduler") is None:
             return
         try:
-            logger.info("🕐 定时扫描任务触发")
+            logger.info("定时扫描任务触发")
             result = await self._worker.get_scan_candidates()
             candidates = result["candidates"]
 
@@ -130,7 +130,7 @@ class ScanScheduler:
                 except Exception as e:
                     logger.error(f"扫描仓库 {repo_name} 失败: {e}")
 
-            logger.info("✅ 本轮定时扫描任务完成")
+            logger.info("本轮定时扫描任务完成")
 
         except Exception as e:
-            logger.opt(exception=True).error(f"❌ 定时扫描调度异常: {e}")
+            logger.opt(exception=True).error(f"定时扫描调度异常: {e}")

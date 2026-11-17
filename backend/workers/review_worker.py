@@ -2441,7 +2441,7 @@ class ReviewWorker:
                             "fallback_body_only": True,
                         }
                         logger.info(
-                            "[{}] ✅ 降级成功: 已提交无行内评论的Review",
+                            "[{}] 降级成功: 已提交无行内评论的Review",
                             task_id,
                         )
                     else:
@@ -2454,17 +2454,17 @@ class ReviewWorker:
             if success:
                 if inline_comments:
                     logger.info(
-                        f"[{task_id}] ✅ 成功提交Review到GitHub: {review_event.lower()} "
+                        f"[{task_id}] 成功提交Review到GitHub: {review_event.lower()} "
                         f"(含{len(inline_comments)}条行内评论)"
                     )
                 else:
                     logger.info(
-                        f"[{task_id}] ✅ 成功提交Review到GitHub: {review_event.lower()} "
+                        f"[{task_id}] 成功提交Review到GitHub: {review_event.lower()} "
                         f"(无行内评论)"
                     )
             else:
                 logger.warning(
-                    f"[{task_id}] ⚠️ 提交Review到GitHub失败，但已保存到数据库"
+                    f"[{task_id}] 提交Review到GitHub失败，但已保存到数据库"
                 )
 
             # 发布结果（Findings Check 数据来源）：total = publishable_findings 数，

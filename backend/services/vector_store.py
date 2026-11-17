@@ -61,10 +61,10 @@ class VectorStore:
                 ),
             )
 
-            logger.info(f"✅ ChromaDB 客户端初始化成功: {self.persist_directory}")
+            logger.info(f"ChromaDB 客户端初始化成功: {self.persist_directory}")
 
         except Exception as e:
-            logger.error(f"❌ ChromaDB 客户端初始化失败: {e}")
+            logger.error(f"ChromaDB 客户端初始化失败: {e}")
             raise
 
     def _slugify_collection_name(self, repo_full_name: str) -> str:
@@ -133,7 +133,7 @@ class VectorStore:
             return collection
 
         except Exception as e:
-            logger.error(f"❌ 获取 Collection 失败 (repo: {repo_full_name}): {e}")
+            logger.error(f"获取 Collection 失败 (repo: {repo_full_name}): {e}")
             raise
 
     async def add_documents(
@@ -174,12 +174,12 @@ class VectorStore:
             )
 
             logger.info(
-                f"✅ 已添加 {len(documents)} 个文档到 {repo_full_name} 的向量库"
+                f"已添加 {len(documents)} 个文档到 {repo_full_name} 的向量库"
             )
             return len(documents)
 
         except Exception as e:
-            logger.error(f"❌ 添加文档失败 (repo: {repo_full_name}): {e}")
+            logger.error(f"添加文档失败 (repo: {repo_full_name}): {e}")
             raise
 
     async def search(
@@ -232,7 +232,7 @@ class VectorStore:
             return documents
 
         except Exception as e:
-            logger.error(f"❌ 向量检索失败 (repo: {repo_full_name}): {e}")
+            logger.error(f"向量检索失败 (repo: {repo_full_name}): {e}")
             return []
 
     async def delete_collection(self, repo_full_name: str) -> bool:
@@ -251,7 +251,7 @@ class VectorStore:
             try:
                 self.client.delete_collection(name=collection_name)
                 logger.info(
-                    f"✅ 已删除 Collection: {collection_name} (repo: {repo_full_name})"
+                    f"已删除 Collection: {collection_name} (repo: {repo_full_name})"
                 )
                 return True
             except Exception as e:
@@ -259,7 +259,7 @@ class VectorStore:
                 return False
 
         except Exception as e:
-            logger.error(f"❌ 删除 Collection 失败 (repo: {repo_full_name}): {e}")
+            logger.error(f"删除 Collection 失败 (repo: {repo_full_name}): {e}")
             return False
 
     async def get_collection_count(self, repo_full_name: str) -> int:
@@ -275,7 +275,7 @@ class VectorStore:
             collection = await self.get_or_create_collection(repo_full_name)
             return collection.count()
         except Exception as e:
-            logger.error(f"❌ 获取文档数量失败 (repo: {repo_full_name}): {e}")
+            logger.error(f"获取文档数量失败 (repo: {repo_full_name}): {e}")
             return 0
 
     async def delete_documents(self, repo_full_name: str, doc_ids: list[str]) -> bool:
@@ -333,7 +333,7 @@ class VectorStore:
             logger.debug(f"已 upsert {len(documents)} 个文档到 {repo_full_name}")
             return len(documents)
         except Exception as e:
-            logger.error(f"❌ upsert 文档失败 (repo: {repo_full_name}): {e}")
+            logger.error(f"upsert 文档失败 (repo: {repo_full_name}): {e}")
             raise
 
     async def clear_collection(self, repo_full_name: str) -> bool:
@@ -354,15 +354,15 @@ class VectorStore:
                 # 重新创建
                 await self.get_or_create_collection(repo_full_name)
                 logger.info(
-                    f"✅ 已清空 Collection: {collection_name} (repo: {repo_full_name})"
+                    f"已清空 Collection: {collection_name} (repo: {repo_full_name})"
                 )
                 return True
             except Exception as e:
-                logger.error(f"❌ 清空 Collection 失败: {e}")
+                logger.error(f"清空 Collection 失败: {e}")
                 return False
 
         except Exception as e:
-            logger.error(f"❌ 清空 Collection 失败 (repo: {repo_full_name}): {e}")
+            logger.error(f"清空 Collection 失败 (repo: {repo_full_name}): {e}")
             return False
 
 

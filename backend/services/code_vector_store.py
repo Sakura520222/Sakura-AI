@@ -63,10 +63,10 @@ class CodeVectorStore:
                 ),
             )
 
-            logger.info(f"✅ 代码向量存储初始化成功: {self.persist_directory}")
+            logger.info(f"代码向量存储初始化成功: {self.persist_directory}")
 
         except Exception as e:
-            logger.error(f"❌ 代码向量存储初始化失败: {e}")
+            logger.error(f"代码向量存储初始化失败: {e}")
             raise
 
     def _get_code_collection_name(self, repo_full_name: str) -> str:
@@ -129,7 +129,7 @@ class CodeVectorStore:
             return collection
 
         except Exception as e:
-            logger.error(f"❌ 获取代码Collection失败 (repo: {repo_full_name}): {e}")
+            logger.error(f"获取代码Collection失败 (repo: {repo_full_name}): {e}")
             raise
 
     async def add_code_chunks(
@@ -171,12 +171,12 @@ class CodeVectorStore:
             )
 
             logger.info(
-                f"✅ 已添加 {len(chunks)} 个代码块到 {repo_full_name} 的代码向量库"
+                f"已添加 {len(chunks)} 个代码块到 {repo_full_name} 的代码向量库"
             )
             return len(chunks)
 
         except Exception as e:
-            logger.error(f"❌ 添加代码块失败 (repo: {repo_full_name}): {e}")
+            logger.error(f"添加代码块失败 (repo: {repo_full_name}): {e}")
             raise
 
     async def search_code(
@@ -230,7 +230,7 @@ class CodeVectorStore:
             return code_chunks
 
         except Exception as e:
-            logger.error(f"❌ 代码向量检索失败 (repo: {repo_full_name}): {e}")
+            logger.error(f"代码向量检索失败 (repo: {repo_full_name}): {e}")
             return []
 
     async def delete_by_file(self, repo_full_name: str, file_path: str) -> int:
@@ -261,12 +261,12 @@ class CodeVectorStore:
 
             deleted = await asyncio.to_thread(_delete_by_file)
             if deleted:
-                logger.info(f"✅ 已删除文件 {file_path} 的 {deleted} 个代码块")
+                logger.info(f"已删除文件 {file_path} 的 {deleted} 个代码块")
             return deleted
 
         except Exception as e:
             logger.error(
-                f"❌ 删除文件代码块失败 (repo: {repo_full_name}, file: {file_path}): {e}"
+                f"删除文件代码块失败 (repo: {repo_full_name}, file: {file_path}): {e}"
             )
             return 0
 
@@ -297,12 +297,12 @@ class CodeVectorStore:
 
             deleted = await asyncio.to_thread(_delete_by_pr)
             if deleted:
-                logger.info(f"✅ 已删除 PR #{pr_number} 的 {deleted} 个代码块")
+                logger.info(f"已删除 PR #{pr_number} 的 {deleted} 个代码块")
             return deleted
 
         except Exception as e:
             logger.error(
-                f"❌ 删除PR代码块失败 (repo: {repo_full_name}, pr: {pr_number}): {e}"
+                f"删除PR代码块失败 (repo: {repo_full_name}, pr: {pr_number}): {e}"
             )
             return 0
 
@@ -323,14 +323,14 @@ class CodeVectorStore:
                     self.client.delete_collection, name=collection_name
                 )
                 await self.get_or_create_collection(repo_full_name)
-                logger.info(f"✅ 已清空代码Collection: {collection_name}")
+                logger.info(f"已清空代码Collection: {collection_name}")
                 return True
             except Exception as e:
-                logger.error(f"❌ 清空代码Collection失败: {e}")
+                logger.error(f"清空代码Collection失败: {e}")
                 return False
 
         except Exception as e:
-            logger.error(f"❌ 清空代码Collection失败 (repo: {repo_full_name}): {e}")
+            logger.error(f"清空代码Collection失败 (repo: {repo_full_name}): {e}")
             return False
 
     async def get_collection_count(self, repo_full_name: str) -> int:
@@ -346,7 +346,7 @@ class CodeVectorStore:
             collection = await self.get_or_create_collection(repo_full_name)
             return await asyncio.to_thread(collection.count)
         except Exception as e:
-            logger.error(f"❌ 获取代码块数量失败 (repo: {repo_full_name}): {e}")
+            logger.error(f"获取代码块数量失败 (repo: {repo_full_name}): {e}")
             return 0
 
     async def upsert_code_chunks(
@@ -384,12 +384,12 @@ class CodeVectorStore:
             )
 
             logger.info(
-                f"✅ 已更新 {len(chunks)} 个代码块到 {repo_full_name} 的代码向量库"
+                f"已更新 {len(chunks)} 个代码块到 {repo_full_name} 的代码向量库"
             )
             return len(chunks)
 
         except Exception as e:
-            logger.error(f"❌ 更新代码块失败 (repo: {repo_full_name}): {e}")
+            logger.error(f"更新代码块失败 (repo: {repo_full_name}): {e}")
             raise
 
 

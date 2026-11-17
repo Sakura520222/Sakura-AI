@@ -52,7 +52,7 @@ class SearchToolHandler:
             repo_full_name = f"{repo.owner.login}/{repo.name}"
 
             # 执行检索
-            logger.info(f"🔍 检索项目文档: {repo_full_name}, query: {query[:50]}...")
+            logger.info(f"检索项目文档: {repo_full_name}, query: {query[:50]}...")
             docs = await rag_service.search_relevant_docs(
                 repo_full_name=repo_full_name,
                 query=query,
@@ -79,7 +79,7 @@ class SearchToolHandler:
                     }
                 )
 
-            logger.info(f"✅ 检索到 {len(formatted_results)} 个相关文档")
+            logger.info(f"检索到 {len(formatted_results)} 个相关文档")
 
             return {
                 "query": query,
@@ -128,7 +128,7 @@ class SearchToolHandler:
 
             # 执行检索
             logger.info(
-                f"🔍 检索代码上下文: {repo_full_name}, query: {query[:50]}..., "
+                f"检索代码上下文: {repo_full_name}, query: {query[:50]}..., "
                 f"language: {language or 'all'}, file: {file_path or 'all'}"
             )
 
@@ -166,7 +166,7 @@ class SearchToolHandler:
                     }
                 )
 
-            logger.info(f"✅ 检索到 {len(formatted_results)} 个相关代码片段")
+            logger.info(f"检索到 {len(formatted_results)} 个相关代码片段")
 
             return {
                 "query": query,

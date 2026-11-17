@@ -63,7 +63,7 @@ class RAGService:
                 - total_chunks: 总块数
         """
         try:
-            logger.info(f"🔄 开始索引仓库文档: {repo_full_name}")
+            logger.info(f"开始索引仓库文档: {repo_full_name}")
 
             # 1. 扫描文档文件
             files_info = await self.document_service.scan_sakura_directory(repo_path)
@@ -110,7 +110,7 @@ class RAGService:
                 }
 
             # 4. 生成嵌入向量
-            logger.info(f"🔄 正在生成 {len(chunks)} 个块嵌入向量...")
+            logger.info(f"正在生成 {len(chunks)} 个块嵌入向量...")
             texts = [chunk["content"] for chunk in chunks]
             embeddings = await self.embedding_service.embed_texts(texts)
 
@@ -119,7 +119,7 @@ class RAGService:
                 chunk["embedding"] = embeddings[i]
 
             # 5. 清空旧索引并添加新索引
-            logger.info("🔄 正在更新向量库...")
+            logger.info("正在更新向量库...")
             await self.vector_store.clear_collection(repo_full_name)
             added_count = await self.vector_store.add_documents(repo_full_name, chunks)
 
@@ -133,7 +133,7 @@ class RAGService:
             }
 
             logger.info(
-                f"✅ 索引完成: {repo_full_name} - "
+                f"索引完成: {repo_full_name} - "
                 f"{result['total_files']} 个文件, {result['total_chunks']} 个块"
             )
 
@@ -143,7 +143,7 @@ class RAGService:
             return result
 
         except Exception as e:
-            logger.error(f"❌ 索引失败 ({repo_full_name}): {e}")
+            logger.error(f"索引失败 ({repo_full_name}): {e}")
             raise
 
     async def search_relevant_docs(
@@ -229,7 +229,7 @@ class RAGService:
                 ]
 
         except Exception as e:
-            logger.error(f"❌ 检索失败 ({repo_full_name}): {e}")
+            logger.error(f"检索失败 ({repo_full_name}): {e}")
             return []
 
     async def get_core_documents(
@@ -272,7 +272,7 @@ class RAGService:
             return filtered_docs
 
         except Exception as e:
-            logger.error(f"❌ 获取核心文档失败 ({repo_full_name}): {e}")
+            logger.error(f"获取核心文档失败 ({repo_full_name}): {e}")
             return []
 
     async def get_index_status(self, repo_full_name: str) -> dict[str, Any]:
@@ -308,7 +308,7 @@ class RAGService:
             return result
 
         except Exception as e:
-            logger.error(f"❌ 获取索引状态失败 ({repo_full_name}): {e}")
+            logger.error(f"获取索引状态失败 ({repo_full_name}): {e}")
             return {
                 "repo_full_name": repo_full_name,
                 "indexed": False,
@@ -339,14 +339,14 @@ class RAGService:
             success = await self.vector_store.delete_collection(repo_full_name)
 
             if success:
-                logger.info(f"✅ 已删除仓库索引: {repo_full_name}")
+                logger.info(f"已删除仓库索引: {repo_full_name}")
                 # 清除索引状态缓存
                 self._invalidate_index_cache(repo_full_name)
 
             return success
 
         except Exception as e:
-            logger.error(f"❌ 删除索引失败 ({repo_full_name}): {e}")
+            logger.error(f"删除索引失败 ({repo_full_name}): {e}")
             return False
 
 

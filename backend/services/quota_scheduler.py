@@ -35,19 +35,19 @@ class QuotaResetScheduler:
                 replace_existing=True,
             )
             self._scheduler.start()
-            logger.info("✅ 配额重置调度器已启动，每天 00:00 UTC 执行")
+            logger.info("配额重置调度器已启动，每天 00:00 UTC 执行")
         except ImportError:
             logger.warning(
                 "APScheduler 未安装，跳过配额重置调度器启动。请安装: pip install APScheduler"
             )
         except Exception as e:
-            logger.error(f"❌ 配额重置调度器启动失败: {e}")
+            logger.error(f"配额重置调度器启动失败: {e}")
 
     def stop(self):
         """停止配额重置调度器。"""
         if self._scheduler and self._scheduler.running:
             self._scheduler.shutdown(wait=True)
-            logger.info("✅ 配额重置调度器已停止")
+            logger.info("配额重置调度器已停止")
 
     async def _run_quota_reset(self):
         """定时批量重置入口。"""
@@ -70,8 +70,8 @@ class QuotaResetScheduler:
             async with async_session() as session:
                 result = await QuotaService(session).reset_all_expired_quotas_atomic()
             logger.info(
-                "✅ 定时配额重置完成，影响用户数: "
+                "定时配额重置完成，影响用户数: "
                 f"{result.affected_users}, 字段维度影响行数: {result.affected_fields}"
             )
         except Exception as e:
-            logger.opt(exception=True).error(f"❌ 定时配额重置异常: {e}")
+            logger.opt(exception=True).error(f"定时配额重置异常: {e}")
