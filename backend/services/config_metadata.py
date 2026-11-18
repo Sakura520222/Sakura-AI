@@ -131,7 +131,7 @@ SEARCH_ALIASES: dict[str, str] = {
     "app_host": "监听地址 绑定 IP loopback 0.0.0.0 127.0.0.1 bind host",
     "app_port": "监听端口 HTTP 端口 listen port 8000",
     "app_domain": "域名 外部访问地址 public url domain callback",
-    "app_timezone": "时区 时间 timezone Asia/Shanghai UTC",
+    "app_timezone": "时区 时间 上海 timezone shanghai UTC",
     "log_level": "日志级别 调试排障 debug info warning logging",
     "database_url": "MySQL PostgreSQL SQLite 数据库连接串 connection.json",
     "redis_url": "缓存 队列 连接地址 redis connection.json",

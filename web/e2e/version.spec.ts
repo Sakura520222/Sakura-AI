@@ -193,7 +193,10 @@ test("running build channel, provenance and release notes stay visible on deskto
   await expect(page.locator(".version-build-details")).toContainText(revision);
   await expect(page.locator(".version-build-details")).toContainText(digest);
   await expect(page.locator(".topbar-current-version")).toHaveText("3.2.6");
-  await expect(page.locator(".topbar-update-label")).toHaveText("有可用更新");
+  const versionLink = page.getByRole("link", { name: "3.2.6 · 有可用更新" });
+  await expect(versionLink).toHaveText("3.2.6");
+  await expect(versionLink.locator("svg")).toHaveCount(0);
+  await expect(versionLink.locator(".topbar-update-dot")).toBeVisible();
   await expect(page.getByText("检查失败，保留上次成功结果")).toBeVisible();
   await page.getByRole("button", { name: "发布记录", exact: true }).click();
   await page.getByRole("button", { name: "查看说明", exact: true }).click();
@@ -211,6 +214,7 @@ test("running build channel, provenance and release notes stay visible on deskto
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".topbar-current-version")).toBeVisible();
+  await expect(versionLink.locator(".topbar-update-dot")).toBeVisible();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

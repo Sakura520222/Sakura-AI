@@ -16,7 +16,7 @@
 | 10 更新检查与调度 | `update_checker.py`、`backend/main.py`、版本页 | 已验证源码和镜像部署分支、共享检查任务、失败保留上次结果、启动停止及恢复；外部 registry 和 updater 使用替身 |
 | 11 版本通道与构建来源 | `api/v1/version.py`、`VersionBrowser.tsx` | 已验证 development 筛选和完整 revision、digest、时间按可用性展示；镜像值来自版本 API 测试数据 |
 | 12 发布说明原位展开 | `VersionBrowser.tsx` | 已验证版本列表内展开 Markdown 和收起，使用浏览器夹具 |
-| 13 顶栏版本与更新状态 | `AppShell.tsx` | 已验证当前版本号及管理员更新入口，使用组件和版本浏览器夹具 |
+| 13 顶栏版本与更新状态 | `AppShell.tsx` | 顶栏只显示当前版本号。有新版时数字右上角显示红点。组件覆盖无新版和状态未知，浏览器验证桌面与手机红点及管理员入口 |
 | 14 Star 互助图标 | `AppShell.tsx` | 已验证 Star 和 Issues 图标独立 |
 | 15 普通用户与管理员管理分离 | `CommunityPage.tsx`、社区管理 API | 已验证管理权限、列表搜索分页、维护入口及个人展示仓库弹层，使用社区 API、组件和浏览器回归 |
 | 16 全局开关归系统设置 | `CommunityPage.tsx`、设置中心 | 已验证业务页仅展示状态，系统配置受管理员权限保护 |
@@ -41,11 +41,11 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| 前端 Vitest | 123 项通过 |
+| 前端 Vitest | 125 项通过 |
 | Chromium Playwright | 24 项通过，包含三条设置流程、并发保存、GitHub 帐号切换、PR 跳转、版本、活动、仓库互助及既有流程 |
 | 生产构建与 API 契约 | TypeScript、Vite 生产构建、bundle 报告通过，重新生成的 OpenAPI 与 TypeScript 类型无内容差异 |
 | 静态检查 | ESLint、Ruff、`run_ruff.py --check`、`git diff --check`、1676 条双语 WebUI 文案校验通过 |
-| Windows 全量 pytest | 原分支 `8b8ddc4b` 可复现 Agent 诊断脱敏耗时和子进程启动时限用例失败，定向确认与本轮设置和 API 改动无关 |
+| Windows 全量 pytest | 首轮 6,498 项通过、312 项跳过、3 项失败。修正时区别称后复跑了时间边界和相关 API。另两项 Agent 诊断脱敏耗时及子进程启动时限用例在 `8b8ddc4b` 的独立工作树同样失败 |
 
 ## 页面记录
 
@@ -57,4 +57,4 @@
 | 手机目录 | [英文目录展开](assets/issue-738/mobile-section-directory.png) |
 | 查看跨分类修改 | [修改清单](assets/issue-738/pending-changes.png) |
 | 两项保存、一项失败并可重试 | [部分保存结果](assets/issue-738/partial-save.png) |
-| 相关 #738 回归 | [活动工具结果](assets/issue-738/activity.png)、[手机仓库互助管理](assets/issue-738/community-mobile.png)、[版本信息](assets/issue-738/version.png) |
+| 相关 #738 回归 | [活动工具结果](assets/issue-738/activity.png)、[手机仓库互助管理](assets/issue-738/community-mobile.png)、[桌面版本信息](assets/issue-738/version.png)、[手机版本红点](assets/issue-738/version-mobile.png) |
