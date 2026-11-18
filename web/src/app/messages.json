@@ -1,4 +1,12 @@
 {
+  "[\"绑定个人邮箱、Telegram 或 Webhook 接收渠道，并设置事件通知规则。\",\"Bind personal email, Telegram or Webhook channels and configure event subscriptions.\"]": [
+    "绑定个人邮箱、Telegram 或 Webhook 接收渠道，并设置事件通知规则。",
+    "Bind personal email, Telegram or Webhook channels and configure event subscriptions."
+  ],
+  "[\"显示前 80 项（共 {0} 项），请补充关键词缩小范围。\",\"Showing the first 80 of {0} results. Add another keyword to narrow down.\"]": [
+    "显示前 80 项（共 {0} 项），请补充关键词缩小范围。",
+    "Showing the first 80 of {0} results. Add another keyword to narrow down."
+  ],
   "[\"重排模型供应商\",\"Rerank provider\"]": [
     "重排模型供应商",
     "Rerank provider"
@@ -31,6 +39,10 @@
     "查看失败记录",
     "View failed reviews"
   ],
+  "[\"本页分区目录\",\"Page sections\"]": [
+    "本页分区目录",
+    "Page sections"
+  ],
   "[\"创建任务\",\"Create task\"]": [
     "创建任务",
     "Create task"
@@ -47,9 +59,17 @@
     "正在重连",
     "Reconnecting"
   ],
+  "[\"AI 与模型\",\"AI & models\"]": [
+    "AI 与模型",
+    "AI & models"
+  ],
   "[\"备份范围\",\"Backup scope\"]": [
     "备份范围",
     "Backup scope"
+  ],
+  "[\"连接测试、重启应用与重置数据库\",\"Connection probes, application restart & database reset\"]": [
+    "连接测试、重启应用与重置数据库",
+    "Connection probes, application restart & database reset"
   ],
   "[\"适用场景\",\"When to use\"]": [
     "适用场景",
@@ -91,6 +111,10 @@
     "开始更新",
     "Start update"
   ],
+  "[\"上次：{0}\",\"Recent: {0}\"]": [
+    "上次：{0}",
+    "Recent: {0}"
+  ],
   "[\"删除仓库工作区？\",\"Delete repository workspace?\"]": [
     "删除仓库工作区？",
     "Delete repository workspace?"
@@ -127,6 +151,10 @@
     "加载更早记录",
     "Load earlier entries"
   ],
+  "[\"凭据已设\",\"Secret set\"]": [
+    "凭据已设",
+    "Secret set"
+  ],
   "[\"正在重连，定时刷新仍在运行\",\"Reconnecting; periodic refresh is active\"]": [
     "正在重连，定时刷新仍在运行",
     "Reconnecting; periodic refresh is active"
@@ -138,6 +166,10 @@
   "[\"填入设置\",\"Use this value\"]": [
     "填入设置",
     "Use this value"
+  ],
+  "[\"连接供应商并配置可用模型列表后，在下方为审查、摘要与 Agent 分配主模型和回退链。\",\"Connect a provider and model list, then assign primary and fallback models below.\"]": [
+    "连接供应商并配置可用模型列表后，在下方为审查、摘要与 Agent 分配主模型和回退链。",
+    "Connect a provider and model list, then assign primary and fallback models below."
   ],
   "[\"条款\",\"Terms\"]": [
     "条款",
@@ -163,6 +195,10 @@
     "启用用户",
     "Enable user"
   ],
+  "[\"调整语义关联与关闭判定所需的相似度、置信度与数量限制。\",\"Tune similarity and confidence thresholds for linking Issues to PRs.\"]": [
+    "调整语义关联与关闭判定所需的相似度、置信度与数量限制。",
+    "Tune similarity and confidence thresholds for linking Issues to PRs."
+  ],
   "[\"任务目标\",\"Task goal\"]": [
     "任务目标",
     "Task goal"
@@ -187,10 +223,6 @@
     "未配置凭据",
     "No credential"
   ],
-  "[\"AI 账号\",\"AI accounts\"]": [
-    "AI 账号",
-    "AI accounts"
-  ],
   "[\"最新创建\",\"Newest\"]": [
     "最新创建",
     "Newest"
@@ -198,6 +230,10 @@
   "[\"缓存创建\",\"Cache write\"]": [
     "缓存创建",
     "Cache write"
+  ],
+  "[\"检索结果重排序\",\"Reranking service\"]": [
+    "检索结果重排序",
+    "Reranking service"
   ],
   "[\"正在加载账号…\",\"Loading accounts…\"]": [
     "正在加载账号…",
@@ -211,6 +247,10 @@
     "此内容不可查看或未被记录。",
     "This content is restricted or was not captured."
   ],
+  "[\"单位：{0}\",\"Unit: {0}\"]": [
+    "单位：{0}",
+    "Unit: {0}"
+  ],
   "[\"取消任务\",\"Cancel task\"]": [
     "取消任务",
     "Cancel task"
@@ -219,9 +259,17 @@
     "凭据在应用每次重启后更换，请以最新的 .setup-token 文件为准。",
     "The credential rotates on every restart. Use the latest .setup-token file."
   ],
+  "[\"配置接收 Webhook 与执行仓库审查操作的主 GitHub App 凭据。\",\"Configure the primary GitHub App ID, private key and webhook secret.\"]": [
+    "配置接收 Webhook 与执行仓库审查操作的主 GitHub App 凭据。",
+    "Configure the primary GitHub App ID, private key and webhook secret."
+  ],
   "[\"完整配置\",\"All configuration\"]": [
     "完整配置",
     "All configuration"
+  ],
+  "[\"配置 MCP 工具服务、生命周期钩子与工作区读写权限级别。\",\"Configure MCP services, lifecycle hooks and workspace permission profiles.\"]": [
+    "配置 MCP 工具服务、生命周期钩子与工作区读写权限级别。",
+    "Configure MCP services, lifecycle hooks and workspace permission profiles."
   ],
   "[\"币种\",\"Currency\"]": [
     "币种",
@@ -230,6 +278,10 @@
   "[\"关闭记录\",\"Close record\"]": [
     "关闭记录",
     "Close record"
+  ],
+  "[\"部分设置未保存成功，请核对原因\",\"Some changes were not saved; review details\"]": [
+    "部分设置未保存成功，请核对原因",
+    "Some changes were not saved; review details"
   ],
   "[\"请从订单列表查看支付状态\",\"Open your order to view payment status\"]": [
     "请从订单列表查看支付状态",
@@ -307,6 +359,10 @@
     "接收此通知",
     "Receive this notification"
   ],
+  "[\"凭据未设\",\"Not set\"]": [
+    "凭据未设",
+    "Not set"
+  ],
   "[\"Host Updater 当前没有活跃任务，但此前请求的结果仍未确认。核对部署状态后，可解除本页提交锁并重新预检。\",\"Host Updater reports no active job, but the previous request outcome remains unconfirmed. After checking the deployment, unlock this page and run preflight again.\"]": [
     "Host Updater 当前没有活跃任务，但此前请求的结果仍未确认。核对部署状态后，可解除本页提交锁并重新预检。",
     "Host Updater reports no active job, but the previous request outcome remains unconfirmed. After checking the deployment, unlock this page and run preflight again."
@@ -318,6 +374,14 @@
   "[\"服务地址\",\"API endpoint\"]": [
     "服务地址",
     "API endpoint"
+  ],
+  "[\"返回“{0}”的搜索结果\",\"Back to results for “{0}”\"]": [
+    "返回“{0}”的搜索结果",
+    "Back to results for “{0}”"
+  ],
+  "[\"界面与输出偏好\",\"Appearance & output preferences\"]": [
+    "界面与输出偏好",
+    "Appearance & output preferences"
   ],
   "[\"当前没有活跃更新任务。关闭记录后，仍需重新预检才能提交更新。\",\"No update job is active. A fresh preflight is still required before another update can be submitted.\"]": [
     "当前没有活跃更新任务。关闭记录后，仍需重新预检才能提交更新。",
@@ -334,6 +398,14 @@
   "[\"已有的身份验证器与通行密钥会保留。被要求启用验证的用户需要先完成安全设置。\",\"Existing authenticators and passkeys are retained. Users required to enroll must complete security setup first.\"]": [
     "已有的身份验证器与通行密钥会保留。被要求启用验证的用户需要先完成安全设置。",
     "Existing authenticators and passkeys are retained. Users required to enroll must complete security setup first."
+  ],
+  "[\"管理 PR 自动审查、并发与超时上限、最小触发间隔及 GitHub Check Runs。\",\"Control automatic PR review, concurrency, timeouts and GitHub Check Runs.\"]": [
+    "管理 PR 自动审查、并发与超时上限、最小触发间隔及 GitHub Check Runs。",
+    "Control automatic PR review, concurrency, timeouts and GitHub Check Runs."
+  ],
+  "[\"放弃此模型的修改\",\"Discard model changes\"]": [
+    "放弃此模型的修改",
+    "Discard model changes"
   ],
   "[\"版本详情\",\"Version details\"]": [
     "版本详情",
@@ -402,6 +474,10 @@
   "[\"暂无兑换码\",\"No codes yet\"]": [
     "暂无兑换码",
     "No codes yet"
+  ],
+  "[\"尝试输入功能词（如“回退”“并发”“SMTP”“配额”）或配置键名称。\",\"Try a task keyword (such as fallback, concurrency, SMTP or quota) or a setting key.\"]": [
+    "尝试输入功能词（如“回退”“并发”“SMTP”“配额”）或配置键名称。",
+    "Try a task keyword (such as fallback, concurrency, SMTP or quota) or a setting key."
   ],
   "[\"无法加载插件配置。\",\"Could not load plugin configuration.\"]": [
     "无法加载插件配置。",
@@ -475,6 +551,14 @@
     "取消订单",
     "Cancel order"
   ],
+  "[\"与同一分区的整表编辑重叠，已跳过以避免覆盖其他子项。\",\"Overlaps with a whole-section edit in the same group; skipped to prevent overwriting.\"]": [
+    "与同一分区的整表编辑重叠，已跳过以避免覆盖其他子项。",
+    "Overlaps with a whole-section edit in the same group; skipped to prevent overwriting."
+  ],
+  "[\"控制网页读取工具开关、域名访问策略、HTTPS 强制与下载体积上限。\",\"Control URL fetching, domain policy, HTTPS enforcement and size limits.\"]": [
+    "控制网页读取工具开关、域名访问策略、HTTPS 强制与下载体积上限。",
+    "Control URL fetching, domain policy, HTTPS enforcement and size limits."
+  ],
   "[\"已断开\",\"Disconnected\"]": [
     "已断开",
     "Disconnected"
@@ -487,13 +571,25 @@
     "标为已读",
     "Mark read"
   ],
+  "[\"撤销\",\"Revert\"]": [
+    "撤销",
+    "Revert"
+  ],
   "[\"已创建 Pull Request\",\"Pull request opened\"]": [
     "已创建 Pull Request",
     "Pull request opened"
   ],
+  "[\"配置可选的私人 Telegram 通知绑定机器人与绑定有效期。\",\"Configure the optional Telegram notification binding bot.\"]": [
+    "配置可选的私人 Telegram 通知绑定机器人与绑定有效期。",
+    "Configure the optional Telegram notification binding bot."
+  ],
   "[\"上次检查\",\"Last checked\"]": [
     "上次检查",
     "Last checked"
+  ],
+  "[\"配置对向量检索候选片段进行二次相关度排序的服务。\",\"Configure secondary relevance reranking for retrieved context chunks.\"]": [
+    "配置对向量检索候选片段进行二次相关度排序的服务。",
+    "Configure secondary relevance reranking for retrieved context chunks."
   ],
   "[\"全部来源\",\"All sources\"]": [
     "全部来源",
@@ -506,6 +602,10 @@
   "[\"强制验证\",\"Enrollment required\"]": [
     "强制验证",
     "Enrollment required"
+  ],
+  "[\"通知投递与 Webhook 策略\",\"Notification delivery & Webhook policy\"]": [
+    "通知投递与 Webhook 策略",
+    "Notification delivery & Webhook policy"
   ],
   "[\"操作\",\"Actions\"]": [
     "操作",
@@ -571,6 +671,10 @@
     "通知视图",
     "Notification view"
   ],
+  "[\"启用向量知识检索并管理 ChromaDB 持久化目录。\",\"Enable vector retrieval and manage the ChromaDB storage directory.\"]": [
+    "启用向量知识检索并管理 ChromaDB 持久化目录。",
+    "Enable vector retrieval and manage the ChromaDB storage directory."
+  ],
   "[\"备份可能包含服务凭据和账户安全信息，请妥善保管。恢复运行中的系统不会替换当前数据库与 Redis 的部署连接。\",\"Backups may contain service credentials and account security information. Store them securely. Restoring a running deployment preserves its database and Redis connections.\"]": [
     "备份可能包含服务凭据和账户安全信息，请妥善保管。恢复运行中的系统不会替换当前数据库与 Redis 的部署连接。",
     "Backups may contain service credentials and account security information. Store them securely. Restoring a running deployment preserves its database and Redis connections."
@@ -611,6 +715,14 @@
     "页面暂时无法打开",
     "Unable to open this page"
   ],
+  "[\"暂无可用的账号和模型，请先在上方配置并启用 AI 账号。\",\"No available accounts and models. Configure and enable an AI account above first.\"]": [
+    "暂无可用的账号和模型，请先在上方配置并启用 AI 账号。",
+    "No available accounts and models. Configure and enable an AI account above first."
+  ],
+  "[\"执行数据库/Redis 连接测试、查询 GitHub App Slug、安全重启或重置数据库。\",\"Test database/Redis connections, look up App slugs, restart the service or reset the database.\"]": [
+    "执行数据库/Redis 连接测试、查询 GitHub App Slug、安全重启或重置数据库。",
+    "Test database/Redis connections, look up App slugs, restart the service or reset the database."
+  ],
   "[\"索引与扫描\",\"Indexes and scans\"]": [
     "索引与扫描",
     "Indexes and scans"
@@ -622,6 +734,10 @@
   "[\"全部内容\",\"All entries\"]": [
     "全部内容",
     "All entries"
+  ],
+  "[\"跳过 {0}\",\"Skipped {0}\"]": [
+    "跳过 {0}",
+    "Skipped {0}"
   ],
   "[\"公告管理\",\"Announcement management\"]": [
     "公告管理",
@@ -638,6 +754,10 @@
   "[\"保存中…\",\"Saving…\"]": [
     "保存中…",
     "Saving…"
+  ],
+  "[\"个人通知渠道与订阅偏好\",\"Personal delivery channels & subscriptions\"]": [
+    "个人通知渠道与订阅偏好",
+    "Personal delivery channels & subscriptions"
   ],
   "[\"个仓库\",\"repositories\"]": [
     "个仓库",
@@ -659,6 +779,10 @@
     "用量完整性",
     "Usage completeness"
   ],
+  "[\"界面语言、外观主题、账号安全与个人通知\",\"UI language, theme appearance, account security and notifications\"]": [
+    "界面语言、外观主题、账号安全与个人通知",
+    "UI language, theme appearance, account security and notifications"
+  ],
   "[\"验证通知渠道\",\"Verify delivery channel\"]": [
     "验证通知渠道",
     "Verify delivery channel"
@@ -670,6 +794,10 @@
   "[\"已选择\",\"Selected\"]": [
     "已选择",
     "Selected"
+  ],
+  "[\"保存修改 ({0})\",\"Save changes ({0})\"]": [
+    "保存修改 ({0})",
+    "Save changes ({0})"
   ],
   "[\"{0} 个已通过\",\"{0} approved\"]": [
     "{0} 个已通过",
@@ -690,6 +818,10 @@
   "[\"确认调整\",\"Apply adjustment\"]": [
     "确认调整",
     "Apply adjustment"
+  ],
+  "[\"自动分析、相似查重、负责人推荐与评论模板\",\"Automatic analysis, duplicate detection, assignee suggestions and templates\"]": [
+    "自动分析、相似查重、负责人推荐与评论模板",
+    "Automatic analysis, duplicate detection, assignee suggestions and templates"
   ],
   "[\"发现社区项目，管理你的展示仓库与互助参与状态。\",\"Discover community projects and manage the repositories you share.\"]": [
     "发现社区项目，管理你的展示仓库与互助参与状态。",
@@ -726,6 +858,14 @@
   "[\"候选\",\"Candidate\"]": [
     "候选",
     "Candidate"
+  ],
+  "[\"控制新 Issue 自动分析、相似问题检测、指派建议与并发限制。\",\"Control Issue analysis, duplicate detection, assignee suggestions and concurrency.\"]": [
+    "控制新 Issue 自动分析、相似问题检测、指派建议与并发限制。",
+    "Control Issue analysis, duplicate detection, assignee suggestions and concurrency."
+  ],
+  "[\"配置审查时跳过的目录、扩展名以及识别为源码的后缀列表。\",\"Specify skipped paths, ignored extensions and recognized source code extensions.\"]": [
+    "配置审查时跳过的目录、扩展名以及识别为源码的后缀列表。",
+    "Specify skipped paths, ignored extensions and recognized source code extensions."
   ],
   "[\"登录验证失败，请重试或重新使用 GitHub 登录。\",\"Verification failed. Try again or sign in with GitHub again.\"]": [
     "登录验证失败，请重试或重新使用 GitHub 登录。",
@@ -767,6 +907,10 @@
     "取消全局强制验证？",
     "Remove global verification requirement?"
   ],
+  "[\"0 = 完整回退链\",\"0 = full chain\"]": [
+    "0 = 完整回退链",
+    "0 = full chain"
+  ],
   "[\"通知（可选）\",\"Notifications (optional)\"]": [
     "通知（可选）",
     "Notifications (optional)"
@@ -794,6 +938,10 @@
   "[\"编辑兑换码\",\"Edit code\"]": [
     "编辑兑换码",
     "Edit code"
+  ],
+  "[\"采用服务端值\",\"Use server value\"]": [
+    "采用服务端值",
+    "Use server value"
   ],
   "[\"更换密钥后需要重新验证接收地址。\",\"Verify the receiver again after replacing its secret.\"]": [
     "更换密钥后需要重新验证接收地址。",
@@ -862,6 +1010,10 @@
   "[\"允许写入工作区\",\"Workspace write\"]": [
     "允许写入工作区",
     "Workspace write"
+  ],
+  "[\"任务执行、隔离沙箱与闭环验证\",\"Execution, sandbox & PR closed loop\"]": [
+    "任务执行、隔离沙箱与闭环验证",
+    "Execution, sandbox & PR closed loop"
   ],
   "[\"检查当前缓存与队列连接\",\"Check the active cache and queue connection\"]": [
     "检查当前缓存与队列连接",
@@ -1003,6 +1155,14 @@
     "常规",
     "General"
   ],
+  "[\"配置审查工具限额、文件内容搜索、CI 失败上下文与 .sakura 长期记忆。\",\"Configure file/search/Git tool limits, CI failure context and .sakura memory.\"]": [
+    "配置审查工具限额、文件内容搜索、CI 失败上下文与 .sakura 长期记忆。",
+    "Configure file/search/Git tool limits, CI failure context and .sakura memory."
+  ],
+  "[\"已持久化，后台正在同步运行时状态。\",\"Persisted; runtime synchronization is pending.\"]": [
+    "已持久化，后台正在同步运行时状态。",
+    "Persisted; runtime synchronization is pending."
+  ],
   "[\"新的任务进展和账户消息会显示在这里。\",\"New task updates and account messages will appear here.\"]": [
     "新的任务进展和账户消息会显示在这里。",
     "New task updates and account messages will appear here."
@@ -1018,10 +1178,6 @@
   "[\"正在检查\",\"Checking\"]": [
     "正在检查",
     "Checking"
-  ],
-  "[\"暂无可用的账号和模型，请先配置并启用 AI 账号。\",\"No available accounts and models. Configure and enable an AI account first.\"]": [
-    "暂无可用的账号和模型，请先配置并启用 AI 账号。",
-    "No available accounts and models. Configure and enable an AI account first."
   ],
   "[\"工作区已删除\",\"Workspace deleted\"]": [
     "工作区已删除",
@@ -1047,9 +1203,17 @@
     "正在恢复连接，更新结果尚未确认",
     "Reconnecting; the update outcome is not yet confirmed"
   ],
+  "[\"最小：{0}\",\"Min: {0}\"]": [
+    "最小：{0}",
+    "Min: {0}"
+  ],
   "[\"操作未完成，请刷新状态后重试。\",\"The action could not complete. Refresh the task and try again.\"]": [
     "操作未完成，请刷新状态后重试。",
     "The action could not complete. Refresh the task and try again."
+  ],
+  "[\"触发并发、批准阻断策略、分级提示词与上下文工具\",\"Triggers, approval/blocking policy, review tiers and context tools\"]": [
+    "触发并发、批准阻断策略、分级提示词与上下文工具",
+    "Triggers, approval/blocking policy, review tiers and context tools"
   ],
   "[\"发送测试\",\"Send test\"]": [
     "发送测试",
@@ -1066,6 +1230,10 @@
   "[\"无法访问此页面\",\"Access denied\"]": [
     "无法访问此页面",
     "Access denied"
+  ],
+  "[\"字节\",\"bytes\"]": [
+    "字节",
+    "bytes"
   ],
   "[\"发现\",\"Findings\"]": [
     "发现",
@@ -1111,6 +1279,10 @@
     "渠道类型",
     "Channel type"
   ],
+  "[\"备份与恢复\",\"Backup & restore\"]": [
+    "备份与恢复",
+    "Backup & restore"
+  ],
   "[\"重新授权\",\"Reauthorize\"]": [
     "重新授权",
     "Reauthorize"
@@ -1131,6 +1303,10 @@
     "停用用户",
     "Disable user"
   ],
+  "[\"自动标签推荐\",\"Automatic label recommendation\"]": [
+    "自动标签推荐",
+    "Automatic label recommendation"
+  ],
   "[\"订单 ID\",\"Order ID\"]": [
     "订单 ID",
     "Order ID"
@@ -1139,17 +1315,9 @@
     "快速开始",
     "Quick access"
   ],
-  "[\"尝试使用功能名称，或更短的关键词。\",\"Try a feature name or a shorter keyword.\"]": [
-    "尝试使用功能名称，或更短的关键词。",
-    "Try a feature name or a shorter keyword."
-  ],
   "[\"最近安全事件\",\"Latest security event\"]": [
     "最近安全事件",
     "Latest security event"
-  ],
-  "[\"连接 AI 账号，选择模型和调用策略\",\"Connect accounts, choose models and tune requests\"]": [
-    "连接 AI 账号，选择模型和调用策略",
-    "Connect accounts, choose models and tune requests"
   ],
   "[\"所有审查\",\"All reviews\"]": [
     "所有审查",
@@ -1191,9 +1359,17 @@
     "应用配置",
     "Application configuration"
   ],
+  "[\"需 ≤ 关闭关系置信度阈值\",\"Must be ≤ closing confidence\"]": [
+    "需 ≤ 关闭关系置信度阈值",
+    "Must be ≤ closing confidence"
+  ],
   "[\"尚未添加通行密钥\",\"No passkeys added\"]": [
     "尚未添加通行密钥",
     "No passkeys added"
+  ],
+  "[\"管理各标签在 GitHub 同步的颜色与说明，支持增删自定义标签。\",\"Manage GitHub label colors and descriptions, or add custom labels.\"]": [
+    "管理各标签在 GitHub 同步的颜色与说明，支持增删自定义标签。",
+    "Manage GitHub label colors and descriptions, or add custom labels."
   ],
   "[\"补充说明或反馈\",\"Add guidance or feedback\"]": [
     "补充说明或反馈",
@@ -1258,6 +1434,10 @@
   "[\"批准退款\",\"Approve refund\"]": [
     "批准退款",
     "Approve refund"
+  ],
+  "[\"设置新账号默认获得的日/周/月审查、Issue 与 Agent 初始配额。\",\"Set initial daily, weekly and monthly quotas for new users and admins.\"]": [
+    "设置新账号默认获得的日/周/月审查、Issue 与 Agent 初始配额。",
+    "Set initial daily, weekly and monthly quotas for new users and admins."
   ],
   "[\"离开后，未保存的内容将丢失。\",\"Unsaved content will be lost when you leave.\"]": [
     "离开后，未保存的内容将丢失。",
@@ -1370,6 +1550,10 @@
   "[\"任务已提交，后台正在处理。\",\"Submitted for background processing.\"]": [
     "任务已提交，后台正在处理。",
     "Submitted for background processing."
+  ],
+  "[\"添加供应商账号、API 密钥与可用模型清单，供下方任务绑定与能力设置调用。\",\"Add provider endpoints, credentials and model lists used by role bindings below.\"]": [
+    "添加供应商账号、API 密钥与可用模型清单，供下方任务绑定与能力设置调用。",
+    "Add provider endpoints, credentials and model lists used by role bindings below."
   ],
   "[\"消息\",\"Messages\"]": [
     "消息",
@@ -1503,6 +1687,10 @@
     "默认",
     "Default"
   ],
+  "[\"修改清单与保存结果\",\"Pending changes & save results\"]": [
+    "修改清单与保存结果",
+    "Pending changes & save results"
+  ],
   "[\"添加 AI 账号\",\"Add AI account\"]": [
     "添加 AI 账号",
     "Add AI account"
@@ -1522,6 +1710,10 @@
   "[\"健康评分\",\"Health score\"]": [
     "健康评分",
     "Health score"
+  ],
+  "[\"嵌入模型服务\",\"Embedding service\"]": [
+    "嵌入模型服务",
+    "Embedding service"
   ],
   "[\"添加通知渠道\",\"Add delivery channel\"]": [
     "添加通知渠道",
@@ -1567,6 +1759,10 @@
     "已处理",
     "Processed"
   ],
+  "[\"分类规则、优先级与评论模板\",\"Categories, priority rules & templates\"]": [
+    "分类规则、优先级与评论模板",
+    "Categories, priority rules & templates"
+  ],
   "[\"打开会话诊断日志\",\"Open session logs\"]": [
     "打开会话诊断日志",
     "Open session logs"
@@ -1611,6 +1807,10 @@
     "完整分析",
     "Full analysis"
   ],
+  "[\"未设置\",\"Not set\"]": [
+    "未设置",
+    "Not set"
+  ],
   "[\"任务账单\",\"Operation charges\"]": [
     "任务账单",
     "Operation charges"
@@ -1631,6 +1831,10 @@
     "应用域名",
     "Application domain"
   ],
+  "[\"自定义生成 PR 摘要时使用的系统提示词与用户模板。\",\"Customize system and user templates used for PR summaries.\"]": [
+    "自定义生成 PR 摘要时使用的系统提示词与用户模板。",
+    "Customize system and user templates used for PR summaries."
+  ],
   "[\"发布\",\"Publish\"]": [
     "发布",
     "Publish"
@@ -1638,6 +1842,10 @@
   "[\"未能更新技能，请刷新后重试。\",\"Could not update the skill. Refresh and try again.\"]": [
     "未能更新技能，请刷新后重试。",
     "Could not update the skill. Refresh and try again."
+  ],
+  "[\"PR 依赖图提示词\",\"PR dependency graph prompts\"]": [
+    "PR 依赖图提示词",
+    "PR dependency graph prompts"
   ],
   "[\"支付状态\",\"Payment status\"]": [
     "支付状态",
@@ -1691,6 +1899,10 @@
     "重新分析此 Issue？",
     "Analyze this issue again?"
   ],
+  "[\"用户授权 GitHub App\",\"User authorization GitHub App\"]": [
+    "用户授权 GitHub App",
+    "User authorization GitHub App"
+  ],
   "[\"服务条款\",\"Terms of service\"]": [
     "服务条款",
     "Terms of service"
@@ -1698,6 +1910,10 @@
   "[\"名称\",\"Name\"]": [
     "名称",
     "Name"
+  ],
+  "[\"自动分析、指派与查重\",\"Automatic analysis, assignment & deduplication\"]": [
+    "自动分析、指派与查重",
+    "Automatic analysis, assignment & deduplication"
   ],
   "[\"私有仓库\",\"Private repository\"]": [
     "私有仓库",
@@ -1722,6 +1938,10 @@
   "[\"限定特定资源\",\"Limit to a specific resource\"]": [
     "限定特定资源",
     "Limit to a specific resource"
+  ],
+  "[\"配置用于个人仓库授权与互助功能的独立 GitHub App。\",\"Configure the user-scoped GitHub App used for repository authorization.\"]": [
+    "配置用于个人仓库授权与互助功能的独立 GitHub App。",
+    "Configure the user-scoped GitHub App used for repository authorization."
   ],
   "[\"个技能\",\"skills\"]": [
     "个技能",
@@ -1759,10 +1979,6 @@
     "暂无符合筛选条件的发现",
     "No findings match this filter"
   ],
-  "[\"项未保存的修改\",\"unsaved changes\"]": [
-    "项未保存的修改",
-    "unsaved changes"
-  ],
   "[\"分类、优先级和下一步建议\",\"Triage, priorities and next steps\"]": [
     "分类、优先级和下一步建议",
     "Triage, priorities and next steps"
@@ -1779,9 +1995,17 @@
     "条记录",
     "records"
   ],
+  "[\"未展示\",\"Not displayed\"]": [
+    "未展示",
+    "Not displayed"
+  ],
   "[\"否\",\"No\"]": [
     "否",
     "No"
+  ],
+  "[\"冲突 {0}\",\"Conflict {0}\"]": [
+    "冲突 {0}",
+    "Conflict {0}"
   ],
   "[\"正在安装…\",\"Installing…\"]": [
     "正在安装…",
@@ -1790,6 +2014,10 @@
   "[\"平均健康评分\",\"Average health score\"]": [
     "平均健康评分",
     "Average health score"
+  ],
+  "[\"环境变量\",\"From env\"]": [
+    "环境变量",
+    "From env"
   ],
   "[\"两步验证已开启\",\"Two-step verification is on\"]": [
     "两步验证已开启",
@@ -1831,6 +2059,10 @@
     "改进",
     "Enhancement"
   ],
+  "[\"配置站点域名、HTTP 监听地址与端口、时区、日志级别及签名密钥。\",\"Configure public domain, bind host/port, timezone, log level and signing secrets.\"]": [
+    "配置站点域名、HTTP 监听地址与端口、时区、日志级别及签名密钥。",
+    "Configure public domain, bind host/port, timezone, log level and signing secrets."
+  ],
   "[\"连接你的 GitHub 账号\",\"Connect your GitHub account\"]": [
     "连接你的 GitHub 账号",
     "Connect your GitHub account"
@@ -1839,6 +2071,10 @@
     "SMTP 端口",
     "SMTP port"
   ],
+  "[\"已暂停\",\"Paused\"]": [
+    "已暂停",
+    "Paused"
+  ],
   "[\"已履约\",\"Fulfilled\"]": [
     "已履约",
     "Fulfilled"
@@ -1846,6 +2082,10 @@
   "[\"输出 / 百万 Token\",\"Output / million tokens\"]": [
     "输出 / 百万 Token",
     "Output / million tokens"
+  ],
+  "[\"管理仓库源码切片索引开关及分块大小与重叠参数。\",\"Manage repository code chunk indexing, chunk size and overlap.\"]": [
+    "管理仓库源码切片索引开关及分块大小与重叠参数。",
+    "Manage repository code chunk indexing, chunk size and overlap."
   ],
   "[\"发送\",\"Send\"]": [
     "发送",
@@ -1931,13 +2171,25 @@
     "查看内容",
     "View content"
   ],
+  "[\"自定义全仓质量与安全扫描所使用的系统提示词。\",\"Customize the system prompt used for full-repository scans.\"]": [
+    "自定义全仓质量与安全扫描所使用的系统提示词。",
+    "Customize the system prompt used for full-repository scans."
+  ],
   "[\"登录你的\",\"Sign in to\"]": [
     "登录你的",
     "Sign in to"
   ],
+  "[\"按范围导出 JSON 备份或从备份文件恢复配置与用户\",\"Export scoped JSON backups or restore configuration and user data\"]": [
+    "按范围导出 JSON 备份或从备份文件恢复配置与用户",
+    "Export scoped JSON backups or restore configuration and user data"
+  ],
   "[\"隐私政策\",\"Privacy policy\"]": [
     "隐私政策",
     "Privacy policy"
+  ],
+  "[\"AI 摘要\",\"AI summary\"]": [
+    "AI 摘要",
+    "AI summary"
   ],
   "[\"运行中\",\"Running\"]": [
     "运行中",
@@ -2007,6 +2259,10 @@
     "正在导出…",
     "Exporting…"
   ],
+  "[\"关闭保存提示\",\"Dismiss save notice\"]": [
+    "关闭保存提示",
+    "Dismiss save notice"
+  ],
   "[\"永久删除并重启\",\"Erase and restart\"]": [
     "永久删除并重启",
     "Erase and restart"
@@ -2022,6 +2278,10 @@
   "[\"已发行兑换码的套餐快照保持不变。更换套餐请生成新兑换码。\",\"An issued code retains its purchased offer. Generate a new code to use a different plan.\"]": [
     "已发行兑换码的套餐快照保持不变。更换套餐请生成新兑换码。",
     "An issued code retains its purchased offer. Generate a new code to use a different plan."
+  ],
+  "[\"PR 摘要提示词\",\"PR summary prompts\"]": [
+    "PR 摘要提示词",
+    "PR summary prompts"
   ],
   "[\"执行详情\",\"Execution details\"]": [
     "执行详情",
@@ -2071,10 +2331,6 @@
     "未连接",
     "Not connected"
   ],
-  "[\"搜索设置、功能或关键词…\",\"Search settings, features or keywords…\"]": [
-    "搜索设置、功能或关键词…",
-    "Search settings, features or keywords…"
-  ],
   "[\"登录方式\",\"Sign-in options\"]": [
     "登录方式",
     "Sign-in options"
@@ -2082,10 +2338,6 @@
   "[\"停用仓库展示？\",\"Disable repository display?\"]": [
     "停用仓库展示？",
     "Disable repository display?"
-  ],
-  "[\"分析流程、分类与回复内容\",\"Analysis, classification and responses\"]": [
-    "分析流程、分类与回复内容",
-    "Analysis, classification and responses"
   ],
   "[\"服务已恢复\",\"Service is back\"]": [
     "服务已恢复",
@@ -2110,6 +2362,10 @@
   "[\"还没有工作区\",\"No workspaces yet\"]": [
     "还没有工作区",
     "No workspaces yet"
+  ],
+  "[\"4. 调用超时、回退策略与活动采集\",\"4. Request policy, fallback & capture\"]": [
+    "4. 调用超时、回退策略与活动采集",
+    "4. Request policy, fallback & capture"
   ],
   "[\"批准并执行退款？\",\"Approve and issue refund?\"]": [
     "批准并执行退款？",
@@ -2170,6 +2426,10 @@
   "[\"任务\",\"Operation\"]": [
     "任务",
     "Operation"
+  ],
+  "[\"需 ≤ 代码块大小\",\"Must be ≤ chunk size\"]": [
+    "需 ≤ 代码块大小",
+    "Must be ≤ chunk size"
   ],
   "[\"已开启\",\"Enabled\"]": [
     "已开启",
@@ -2283,6 +2543,10 @@
     "删除后将无法再用这把密钥登录。",
     "You will no longer be able to sign in with this key."
   ],
+  "[\"配置仓库互助总开关、自动互助调度间隔、每日上限与仓库摘要语言。\",\"Configure global Star community switch, scheduler intervals, daily limits and summaries.\"]": [
+    "配置仓库互助总开关、自动互助调度间隔、每日上限与仓库摘要语言。",
+    "Configure global Star community switch, scheduler intervals, daily limits and summaries."
+  ],
   "[\"建议标题\",\"Suggested title\"]": [
     "建议标题",
     "Suggested title"
@@ -2387,6 +2651,10 @@
     "从 Issue 分析和扫描发现中选择任务，确认目标后交给 Agent。",
     "Choose a task from issue analyses and scan findings, then confirm the goal for the Agent."
   ],
+  "[\"主模型 {0}/{1} · 无回退\",\"Primary {0}/{1} · No fallback\"]": [
+    "主模型 {0}/{1} · 无回退",
+    "Primary {0}/{1} · No fallback"
+  ],
   "[\"最近 30 天\",\"Last 30 days\"]": [
     "最近 30 天",
     "Last 30 days"
@@ -2415,9 +2683,17 @@
     "插件 JSON",
     "Plugin JSON"
   ],
+  "[\"名称匹配\",\"Name match\"]": [
+    "名称匹配",
+    "Name match"
+  ],
   "[\"技能\",\"Skills\"]": [
     "技能",
     "Skills"
+  ],
+  "[\"导出当前配置或用户安全数据，或从备份文件恢复（自动保护部署连接配置）。\",\"Export configuration or user backups, or restore from a file while preserving deployment connections.\"]": [
+    "导出当前配置或用户安全数据，或从备份文件恢复（自动保护部署连接配置）。",
+    "Export configuration or user backups, or restore from a file while preserving deployment connections."
   ],
   "[\"GitHub App 私钥\",\"GitHub App private key\"]": [
     "GitHub App 私钥",
@@ -2426,6 +2702,14 @@
   "[\"处理中\",\"In progress\"]": [
     "处理中",
     "In progress"
+  ],
+  "[\"范围：{0} – {1}\",\"Range: {0}–{1}\"]": [
+    "范围：{0} – {1}",
+    "Range: {0}–{1}"
+  ],
+  "[\"调整自注册新用户相对基础额度的初始倍率。\",\"Adjust initial quota multiplier for self-registered users.\"]": [
+    "调整自注册新用户相对基础额度的初始倍率。",
+    "Adjust initial quota multiplier for self-registered users."
   ],
   "[\"删除全部应用数据与用户，重新进入首次设置。此操作无法撤销。\",\"Delete all application data and users, then return to initial setup. This cannot be undone.\"]": [
     "删除全部应用数据与用户，重新进入首次设置。此操作无法撤销。",
@@ -2471,6 +2755,10 @@
     "正数增加，负数扣减。",
     "Positive adds Credits; negative deducts Credits."
   ],
+  "[\"测试数据库与 Redis 连通性、查找 GitHub App Slug、重启当前实例或清空重置数据库。\",\"Probe active database/Redis connections, look up GitHub App slugs, restart Sakura AI or reset the database.\"]": [
+    "测试数据库与 Redis 连通性、查找 GitHub App Slug、重启当前实例或清空重置数据库。",
+    "Probe active database/Redis connections, look up GitHub App slugs, restart Sakura AI or reset the database."
+  ],
   "[\"次要\",\"Minor\"]": [
     "次要",
     "Minor"
@@ -2503,13 +2791,17 @@
     "删除通行密钥 {0}？",
     "Delete passkey {0}?"
   ],
+  "[\"代码审查\",\"Code review\"]": [
+    "代码审查",
+    "Code review"
+  ],
+  "[\"2. 分配任务模型与回退链\",\"2. Task models & fallback chains\"]": [
+    "2. 分配任务模型与回退链",
+    "2. Task models & fallback chains"
+  ],
   "[\"收起说明\",\"Hide notes\"]": [
     "收起说明",
     "Hide notes"
-  ],
-  "[\"连接供应商后，在下方为不同任务选择模型。\",\"Connect a provider, then assign models to your workflows below.\"]": [
-    "连接供应商后，在下方为不同任务选择模型。",
-    "Connect a provider, then assign models to your workflows below."
   ],
   "[\"服务恢复后刷新此页面。重置数据库后将进入首次设置。\",\"Refresh this page after the service returns. A database reset returns to initial setup.\"]": [
     "服务恢复后刷新此页面。重置数据库后将进入首次设置。",
@@ -2523,6 +2815,10 @@
     "没有符合筛选条件的记录",
     "No entries match these filters"
   ],
+  "[\"关联 Issue 识别\",\"Related Issue linking\"]": [
+    "关联 Issue 识别",
+    "Related Issue linking"
+  ],
   "[\"任务\",\"Tasks\"]": [
     "任务",
     "Tasks"
@@ -2534,6 +2830,10 @@
   "[\"Agent 工作区\",\"Agent workspaces\"]": [
     "Agent 工作区",
     "Agent workspaces"
+  ],
+  "[\"管理 Agent 可调用的 MCP 工具服务、生命周期钩子与只读/工作区写入权限。\",\"Manage MCP servers, lifecycle hooks and read-only or workspace-write permission profiles.\"]": [
+    "管理 Agent 可调用的 MCP 工具服务、生命周期钩子与只读/工作区写入权限。",
+    "Manage MCP servers, lifecycle hooks and read-only or workspace-write permission profiles."
   ],
   "[\"状态\",\"Status\"]": [
     "状态",
@@ -2579,6 +2879,18 @@
     "暂无摘要。",
     "No summary available."
   ],
+  "[\"长度：{0} – {1}\",\"Length: {0}–{1}\"]": [
+    "长度：{0} – {1}",
+    "Length: {0}–{1}"
+  ],
+  "[\"控制套餐销售入口，并配置 Stripe、Paddle、支付宝、NOWPayments 与 TRON 网关。\",\"Control sales entry points and configure Stripe, Paddle, Alipay, NOWPayments and TRON.\"]": [
+    "控制套餐销售入口，并配置 Stripe、Paddle、支付宝、NOWPayments 与 TRON 网关。",
+    "Control sales entry points and configure Stripe, Paddle, Alipay, NOWPayments and TRON."
+  ],
+  "[\"搜索设置名称、用途说明、配置键或中英文关键词…\",\"Search setting names, descriptions, keys or keywords…\"]": [
+    "搜索设置名称、用途说明、配置键或中英文关键词…",
+    "Search setting names, descriptions, keys or keywords…"
+  ],
   "[\"全部严重程度\",\"All severities\"]": [
     "全部严重程度",
     "All severities"
@@ -2607,13 +2919,29 @@
     "SMTP 用户名",
     "SMTP username"
   ],
+  "[\"网络请求失败，可稍后重试。\",\"Request failed; retry when ready.\"]": [
+    "网络请求失败，可稍后重试。",
+    "Request failed; retry when ready."
+  ],
+  "[\"查看修改\",\"Review changes\"]": [
+    "查看修改",
+    "Review changes"
+  ],
   "[\"搜索成员\",\"Search members\"]": [
     "搜索成员",
     "Search members"
   ],
+  "[\"AI 供应商账号管理\",\"AI provider accounts\"]": [
+    "AI 供应商账号管理",
+    "AI provider accounts"
+  ],
   "[\"批次名称\",\"Batch name\"]": [
     "批次名称",
     "Batch name"
+  ],
+  "[\"确认并保存\",\"Confirm and save\"]": [
+    "确认并保存",
+    "Confirm and save"
   ],
   "[\"审查队列\",\"Review queue\"]": [
     "审查队列",
@@ -2646,6 +2974,10 @@
   "[\"套餐与价格\",\"Plans & pricing\"]": [
     "套餐与价格",
     "Plans & pricing"
+  ],
+  "[\"评审结论与批准/阻断策略\",\"Approval & blocking policy\"]": [
+    "评审结论与批准/阻断策略",
+    "Approval & blocking policy"
   ],
   "[\"JSON 文件，最大\",\"JSON file, up to\"]": [
     "JSON 文件，最大",
@@ -2703,6 +3035,14 @@
     "已禁用",
     "Disabled"
   ],
+  "[\"所选模型的账号已停用或移除，请先切换为可用账号。\",\"The selected model's account is disabled or unavailable.\"]": [
+    "所选模型的账号已停用或移除，请先切换为可用账号。",
+    "The selected model's account is disabled or unavailable."
+  ],
+  "[\"（空字符串）\",\"(empty string)\"]": [
+    "（空字符串）",
+    "(empty string)"
+  ],
   "[\"待验证\",\"Unverified\"]": [
     "待验证",
     "Unverified"
@@ -2710,6 +3050,14 @@
   "[\"每用户业务执行上限\",\"Per-user business execution limit\"]": [
     "每用户业务执行上限",
     "Per-user business execution limit"
+  ],
+  "[\"最大：{0}\",\"Max: {0}\"]": [
+    "最大：{0}",
+    "Max: {0}"
+  ],
+  "[\"配置外部搜索引擎供应商、API 密钥、返回条数与超时限制。\",\"Configure search provider, API key, result count and timeout.\"]": [
+    "配置外部搜索引擎供应商、API 密钥、返回条数与超时限制。",
+    "Configure search provider, API key, result count and timeout."
   ],
   "[\"相关代码\",\"Relevant code\"]": [
     "相关代码",
@@ -2727,6 +3075,10 @@
     "显示更多",
     "Show more"
   ],
+  "[\"导出与恢复备份\",\"Export & restore backups\"]": [
+    "导出与恢复备份",
+    "Export & restore backups"
+  ],
   "[\"调整用户余额？\",\"Adjust this balance?\"]": [
     "调整用户余额？",
     "Adjust this balance?"
@@ -2739,9 +3091,17 @@
     "提取知识",
     "Extract knowledge"
   ],
+  "[\"通知与绑定\",\"Notifications\"]": [
+    "通知与绑定",
+    "Notifications"
+  ],
   "[\"离开设置？\",\"Leave settings?\"]": [
     "离开设置？",
     "Leave settings?"
+  ],
+  "[\"活跃\",\"Active\"]": [
+    "活跃",
+    "Active"
   ],
   "[\"确认验证\",\"Verify\"]": [
     "确认验证",
@@ -2751,9 +3111,17 @@
     "正在获取模型…",
     "Loading models…"
   ],
+  "[\"配置用户登录所使用的 GitHub OAuth Client ID、密钥与回调地址。\",\"Configure GitHub OAuth credentials and redirect URLs for user sign-in.\"]": [
+    "配置用户登录所使用的 GitHub OAuth Client ID、密钥与回调地址。",
+    "Configure GitHub OAuth credentials and redirect URLs for user sign-in."
+  ],
   "[\"余额提醒已更新\",\"Balance alert updated\"]": [
     "余额提醒已更新",
     "Balance alert updated"
+  ],
+  "[\"{0} 行 · {1} 字符（{2}…）\",\"{0} lines · {1} chars ({2}…)\"]": [
+    "{0} 行 · {1} 字符（{2}…）",
+    "{0} lines · {1} chars ({2}…)"
   ],
   "[\"检查用户 ID 和金额（Credits 最多六位小数）。\",\"Check the user ID and amount (Credits allow up to six decimal places).\"]": [
     "检查用户 ID 和金额（Credits 最多六位小数）。",
@@ -2795,6 +3163,10 @@
     "可用版本",
     "Available versions"
   ],
+  "[\"配置发送邮件通知与验证邮件所需的 SMTP 连接与发件人信息。\",\"Configure SMTP connection, encryption, credentials and sender address.\"]": [
+    "配置发送邮件通知与验证邮件所需的 SMTP 连接与发件人信息。",
+    "Configure SMTP connection, encryption, credentials and sender address."
+  ],
   "[\"插件与运行权限\",\"Plugins & runtime permissions\"]": [
     "插件与运行权限",
     "Plugins & runtime permissions"
@@ -2822,6 +3194,10 @@
   "[\"检查失败，保留上次成功结果\",\"Check failed; keeping the last successful result\"]": [
     "检查失败，保留上次成功结果",
     "Check failed; keeping the last successful result"
+  ],
+  "[\"仓库扫描提示词\",\"Repository scan prompt\"]": [
+    "仓库扫描提示词",
+    "Repository scan prompt"
   ],
   "[\"创建订单\",\"Create order\"]": [
     "创建订单",
@@ -2875,6 +3251,10 @@
     "扫描设置",
     "Scan settings"
   ],
+  "[\"自动标签推荐、GitHub 标签定义、互斥规则与仓库扫描\",\"Automatic label recommendations, GitHub label definitions and repository scans\"]": [
+    "自动标签推荐、GitHub 标签定义、互斥规则与仓库扫描",
+    "Automatic label recommendations, GitHub label definitions and repository scans"
+  ],
   "[\"退款申请\",\"Refund request\"]": [
     "退款申请",
     "Refund request"
@@ -2886,6 +3266,10 @@
   "[\"下次检查\",\"Next check\"]": [
     "下次检查",
     "Next check"
+  ],
+  "[\"数据库与缓存连接\",\"Database & Redis connections\"]": [
+    "数据库与缓存连接",
+    "Database & Redis connections"
   ],
   "[\"启用 {0}\",\"Enable {0}\"]": [
     "启用 {0}",
@@ -2931,6 +3315,10 @@
     "对话",
     "Messages"
   ],
+  "[\"开启前需配置渠道密钥\",\"Requires channel credentials\"]": [
+    "开启前需配置渠道密钥",
+    "Requires channel credentials"
+  ],
   "[\"未能保存。请检查服务 ID、地址、权限和凭据引用；环境凭据只支持 SAKURA_MCP_*。\",\"Could not save. Check service IDs, addresses, permissions and credential references; environment credentials must use SAKURA_MCP_*.\"]": [
     "未能保存。请检查服务 ID、地址、权限和凭据引用；环境凭据只支持 SAKURA_MCP_*。",
     "Could not save. Check service IDs, addresses, permissions and credential references; environment credentials must use SAKURA_MCP_*."
@@ -2950,6 +3338,10 @@
   "[\"保存选择\",\"Save selection\"]": [
     "保存选择",
     "Save selection"
+  ],
+  "[\"配置自动批准与请求修改的评分门槛、单仓库覆盖及中英文评论模板。\",\"Configure Approve / Request Changes thresholds, repo overrides and templates.\"]": [
+    "配置自动批准与请求修改的评分门槛、单仓库覆盖及中英文评论模板。",
+    "Configure Approve / Request Changes thresholds, repo overrides and templates."
   ],
   "[\"最近配额使用\",\"Recent quota usage\"]": [
     "最近配额使用",
@@ -3039,9 +3431,17 @@
     "缓存读取 / 百万 Token（可选）",
     "Cache read / million tokens (optional)"
   ],
+  "[\"设置 TOTP 身份验证器、恢复码或设备指纹/安全密钥登录。\",\"Configure TOTP authenticator apps, recovery codes and WebAuthn passkeys.\"]": [
+    "设置 TOTP 身份验证器、恢复码或设备指纹/安全密钥登录。",
+    "Configure TOTP authenticator apps, recovery codes and WebAuthn passkeys."
+  ],
   "[\"请输入以下确认文字：\",\"Type the following confirmation:\"]": [
     "请输入以下确认文字：",
     "Type the following confirmation:"
+  ],
+  "[\"查看当前版本、项目文档与服务协议\",\"Inspect running version, documentation and legal terms\"]": [
+    "查看当前版本、项目文档与服务协议",
+    "Inspect running version, documentation and legal terms"
   ],
   "[\"代码文件\",\"Code files\"]": [
     "代码文件",
@@ -3127,9 +3527,17 @@
     "无法确认恢复结果。请先刷新并核对当前设置，再决定是否重试。",
     "Could not confirm the restore outcome. Refresh and inspect current settings before retrying."
   ],
+  "[\"已保存 {0} 项修改并生效\",\"Saved {0} change(s)\"]": [
+    "已保存 {0} 项修改并生效",
+    "Saved {0} change(s)"
+  ],
   "[\"配额已更新\",\"Quota updated\"]": [
     "配额已更新",
     "Quota updated"
+  ],
+  "[\"配置 Agent 启用范围、沙箱与网络策略、依赖安装、测试运行及 Draft PR 审查闭环。\",\"Configure Agent allowlists, sandbox/network policy, test execution and Draft PR review.\"]": [
+    "配置 Agent 启用范围、沙箱与网络策略、依赖安装、测试运行及 Draft PR 审查闭环。",
+    "Configure Agent allowlists, sandbox/network policy, test execution and Draft PR review."
   ],
   "[\"接收渠道\",\"Destination\"]": [
     "接收渠道",
@@ -3142,6 +3550,10 @@
   "[\"镜像摘要\",\"Image digest\"]": [
     "镜像摘要",
     "Image digest"
+  ],
+  "[\"已持久化，重启应用后生效。\",\"Persisted; takes effect after restarting the application.\"]": [
+    "已持久化，重启应用后生效。",
+    "Persisted; takes effect after restarting the application."
   ],
   "[\"角色\",\"Role\"]": [
     "角色",
@@ -3170,6 +3582,10 @@
   "[\"登录 OAuth Client Secret\",\"Sign-in OAuth Client Secret\"]": [
     "登录 OAuth Client Secret",
     "Sign-in OAuth Client Secret"
+  ],
+  "[\"默认：{0}\",\"Default: {0}\"]": [
+    "默认：{0}",
+    "Default: {0}"
   ],
   "[\"GitHub App 接收到 Pull Request 后，审查结果会显示在这里。\",\"Reviews will appear here when your GitHub App receives a pull request.\"]": [
     "GitHub App 接收到 Pull Request 后，审查结果会显示在这里。",
@@ -3295,6 +3711,14 @@
     "所有仓库",
     "All repositories"
   ],
+  "[\"列表（{0} 项）\",\"List ({0} items)\"]": [
+    "列表（{0} 项）",
+    "List ({0} items)"
+  ],
+  "[\"默认语言与全局输出\",\"Default language & output\"]": [
+    "默认语言与全局输出",
+    "Default language & output"
+  ],
   "[\"代码审查、Issue 分析与 Agent 任务，从这里继续。\",\"Pick up where you left off with your reviews, issues and Agent tasks.\"]": [
     "代码审查、Issue 分析与 Agent 任务，从这里继续。",
     "Pick up where you left off with your reviews, issues and Agent tasks."
@@ -3335,9 +3759,17 @@
     "全部",
     "All"
   ],
+  "[\"正在提交 {0}/{1}…\",\"Saving {0}/{1}…\"]": [
+    "正在提交 {0}/{1}…",
+    "Saving {0}/{1}…"
+  ],
   "[\"候选评分\",\"Candidate score\"]": [
     "候选评分",
     "Candidate score"
+  ],
+  "[\"控制周期性代码扫描开关、执行间隔、冷却时间与自动建单严重度。\",\"Control scheduled repository scans, cooldowns and Issue creation severity.\"]": [
+    "控制周期性代码扫描开关、执行间隔、冷却时间与自动建单严重度。",
+    "Control scheduled repository scans, cooldowns and Issue creation severity."
   ],
   "[\"压缩与上下文操作\",\"Context operations\"]": [
     "压缩与上下文操作",
@@ -3383,6 +3815,10 @@
     "申请人将看到此审核结果。",
     "The requester will see this decision."
   ],
+  "[\"配置不能同时应用在同一 PR 或 Issue 上的互斥标签列表。\",\"Configure mutually exclusive label groups.\"]": [
+    "配置不能同时应用在同一 PR 或 Issue 上的互斥标签列表。",
+    "Configure mutually exclusive label groups."
+  ],
   "[\"管理员 Telegram ID（可选）\",\"Administrator Telegram ID (optional)\"]": [
     "管理员 Telegram ID（可选）",
     "Administrator Telegram ID (optional)"
@@ -3414,6 +3850,10 @@
   "[\"OAuth 回调地址\",\"OAuth callback URL\"]": [
     "OAuth 回调地址",
     "OAuth callback URL"
+  ],
+  "[\"修改需重启\",\"Restart required\"]": [
+    "修改需重启",
+    "Restart required"
   ],
   "[\"重排模型\",\"Rerank model\"]": [
     "重排模型",
@@ -3499,10 +3939,6 @@
     "没有匹配的用户",
     "No matching users"
   ],
-  "[\"应用、身份验证与服务配置\",\"Application, authentication and service configuration\"]": [
-    "应用、身份验证与服务配置",
-    "Application, authentication and service configuration"
-  ],
   "[\"实现\",\"Implementation\"]": [
     "实现",
     "Implementation"
@@ -3515,13 +3951,29 @@
     "JSON 格式不完整，请修正后保存。",
     "JSON is incomplete. Correct it before saving."
   ],
+  "[\"上下文工具与仓库记忆\",\"Context tools & repository memory\"]": [
+    "上下文工具与仓库记忆",
+    "Context tools & repository memory"
+  ],
   "[\"正在处理\",\"In progress\"]": [
     "正在处理",
     "In progress"
   ],
+  "[\"导出配置备份与导入恢复\",\"Export configuration backup & import restore\"]": [
+    "导出配置备份与导入恢复",
+    "Export configuration backup & import restore"
+  ],
   "[\"你没有查看此内容的权限。\",\"You do not have permission to view this content.\"]": [
     "你没有查看此内容的权限。",
     "You do not have permission to view this content."
+  ],
+  "[\"GitHub 标签定义\",\"GitHub label definitions\"]": [
+    "GitHub 标签定义",
+    "GitHub label definitions"
+  ],
+  "[\"文件过滤规则\",\"File filter rules\"]": [
+    "文件过滤规则",
+    "File filter rules"
   ],
   "[\"仅严重\",\"Critical only\"]": [
     "仅严重",
@@ -3543,9 +3995,17 @@
     "工作树 · {0}",
     "Worktrees · {0}"
   ],
+  "[\"控制是否自动生成 Pull Request 变更总结。\",\"Control automatic Pull Request summary generation.\"]": [
+    "控制是否自动生成 Pull Request 变更总结。",
+    "Control automatic Pull Request summary generation."
+  ],
   "[\"新增 {0} · 更新 {1} · 删除 {2} · 未变 {3}\",\"Created {0} · Updated {1} · Removed {2} · Unchanged {3}\"]": [
     "新增 {0} · 更新 {1} · 删除 {2} · 未变 {3}",
     "Created {0} · Updated {1} · Removed {2} · Unchanged {3}"
+  ],
+  "[\"PR 变更摘要\",\"PR change summary\"]": [
+    "PR 变更摘要",
+    "PR change summary"
   ],
   "[\"当前配额权益\",\"Current quota benefits\"]": [
     "当前配额权益",
@@ -3575,6 +4035,10 @@
     "使用设备上的指纹、面容或安全密钥登录。",
     "Sign in with your device fingerprint, face recognition, or security key."
   ],
+  "[\"连接 AI 账号，分配任务模型与回退链，调整能力与调用策略\",\"Connect AI accounts, assign task models & fallbacks, and tune request policy\"]": [
+    "连接 AI 账号，分配任务模型与回退链，调整能力与调用策略",
+    "Connect AI accounts, assign task models & fallbacks, and tune request policy"
+  ],
   "[\"请检查来源地址或技能文件格式。\",\"Check the source URL or skill package format.\"]": [
     "请检查来源地址或技能文件格式。",
     "Check the source URL or skill package format."
@@ -3602,6 +4066,10 @@
   "[\"反馈未提交，请检查任务状态后重试。\",\"Feedback was not submitted. Check the task status and try again.\"]": [
     "反馈未提交，请检查任务状态后重试。",
     "Feedback was not submitted. Check the task status and try again."
+  ],
+  "[\"联网网页搜索\",\"Web search\"]": [
+    "联网网页搜索",
+    "Web search"
   ],
   "[\"其他镜像\",\"Other images\"]": [
     "其他镜像",
@@ -3659,6 +4127,10 @@
     "更新时间",
     "Updated"
   ],
+  "[\"定位\",\"Locate\"]": [
+    "定位",
+    "Locate"
+  ],
   "[\"备份已生成，请在浏览器下载中查看。\",\"Backup generated. Check your browser downloads.\"]": [
     "备份已生成，请在浏览器下载中查看。",
     "Backup generated. Check your browser downloads."
@@ -3715,6 +4187,10 @@
     "建立索引",
     "Indexing"
   ],
+  "[\"空列表（0 项）\",\"Empty list (0 items)\"]": [
+    "空列表（0 项）",
+    "Empty list (0 items)"
+  ],
   "[\"价格倍率\",\"Markup multiplier\"]": [
     "价格倍率",
     "Markup multiplier"
@@ -3726,6 +4202,10 @@
   "[\"连接\",\"Connections\"]": [
     "连接",
     "Connections"
+  ],
+  "[\"主 GitHub App 接入\",\"Primary GitHub App\"]": [
+    "主 GitHub App 接入",
+    "Primary GitHub App"
   ],
   "[\"个发现\",\"findings\"]": [
     "个发现",
@@ -3763,6 +4243,10 @@
     "提交内容预览",
     "Submission preview"
   ],
+  "[\"失败 {0}\",\"Failed {0}\"]": [
+    "失败 {0}",
+    "Failed {0}"
+  ],
   "[\"自动检查\",\"Automatic checks\"]": [
     "自动检查",
     "Automatic checks"
@@ -3774,6 +4258,10 @@
   "[\"评论\",\"Comment\"]": [
     "评论",
     "Comment"
+  ],
+  "[\"个人偏好\",\"Personal\"]": [
+    "个人偏好",
+    "Personal"
   ],
   "[\"没有匹配的审查\",\"No matching reviews\"]": [
     "没有匹配的审查",
@@ -3827,6 +4315,10 @@
     "身份验证器已关闭",
     "Authenticator disabled"
   ],
+  "[\"主模型 {0}/{1} · 回退 [{2}]\",\"Primary {0}/{1} · Fallback [{2}]\"]": [
+    "主模型 {0}/{1} · 回退 [{2}]",
+    "Primary {0}/{1} · Fallback [{2}]"
+  ],
   "[\"此操作会改变该账号的登录验证方式，并写入安全审计记录。\",\"This changes the account verification methods and records a security audit event.\"]": [
     "此操作会改变该账号的登录验证方式，并写入安全审计记录。",
     "This changes the account verification methods and records a security audit event."
@@ -3842,6 +4334,10 @@
   "[\"用户与安全信息\",\"Users & security\"]": [
     "用户与安全信息",
     "Users & security"
+  ],
+  "[\"需重启\",\"Restart required\"]": [
+    "需重启",
+    "Restart required"
   ],
   "[\"Issue 分析\",\"Issue analysis\"]": [
     "Issue 分析",
@@ -3863,9 +4359,17 @@
     "备注",
     "Notes"
   ],
+  "[\"自定义 AI 模式下生成 PR 依赖关系图的提示词模板。\",\"Customize prompts used when generating dependency graphs in AI mode.\"]": [
+    "自定义 AI 模式下生成 PR 依赖关系图的提示词模板。",
+    "Customize prompts used when generating dependency graphs in AI mode."
+  ],
   "[\"PR 审查次数\",\"PR reviews\"]": [
     "PR 审查次数",
     "PR reviews"
+  ],
+  "[\"已保存 {0} 项（{1} 项等待后台同步生效）\",\"Saved {0} item(s) ({1} pending runtime sync)\"]": [
+    "已保存 {0} 项（{1} 项等待后台同步生效）",
+    "Saved {0} item(s) ({1} pending runtime sync)"
   ],
   "[\"工具结果\",\"Tool results\"]": [
     "工具结果",
@@ -3874,6 +4378,14 @@
   "[\"预留 Credits\",\"Reserved Credits\"]": [
     "预留 Credits",
     "Reserved Credits"
+  ],
+  "[\"按分类下载 JSON 备份文件，或上传备份文件恢复配置与用户数据。\",\"Download scoped JSON backups or upload a backup file to restore configuration and users.\"]": [
+    "按分类下载 JSON 备份文件，或上传备份文件恢复配置与用户数据。",
+    "Download scoped JSON backups or upload a backup file to restore configuration and users."
+  ],
+  "[\"检索增强（RAG）\",\"Retrieval-augmented generation (RAG)\"]": [
+    "检索增强（RAG）",
+    "Retrieval-augmented generation (RAG)"
   ],
   "[\"选择配置备份。当前部署的连接设置会保留。\",\"Choose a configuration backup. Existing deployment connection settings are preserved.\"]": [
     "选择配置备份。当前部署的连接设置会保留。",
@@ -3898,6 +4410,10 @@
   "[\"组织\",\"Organization\"]": [
     "组织",
     "Organization"
+  ],
+  "[\"已保存 {0} 项（其中 {1} 项需重启应用生效）\",\"Saved {0} item(s) ({1} require application restart)\"]": [
+    "已保存 {0} 项（其中 {1} 项需重启应用生效）",
+    "Saved {0} item(s) ({1} require application restart)"
   ],
   "[\"保存套餐\",\"Save plan\"]": [
     "保存套餐",
@@ -3935,6 +4451,10 @@
     "暂无符合条件的候选任务",
     "No matching candidates"
   ],
+  "[\"版本冲突\",\"Conflict\"]": [
+    "版本冲突",
+    "Conflict"
+  ],
   "[\"已压缩的历史记录\",\"Compacted history\"]": [
     "已压缩的历史记录",
     "Compacted history"
@@ -3955,6 +4475,10 @@
     "变更",
     "Changed"
   ],
+  "[\"控制自动打标开关、推荐置信度门槛以及缺失标签自动创建。\",\"Control automatic labeling, confidence threshold and auto-creation.\"]": [
+    "控制自动打标开关、推荐置信度门槛以及缺失标签自动创建。",
+    "Control automatic labeling, confidence threshold and auto-creation."
+  ],
   "[\"安装 Agent 技能\",\"Install Agent skill\"]": [
     "安装 Agent 技能",
     "Install Agent skill"
@@ -3970,6 +4494,10 @@
   "[\"可能重复于\",\"Potential duplicate of\"]": [
     "可能重复于",
     "Potential duplicate of"
+  ],
+  "[\"代码切片索引\",\"Code chunk indexing\"]": [
+    "代码切片索引",
+    "Code chunk indexing"
   ],
   "[\"重排接口地址\",\"Rerank endpoint\"]": [
     "重排接口地址",
@@ -4031,6 +4559,10 @@
     "发放 Credits",
     "Credits granted"
   ],
+  "[\"重试未成功项 ({0})\",\"Retry unsaved items ({0})\"]": [
+    "重试未成功项 ({0})",
+    "Retry unsaved items ({0})"
+  ],
   "[\"等待定价\",\"Pending pricing\"]": [
     "等待定价",
     "Pending pricing"
@@ -4050,6 +4582,10 @@
   "[\"登录 OAuth Client ID\",\"Sign-in OAuth Client ID\"]": [
     "登录 OAuth Client ID",
     "Sign-in OAuth Client ID"
+  ],
+  "[\"字符\",\"chars\"]": [
+    "字符",
+    "chars"
   ],
   "[\"搜索仓库或编号…\",\"Search repository or number…\"]": [
     "搜索仓库或编号…",
@@ -4098,6 +4634,10 @@
   "[\"没有匹配的技能\",\"No matching skills\"]": [
     "没有匹配的技能",
     "No matching skills"
+  ],
+  "[\"账号安全\",\"Security\"]": [
+    "账号安全",
+    "Security"
   ],
   "[\"删除技能？\",\"Delete skill?\"]": [
     "删除技能？",
@@ -4151,6 +4691,10 @@
     "检查结果",
     "Check result"
   ],
+  "[\"MCP 服务、钩子与 Agent 运行权限\",\"MCP servers, hooks & runtime permission profile\"]": [
+    "MCP 服务、钩子与 Agent 运行权限",
+    "MCP servers, hooks & runtime permission profile"
+  ],
   "[\"建议指派人\",\"Suggested assignees\"]": [
     "建议指派人",
     "Suggested assignees"
@@ -4162,6 +4706,14 @@
   "[\"跳过\",\"Skipped\"]": [
     "跳过",
     "Skipped"
+  ],
+  "[\"秒\",\"seconds\"]": [
+    "秒",
+    "seconds"
+  ],
+  "[\"设置当前账号的界面语言、主题模式、列表每页条数与审查回复语言。\",\"Set UI language, color theme, page size and personal review output language.\"]": [
+    "设置当前账号的界面语言、主题模式、列表每页条数与审查回复语言。",
+    "Set UI language, color theme, page size and personal review output language."
   ],
   "[\"切换模型？\",\"Switch model?\"]": [
     "切换模型？",
@@ -4207,6 +4759,10 @@
     "清理失败记录",
     "Clear failed records"
   ],
+  "[\"邮件通知（SMTP）\",\"Email notifications (SMTP)\"]": [
+    "邮件通知（SMTP）",
+    "Email notifications (SMTP)"
+  ],
   "[\"天\",\"days\"]": [
     "天",
     "days"
@@ -4251,6 +4807,10 @@
     "通过指纹、面容或设备密码登录。",
     "Sign in with your fingerprint, face or device PIN."
   ],
+  "[\"小于 {0}\",\"< {0}\"]": [
+    "小于 {0}",
+    "< {0}"
+  ],
   "[\"仓库\",\"Repositories\"]": [
     "仓库",
     "Repositories"
@@ -4267,6 +4827,10 @@
     "已启用",
     "Enabled"
   ],
+  "[\"分区匹配\",\"Section match\"]": [
+    "分区匹配",
+    "Section match"
+  ],
   "[\"重新加载\",\"Reload\"]": [
     "重新加载",
     "Reload"
@@ -4278,10 +4842,6 @@
   "[\"需要处理\",\"Action required\"]": [
     "需要处理",
     "Action required"
-  ],
-  "[\"显示前 80 项，请缩小搜索范围。\",\"Showing the first 80 results. Refine your search for more.\"]": [
-    "显示前 80 项，请缩小搜索范围。",
-    "Showing the first 80 results. Refine your search for more."
   ],
   "[\"审查中\",\"Reviewing\"]": [
     "审查中",
@@ -4295,6 +4855,10 @@
     "清空集合？",
     "Clear collection?"
   ],
+  "[\"部署只读\",\"Deployment read-only\"]": [
+    "部署只读",
+    "Deployment read-only"
+  ],
   "[\"协议\",\"Protocol\"]": [
     "协议",
     "Protocol"
@@ -4307,6 +4871,10 @@
     "订单历史",
     "Order history"
   ],
+  "[\"今日互助\",\"Daily stars\"]": [
+    "今日互助",
+    "Daily stars"
+  ],
   "[\"余额提醒\",\"Low balance alert\"]": [
     "余额提醒",
     "Low balance alert"
@@ -4314,6 +4882,14 @@
   "[\"没有关联任务\",\"No linked task\"]": [
     "没有关联任务",
     "No linked task"
+  ],
+  "[\"已封禁\",\"Banned\"]": [
+    "已封禁",
+    "Banned"
+  ],
+  "[\"设置实例默认界面语言与全局 AI 回复语言。\",\"Set instance default UI language and global AI output language.\"]": [
+    "设置实例默认界面语言与全局 AI 回复语言。",
+    "Set instance default UI language and global AI output language."
   ],
   "[\"源码提交\",\"Source revision\"]": [
     "源码提交",
@@ -4326,6 +4902,18 @@
   "[\"关闭已不可用的任务记录？\",\"Close unavailable job record?\"]": [
     "关闭已不可用的任务记录？",
     "Close unavailable job record?"
+  ],
+  "[\"行内代码评论\",\"Inline diff comments\"]": [
+    "行内代码评论",
+    "Inline diff comments"
+  ],
+  "[\"3. 单模型能力与参数覆盖\",\"3. Per-model capabilities & parameters\"]": [
+    "3. 单模型能力与参数覆盖",
+    "3. Per-model capabilities & parameters"
+  ],
+  "[\"初始用户与管理员额度\",\"Initial user & admin quotas\"]": [
+    "初始用户与管理员额度",
+    "Initial user & admin quotas"
   ],
   "[\"Agent 任务次数\",\"Agent tasks\"]": [
     "Agent 任务次数",
@@ -4343,6 +4931,10 @@
     "保存到仓库？",
     "Save to repository?"
   ],
+  "[\"查看由部署配置管理的数据库与 Redis 连接；连接测试位于底部系统维护区。\",\"View deployment-owned database and Redis connections; probe them in System maintenance below.\"]": [
+    "查看由部署配置管理的数据库与 Redis 连接；连接测试位于底部系统维护区。",
+    "View deployment-owned database and Redis connections; probe them in System maintenance below."
+  ],
   "[\"版本更新\",\"Updates\"]": [
     "版本更新",
     "Updates"
@@ -4350,6 +4942,10 @@
   "[\"开始\",\"Start\"]": [
     "开始",
     "Start"
+  ],
+  "[\"本页目录\",\"On this page\"]": [
+    "本页目录",
+    "On this page"
   ],
   "[\"首次部署\",\"First deployment\"]": [
     "首次部署",
@@ -4375,10 +4971,6 @@
     "关闭",
     "Close"
   ],
-  "[\"界面、语言与个人体验\",\"Appearance, language and your experience\"]": [
-    "界面、语言与个人体验",
-    "Appearance, language and your experience"
-  ],
   "[\"重构\",\"Refactor\"]": [
     "重构",
     "Refactor"
@@ -4395,6 +4987,10 @@
     "尚不满足更新条件",
     "Update requirements are not met"
   ],
+  "[\"小时\",\"hours\"]": [
+    "小时",
+    "hours"
+  ],
   "[\"至\",\"To\"]": [
     "至",
     "To"
@@ -4402,6 +4998,14 @@
   "[\"重试查询\",\"Check again\"]": [
     "重试查询",
     "Check again"
+  ],
+  "[\"保存修改\",\"Save changes\"]": [
+    "保存修改",
+    "Save changes"
+  ],
+  "[\"配置变更模块依赖图开关、节点/文件上限及生成方式。\",\"Configure dependency graph generation mode and node/file limits.\"]": [
+    "配置变更模块依赖图开关、节点/文件上限及生成方式。",
+    "Configure dependency graph generation mode and node/file limits."
   ],
   "[\"显示明文\",\"Reveal\"]": [
     "显示明文",
@@ -4431,17 +5035,25 @@
     "推送中",
     "Pushing"
   ],
-  "[\"标签定义、推荐与仓库扫描\",\"Label definitions, recommendations and repository scans\"]": [
-    "标签定义、推荐与仓库扫描",
-    "Label definitions, recommendations and repository scans"
+  "[\"计费销售与支付网关\",\"Billing sales & payment gateways\"]": [
+    "计费销售与支付网关",
+    "Billing sales & payment gateways"
   ],
   "[\"正在保存配置并初始化数据，完成后应用会自动重启，请勿关闭页面…\",\"Saving configuration and initializing data. The application will restart automatically — please keep this page open…\"]": [
     "正在保存配置并初始化数据，完成后应用会自动重启，请勿关闭页面…",
     "Saving configuration and initializing data. The application will restart automatically — please keep this page open…"
   ],
+  "[\"未保存修改操作栏\",\"Unsaved changes bar\"]": [
+    "未保存修改操作栏",
+    "Unsaved changes bar"
+  ],
   "[\"刷新状态\",\"Refresh status\"]": [
     "刷新状态",
     "Refresh status"
+  ],
+  "[\"用途说明匹配\",\"Description match\"]": [
+    "用途说明匹配",
+    "Description match"
   ],
   "[\"暂无操作记录\",\"No audit records\"]": [
     "暂无操作记录",
@@ -4451,9 +5063,17 @@
     "每月",
     "Monthly"
   ],
+  "[\"应用监听与运行基础\",\"Application listener & runtime\"]": [
+    "应用监听与运行基础",
+    "Application listener & runtime"
+  ],
   "[\"输入 / 输出 Token\",\"Input / output tokens\"]": [
     "输入 / 输出 Token",
     "Input / output tokens"
+  ],
+  "[\"按变更文件数与行数匹配快速、标准、深度或大型审查档位及专属提示词。\",\"Match quick, standard, deep and large review tiers by PR size and customize prompts.\"]": [
+    "按变更文件数与行数匹配快速、标准、深度或大型审查档位及专属提示词。",
+    "Match quick, standard, deep and large review tiers by PR size and customize prompts."
   ],
   "[\"到期时间（包含时区，留空为永不过期）\",\"Expiry (with timezone; blank for no expiry)\"]": [
     "到期时间（包含时区，留空为永不过期）",
@@ -4471,9 +5091,21 @@
     "结算币种",
     "Settlement currency"
   ],
+  "[\"配置对象（{0} 项）\",\"Object ({0} entries)\"]": [
+    "配置对象（{0} 项）",
+    "Object ({0} entries)"
+  ],
+  "[\"定义 Issue 分类关键词、紧急度判定规则及中英文回复模板。\",\"Define Issue categories, priority rules and bilingual comment templates.\"]": [
+    "定义 Issue 分类关键词、紧急度判定规则及中英文回复模板。",
+    "Define Issue categories, priority rules and bilingual comment templates."
+  ],
   "[\"展开摘要\",\"Expand summary\"]": [
     "展开摘要",
     "Expand summary"
+  ],
+  "[\"自注册配额倍率\",\"Self-registration quota multiplier\"]": [
+    "自注册配额倍率",
+    "Self-registration quota multiplier"
   ],
   "[\"开始部署更新？\",\"Start deployment update?\"]": [
     "开始部署更新？",
@@ -4531,10 +5163,6 @@
     "此内容当前无法读取。",
     "This content cannot be read right now."
   ],
-  "[\"导出配置或从备份中恢复\",\"Export configuration or restore a backup\"]": [
-    "导出配置或从备份中恢复",
-    "Export configuration or restore a backup"
-  ],
   "[\"选择备份文件\",\"Choose a backup file\"]": [
     "选择备份文件",
     "Choose a backup file"
@@ -4562,6 +5190,10 @@
   "[\"要求重新验证\",\"Require enrollment\"]": [
     "要求重新验证",
     "Require enrollment"
+  ],
+  "[\"已保存 {0}\",\"Saved {0}\"]": [
+    "已保存 {0}",
+    "Saved {0}"
   ],
   "[\"同步 GitHub 仓库\",\"Sync GitHub repositories\"]": [
     "同步 GitHub 仓库",
@@ -4595,6 +5227,18 @@
     "请填写账号名称，并检查凭据格式。",
     "Enter an account name and check the credential format."
   ],
+  "[\"添加、测试、编辑或停用 OpenAI、Anthropic、Gemini 及自定义兼容接口账号。\",\"Add, test, edit or disable OpenAI, Anthropic, Gemini and custom AI accounts.\"]": [
+    "添加、测试、编辑或停用 OpenAI、Anthropic、Gemini 及自定义兼容接口账号。",
+    "Add, test, edit or disable OpenAI, Anthropic, Gemini and custom AI accounts."
+  ],
+  "[\"GitHub OAuth 登录\",\"GitHub OAuth sign-in\"]": [
+    "GitHub OAuth 登录",
+    "GitHub OAuth sign-in"
+  ],
+  "[\"标签互斥规则\",\"Label conflict rules\"]": [
+    "标签互斥规则",
+    "Label conflict rules"
+  ],
   "[\"缓存创建 / 百万 Token（可选）\",\"Cache write / million tokens (optional)\"]": [
     "缓存创建 / 百万 Token（可选）",
     "Cache write / million tokens (optional)"
@@ -4606,6 +5250,10 @@
   "[\"套餐\",\"Plan\"]": [
     "套餐",
     "Plan"
+  ],
+  "[\"按分类核对修改内容。每项设置按各自版本独立校验并持久化，未成功项会保留在草稿中。\",\"Review pending edits by category. Each setting is validated and persisted with its own version; unsaved items stay in your draft.\"]": [
+    "按分类核对修改内容。每项设置按各自版本独立校验并持久化，未成功项会保留在草稿中。",
+    "Review pending edits by category. Each setting is validated and persisted with its own version; unsaved items stay in your draft."
   ],
   "[\"应用端口\",\"Application port\"]": [
     "应用端口",
@@ -4666,6 +5314,10 @@
   "[\"通行密钥\",\"Passkeys\"]": [
     "通行密钥",
     "Passkeys"
+  ],
+  "[\"大于 {0}\",\"> {0}\"]": [
+    "大于 {0}",
+    "> {0}"
   ],
   "[\"历史余额提醒\",\"Historical balance alerts\"]": [
     "历史余额提醒",
@@ -4743,6 +5395,10 @@
     "操作已提交",
     "Action submitted"
   ],
+  "[\"确认更新敏感配置？\",\"Confirm sensitive updates?\"]": [
+    "确认更新敏感配置？",
+    "Confirm sensitive updates?"
+  ],
   "[\"此操作会更新仓库互助状态。\",\"This updates the repository community state.\"]": [
     "此操作会更新仓库互助状态。",
     "This updates the repository community state."
@@ -4775,6 +5431,10 @@
     "检查数据库连接",
     "Check database connection"
   ],
+  "[\"标签与扫描\",\"Labels & scans\"]": [
+    "标签与扫描",
+    "Labels & scans"
+  ],
   "[\"切换启停\",\"Toggle enabled\"]": [
     "切换启停",
     "Toggle enabled"
@@ -4782,6 +5442,10 @@
   "[\"未提供\",\"Not provided\"]": [
     "未提供",
     "Not provided"
+  ],
+  "[\"{0} 项未保存\",\"{0} unsaved\"]": [
+    "{0} 项未保存",
+    "{0} unsaved"
   ],
   "[\"查看订单\",\"View order\"]": [
     "查看订单",
@@ -4839,6 +5503,10 @@
     "消耗",
     "Consumption"
   ],
+  "[\"从已启用账号中选择具体模型，按需调整上下文窗口、工具/视觉能力与推理参数。\",\"Select a model from an enabled account to override context limits, capabilities and reasoning.\"]": [
+    "从已启用账号中选择具体模型，按需调整上下文窗口、工具/视觉能力与推理参数。",
+    "Select a model from an enabled account to override context limits, capabilities and reasoning."
+  ],
   "[\"确认切换更新目标\",\"Confirm update target\"]": [
     "确认切换更新目标",
     "Confirm update target"
@@ -4887,10 +5555,6 @@
     "审查与反馈",
     "Reviews and feedback"
   ],
-  "[\"审查策略、上下文与输出规则\",\"Review strategies, context and output rules\"]": [
-    "审查策略、上下文与输出规则",
-    "Review strategies, context and output rules"
-  ],
   "[\"用户 ID\",\"User ID\"]": [
     "用户 ID",
     "User ID"
@@ -4907,6 +5571,10 @@
     "暂无套餐",
     "No plans yet"
   ],
+  "[\"PR 依赖关系图\",\"PR dependency graph\"]": [
+    "PR 依赖关系图",
+    "PR dependency graph"
+  ],
   "[\"添加通行密钥\",\"Add passkey\"]": [
     "添加通行密钥",
     "Add passkey"
@@ -4915,13 +5583,29 @@
     "按所有者或仓库名称搜索",
     "Search by owner or repository name"
   ],
+  "[\"返回当前分类\",\"Return to category\"]": [
+    "返回当前分类",
+    "Return to category"
+  ],
   "[\"默认值\",\"Default\"]": [
     "默认值",
     "Default"
   ],
+  "[\"本次保存将更新 {0} 项敏感凭据（{1}），可能影响正在运行的服务。继续提交？\",\"This save will replace {0} sensitive credential(s) ({1}) and may affect running services. Continue?\"]": [
+    "本次保存将更新 {0} 项敏感凭据（{1}），可能影响正在运行的服务。继续提交？",
+    "This save will replace {0} sensitive credential(s) ({1}) and may affect running services. Continue?"
+  ],
+  "[\"功能面板\",\"Feature panel\"]": [
+    "功能面板",
+    "Feature panel"
+  ],
   "[\"低\",\"Low\"]": [
     "低",
     "Low"
+  ],
+  "[\"单模型上下文窗口、视觉工具与推理参数\",\"Per-model context window, capabilities & reasoning\"]": [
+    "单模型上下文窗口、视觉工具与推理参数",
+    "Per-model context window, capabilities & reasoning"
   ],
   "[\"取消扫描？\",\"Cancel this scan?\"]": [
     "取消扫描？",
@@ -4963,6 +5647,14 @@
     "删除选中",
     "Delete selected"
   ],
+  "[\"放弃全部未保存的设置修改？\",\"Discard all unsaved setting changes?\"]": [
+    "放弃全部未保存的设置修改？",
+    "Discard all unsaved setting changes?"
+  ],
+  "[\"应用监听、GitHub 接入、通知渠道、计费配额与实例维护\",\"Listener runtime, GitHub access, notification channels, billing quotas and maintenance\"]": [
+    "应用监听、GitHub 接入、通知渠道、计费配额与实例维护",
+    "Listener runtime, GitHub access, notification channels, billing quotas and maintenance"
+  ],
   "[\"审查摘要\",\"Review summary\"]": [
     "审查摘要",
     "Review summary"
@@ -4970,6 +5662,10 @@
   "[\"从检查点继续\",\"Resume from checkpoint\"]": [
     "从检查点继续",
     "Resume from checkpoint"
+  ],
+  "[\"未配置凭据 → 将写入新凭据（不显示内容）\",\"No credential → Will set new credential (hidden)\"]": [
+    "未配置凭据 → 将写入新凭据（不显示内容）",
+    "No credential → Will set new credential (hidden)"
   ],
   "[\"每月 Issue 分析次数\",\"Issue analyses per month\"]": [
     "每月 Issue 分析次数",
@@ -4986,6 +5682,10 @@
   "[\"暂无流水\",\"No transactions\"]": [
     "暂无流水",
     "No transactions"
+  ],
+  "[\"为主审查、变更摘要与 Agent 指定主模型和按优先级排列的备用模型。\",\"Assign primary models and ordered fallback chains for reviews, summaries and Agents.\"]": [
+    "为主审查、变更摘要与 Agent 指定主模型和按优先级排列的备用模型。",
+    "Assign primary models and ordered fallback chains for reviews, summaries and Agents."
   ],
   "[\"正在等待服务恢复。请勿重复提交重启。\",\"Waiting for service recovery. Do not submit another restart.\"]": [
     "正在等待服务恢复。请勿重复提交重启。",
@@ -5027,6 +5727,10 @@
     "前置条件",
     "Requirements"
   ],
+  "[\"配置键\",\"Key\"]": [
+    "配置键",
+    "Key"
+  ],
   "[\"评分\",\"Score\"]": [
     "评分",
     "Score"
@@ -5038,10 +5742,6 @@
   "[\"保存\",\"Save\"]": [
     "保存",
     "Save"
-  ],
-  "[\"任务执行、工具与搜索能力\",\"Task execution, tools and search\"]": [
-    "任务执行、工具与搜索能力",
-    "Task execution, tools and search"
   ],
   "[\"解封\",\"Unban\"]": [
     "解封",
@@ -5066,6 +5766,10 @@
   "[\"通知分页\",\"Notification pages\"]": [
     "通知分页",
     "Notification pages"
+  ],
+  "[\"展示中\",\"Displayed\"]": [
+    "展示中",
+    "Displayed"
   ],
   "[\"当前通道的最新版本\",\"Latest version on the current channel\"]": [
     "当前通道的最新版本",
@@ -5098,6 +5802,10 @@
   "[\"成员排序\",\"Member sort\"]": [
     "成员排序",
     "Member sort"
+  ],
+  "[\"网页链接抓取\",\"URL fetching\"]": [
+    "网页链接抓取",
+    "URL fetching"
   ],
   "[\"打开导航\",\"Open navigation\"]": [
     "打开导航",
@@ -5151,6 +5859,10 @@
     "余额不足",
     "Low balance"
   ],
+  "[\"等待生效 {0}\",\"Pending sync {0}\"]": [
+    "等待生效 {0}",
+    "Pending sync {0}"
+  ],
   "[\"订单已更新\",\"Order updated\"]": [
     "订单已更新",
     "Order updated"
@@ -5158,6 +5870,14 @@
   "[\"候选任务\",\"Candidate tasks\"]": [
     "候选任务",
     "Candidate tasks"
+  ],
+  "[\"已配置凭据 → 将更新（不显示内容）\",\"Configured credential → Will update (hidden)\"]": [
+    "已配置凭据 → 将更新（不显示内容）",
+    "Configured credential → Will update (hidden)"
+  ],
+  "[\"管理通知并发、重试退避、外部 Webhook 安全限制与验证码有效期。\",\"Manage notification concurrency, retry backoff, Webhook policy and verification limits.\"]": [
+    "管理通知并发、重试退避、外部 Webhook 安全限制与验证码有效期。",
+    "Manage notification concurrency, retry backoff, Webhook policy and verification limits."
   ],
   "[\"请检查网络后重试。若仍无法访问，请确认账户权限。\",\"Check your connection and try again. If this continues, check your account permissions.\"]": [
     "请检查网络后重试。若仍无法访问，请确认账户权限。",
@@ -5179,6 +5899,10 @@
     "发放",
     "Grant"
   ],
+  "[\"需重新授权\",\"Reauthorization required\"]": [
+    "需重新授权",
+    "Reauthorization required"
+  ],
   "[\"成员管理\",\"Members\"]": [
     "成员管理",
     "Members"
@@ -5199,6 +5923,14 @@
     "复制",
     "Copy"
   ],
+  "[\"控制是否将发现的问题直接评论在 PR 代码差异对应行。\",\"Control whether findings are published directly on PR diff lines.\"]": [
+    "控制是否将发现的问题直接评论在 PR 代码差异对应行。",
+    "Control whether findings are published directly on PR diff lines."
+  ],
+  "[\"配置生成代码切片与文档向量所使用的嵌入模型与接口。\",\"Configure the embedding model and endpoint used for vector indexing.\"]": [
+    "配置生成代码切片与文档向量所使用的嵌入模型与接口。",
+    "Configure the embedding model and endpoint used for vector indexing."
+  ],
   "[\"系统将保存配置、创建管理员并重启应用。\",\"The system will save configuration, create the administrator and restart the application.\"]": [
     "系统将保存配置、创建管理员并重启应用。",
     "The system will save configuration, create the administrator and restart the application."
@@ -5210,6 +5942,18 @@
   "[\"查看报价\",\"View pricing\"]": [
     "查看报价",
     "View pricing"
+  ],
+  "[\"分钟\",\"minutes\"]": [
+    "分钟",
+    "minutes"
+  ],
+  "[\"关闭搜索提示\",\"Dismiss search banner\"]": [
+    "关闭搜索提示",
+    "Dismiss search banner"
+  ],
+  "[\"仓库互助全局策略\",\"Star community global policy\"]": [
+    "仓库互助全局策略",
+    "Star community global policy"
   ],
   "[\"没有工作树\",\"No worktrees\"]": [
     "没有工作树",
@@ -5247,6 +5991,10 @@
     "输入 API 密钥",
     "Enter API key"
   ],
+  "[\"审查分级与提示词\",\"Review tiers & prompts\"]": [
+    "审查分级与提示词",
+    "Review tiers & prompts"
+  ],
   "[\"当前版本\",\"Current version\"]": [
     "当前版本",
     "Current version"
@@ -5267,6 +6015,10 @@
     "操作已完成",
     "Operation completed"
   ],
+  "[\"服务端值已被修改，请先核对服务端值后再提交。\",\"Changed on the server; review the server value before saving.\"]": [
+    "服务端值已被修改，请先核对服务端值后再提交。",
+    "Changed on the server; review the server value before saving."
+  ],
   "[\"类型\",\"Type\"]": [
     "类型",
     "Type"
@@ -5279,10 +6031,6 @@
     "最大上传大小",
     "Maximum upload size"
   ],
-  "[\"从已配置的账号选择模型。能力覆盖由相同供应商和模型的所有账号共享。\",\"Choose a model from a configured account. Capability overrides are shared by accounts using the same provider and model.\"]": [
-    "从已配置的账号选择模型。能力覆盖由相同供应商和模型的所有账号共享。",
-    "Choose a model from a configured account. Capability overrides are shared by accounts using the same provider and model."
-  ],
   "[\"允许的工具\",\"Allowed tools\"]": [
     "允许的工具",
     "Allowed tools"
@@ -5294,6 +6042,10 @@
   "[\"中\",\"Medium\"]": [
     "中",
     "Medium"
+  ],
+  "[\"两步验证与通行密钥（2FA / Passkey）\",\"Two-factor authentication & Passkeys\"]": [
+    "两步验证与通行密钥（2FA / Passkey）",
+    "Two-factor authentication & Passkeys"
   ],
   "[\"部分配置需要重启应用后生效。\",\"Some settings require an application restart.\"]": [
     "部分配置需要重启应用后生效。",
@@ -5338,6 +6090,14 @@
   "[\"编辑、发布和管理公告投递。\",\"Edit, publish and manage announcement delivery.\"]": [
     "编辑、发布和管理公告投递。",
     "Edit, publish and manage announcement delivery."
+  ],
+  "[\"系统维护与连接诊断\",\"System maintenance & diagnostics\"]": [
+    "系统维护与连接诊断",
+    "System maintenance & diagnostics"
+  ],
+  "[\"控制请求重试超时、回退候选上限、上下文自动压缩以及运行活动记录范围。\",\"Configure timeouts, retries, fallback candidate limits, compression and activity capture.\"]": [
+    "控制请求重试超时、回退候选上限、上下文自动压缩以及运行活动记录范围。",
+    "Configure timeouts, retries, fallback candidate limits, compression and activity capture."
   ],
   "[\"审计日志\",\"Audit logs\"]": [
     "审计日志",
@@ -5439,6 +6199,10 @@
     "通知中心",
     "Notification center"
   ],
+  "[\"仓库扫描策略\",\"Repository scanning\"]": [
+    "仓库扫描策略",
+    "Repository scanning"
+  ],
   "[\"跟随系统\",\"System\"]": [
     "跟随系统",
     "System"
@@ -5539,6 +6303,10 @@
     "实际用量字段",
     "Reported usage meter"
   ],
+  "[\"需 ≤ 最长互助间隔\",\"Must be ≤ max interval\"]": [
+    "需 ≤ 最长互助间隔",
+    "Must be ≤ max interval"
+  ],
   "[\"计划\",\"Plan\"]": [
     "计划",
     "Plan"
@@ -5571,9 +6339,17 @@
     "输出 Token",
     "Output tokens"
   ],
+  "[\"从已配置的启用账号选择具体模型。能力覆盖按“供应商 + 模型 ID”读写并由相同供应商模型的账号共享。\",\"Choose a model from an enabled account. Capability overrides are stored by provider + model ID and shared across matching accounts.\"]": [
+    "从已配置的启用账号选择具体模型。能力覆盖按“供应商 + 模型 ID”读写并由相同供应商模型的账号共享。",
+    "Choose a model from an enabled account. Capability overrides are stored by provider + model ID and shared across matching accounts."
+  ],
   "[\"无法读取 Issue 预览，请检查地址和访问权限。\",\"Could not preview this issue. Check the reference and access.\"]": [
     "无法读取 Issue 预览，请检查地址和访问权限。",
     "Could not preview this issue. Check the reference and access."
+  ],
+  "[\"部署只读\",\"Read-only\"]": [
+    "部署只读",
+    "Read-only"
   ],
   "[\"无法删除。请先移除此账号的模型绑定，并检查计费配置。\",\"Could not delete. Remove role bindings and check billing configuration first.\"]": [
     "无法删除。请先移除此账号的模型绑定，并检查计费配置。",
@@ -5583,9 +6359,21 @@
     "基于版本 {0} 新建报价",
     "New price from version {0}"
   ],
+  "[\"需要重启 {0}\",\"Restart required {0}\"]": [
+    "需要重启 {0}",
+    "Restart required {0}"
+  ],
   "[\"已使用的兑换码会由服务器保护。\",\"The server preserves codes linked to redemption history.\"]": [
     "已使用的兑换码会由服务器保护。",
     "The server preserves codes linked to redemption history."
+  ],
+  "[\"命中别名 / 双语\",\"Alias / bilingual match\"]": [
+    "命中别名 / 双语",
+    "Alias / bilingual match"
+  ],
+  "[\"Telegram 通知机器人\",\"Telegram notification bot\"]": [
+    "Telegram 通知机器人",
+    "Telegram notification bot"
   ],
   "[\"历史订单与已购买权益不会改变。仍被引用的套餐不能永久删除。\",\"Historical orders and purchased benefits are retained. Referenced plans cannot be permanently deleted.\"]": [
     "历史订单与已购买权益不会改变。仍被引用的套餐不能永久删除。",
@@ -5606,6 +6394,10 @@
   "[\"选择仓库\",\"Choose repository\"]": [
     "选择仓库",
     "Choose repository"
+  ],
+  "[\"按已启用账号中的具体模型覆盖 Token 上限、流式用量、思考模式与采样参数。\",\"Override context window, max output tokens, tool/vision capabilities and thinking mode per model.\"]": [
+    "按已启用账号中的具体模型覆盖 Token 上限、流式用量、思考模式与采样参数。",
+    "Override context window, max output tokens, tool/vision capabilities and thinking mode per model."
   ],
   "[\"应用时区（留空跟随系统）\",\"Application timezone (blank uses system)\"]": [
     "应用时区（留空跟随系统）",
@@ -5630,6 +6422,10 @@
   "[\"已更新\",\"Updated\"]": [
     "已更新",
     "Updated"
+  ],
+  "[\"当前没有未保存的设置修改。\",\"There are no unsaved setting changes.\"]": [
+    "当前没有未保存的设置修改。",
+    "There are no unsaved setting changes."
   ],
   "[\"连接 GitHub\",\"Connect GitHub\"]": [
     "连接 GitHub",
@@ -5666,6 +6462,10 @@
   "[\"此设置不可用\",\"Settings unavailable\"]": [
     "此设置不可用",
     "Settings unavailable"
+  ],
+  "[\"校验或保存未通过\",\"Needs attention\"]": [
+    "校验或保存未通过",
+    "Needs attention"
   ],
   "[\"阅读全文\",\"Read announcement\"]": [
     "阅读全文",
@@ -5743,6 +6543,10 @@
     "{0} 个等待中",
     "{0} waiting"
   ],
+  "[\"任务执行环境、网络与验证策略、搜索抓取工具及插件权限\",\"Task runtime, sandbox & network policy, web tools and plugin permissions\"]": [
+    "任务执行环境、网络与验证策略、搜索抓取工具及插件权限",
+    "Task runtime, sandbox & network policy, web tools and plugin permissions"
+  ],
   "[\"配置已完成\",\"Setup complete\"]": [
     "配置已完成",
     "Setup complete"
@@ -5795,6 +6599,10 @@
     "分页",
     "Pagination"
   ],
+  "[\"放弃本地草稿并读取当前服务端值？\",\"Discard your draft and load the current server value?\"]": [
+    "放弃本地草稿并读取当前服务端值？",
+    "Discard your draft and load the current server value?"
+  ],
   "[\"例如：仅在 Agent 需要处理时发送邮件。\",\"For example: email me when an Agent task needs attention.\"]": [
     "例如：仅在 Agent 需要处理时发送邮件。",
     "For example: email me when an Agent task needs attention."
@@ -5811,6 +6619,10 @@
     "已自定义",
     "Customized"
   ],
+  "[\"1. 连接 AI 账号\",\"1. Connect AI accounts\"]": [
+    "1. 连接 AI 账号",
+    "1. Connect AI accounts"
+  ],
   "[\"变更行数\",\"Changed lines\"]": [
     "变更行数",
     "Changed lines"
@@ -5822,6 +6634,10 @@
   "[\"获取候选任务\",\"Find candidates\"]": [
     "获取候选任务",
     "Find candidates"
+  ],
+  "[\"触发、并发与状态检查\",\"Triggers, concurrency & Check Runs\"]": [
+    "触发、并发与状态检查",
+    "Triggers, concurrency & Check Runs"
   ],
   "[\"高级 JSON 编辑\",\"Advanced JSON editor\"]": [
     "高级 JSON 编辑",

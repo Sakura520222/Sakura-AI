@@ -91,10 +91,12 @@ export default function VersionPanel() {
   const check = useMutation({
     mutationFn: () => api(base + "/check", { method: "POST" }),
     onSuccess: () => {
-      void info.refetch();
       void catalog.refetch();
       void releases.refetch();
       preflight.reset();
+    },
+    onSettled: () => {
+      void info.refetch();
     },
   });
   function remember(jobId: string) {

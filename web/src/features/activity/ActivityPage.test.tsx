@@ -208,3 +208,144 @@ it("does not auto-fetch denied tool artifacts or unrelated native projections", 
     screen.getByRole("button", { name: /View protected content/ }),
   ).toBeInTheDocument();
 });
+
+it("renders a single restricted notice without duplicate banners", () => {
+  show({
+    id: "message:11",
+    type: "message",
+    role: "user",
+    order_key: "1:3:11",
+    created_at: null,
+    content_visibility: "restricted",
+    artifacts: [],
+  });
+  expect(
+    screen.getAllByText("You do not have permission to view this content."),
+  ).toHaveLength(1);
+});
+
+it("offers protected view without a false restricted notice for authorized system messages", () => {
+  vi.mocked(api).mockClear();
+  show({
+    id: "message:12",
+    type: "message",
+    role: "system",
+    order_key: "1:3:12",
+    created_at: null,
+    content_visibility: "restricted",
+    artifacts: [
+      {
+        artifact_id: 71,
+        artifact_kind: "request_projection",
+        can_request: true,
+      },
+    ],
+  });
+  expect(
+    screen.getByRole("button", { name: /View protected content/ }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText("You do not have permission to view this content."),
+  ).not.toBeInTheDocument();
+});
+
+it("does not append a restricted notice to a visible assistant message with tool_calls", () => {
+  show({
+    id: "message:13",
+    type: "message",
+    role: "assistant",
+    order_key: "1:3:13",
+    created_at: null,
+    content_visibility: "visible",
+    content: "Inspecting the repository.",
+    artifacts: [
+      {
+        artifact_id: 72,
+        artifact_kind: "response_projection",
+        can_request: false,
+      },
+    ],
+  });
+  expect(screen.getByText("Inspecting the repository.")).toBeInTheDocument();
+  expect(
+    screen.queryByText("You do not have permission to view this content."),
+  ).not.toBeInTheDocument();
+});
+
+it("extracts text from multimodal array canonical user messages", async () => {
+  vi.mocked(api).mockResolvedValueOnce({
+    payload: JSON.stringify({
+      role: "user",
+      content: [
+        { type: "text", text: "First multimodal line" },
+        { type: "image_url", image_url: { url: "https://example.test/x.png" } },
+        { type: "text", text: "Second multimodal line" },
+      ],
+    }),
+  });
+  show({
+    id: "message:14",
+    type: "message",
+    role: "user",
+    order_key: "1:3:14",
+    created_at: null,
+    content_visibility: "restricted",
+    artifacts: [
+      {
+        artifact_id: 73,
+        artifact_kind: "request_projection",
+        can_request: true,
+      },
+    ],
+  });
+  expect(
+    await screen.findByText(/First multimodal line/),
+  ).toBeInTheDocument();
+  expect(screen.getByText(/Second multimodal line/)).toBeInTheDocument();
+});
+
+it("does not duplicate arguments_artifact_id as the result body when result_artifact_id is absent", async () => {
+  vi.mocked(api).mockClear();
+  vi.mocked(api).mockResolvedValue({
+    payload: '{"path":"ONLY_IN_ARGUMENTS.md"}',
+  });
+  const common = {
+    created_at: null,
+    name: "read_file",
+    tool_execution_id: 15,
+    tool_call_id: "call-no-result-artifact",
+    status: "failed",
+    arguments_artifact_id: 81,
+    artifacts: [
+      {
+        artifact_id: 81,
+        artifact_kind: "request_projection",
+        can_request: true,
+      },
+    ],
+  };
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <LocaleProvider initial="en">
+        <TimelineEntry
+          sessionId="1"
+          entry={{
+            ...common,
+            id: "tool_call:15",
+            type: "tool_call",
+            order_key: "1:6:15",
+          }}
+          pairedResult={{
+            ...common,
+            id: "tool_result:15",
+            type: "tool_result",
+            order_key: "1:7:15",
+            content_visibility: "restricted",
+          }}
+        />
+      </LocaleProvider>
+    </QueryClientProvider>,
+  );
+  expect(await screen.findAllByText(/ONLY_IN_ARGUMENTS\.md/)).toHaveLength(1);
+  expect(api).toHaveBeenCalledTimes(1);
+});

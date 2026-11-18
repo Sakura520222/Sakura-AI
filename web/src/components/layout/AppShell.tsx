@@ -223,13 +223,27 @@ export default function AppShell() {
                 >
                   <NavLink
                     to="/admin/version"
-                    title={t("版本更新", "Updates")}
-                    aria-label={t("版本更新", "Updates")}
+                    className={({ isActive }) =>
+                      `${isActive ? "active" : ""}${version.data?.update_available ? " has-update" : ""}`.trim()
+                    }
+                    title={
+                      version.data?.update_available
+                        ? `${version.data?.current_version || auth.version} · ${t("有可用更新", "Update available")}`
+                        : `${version.data?.current_version || auth.version} · ${t("版本更新", "Updates")}`
+                    }
+                    aria-label={
+                      version.data?.update_available
+                        ? `${version.data?.current_version || auth.version} · ${t("有可用更新", "Update available")}`
+                        : `${version.data?.current_version || auth.version} · ${t("版本更新", "Updates")}`
+                    }
                   >
                     <span className="topbar-current-version">
                       {version.data?.current_version || auth.version}
                     </span>
                     <Download size={17} />
+                    {version.data?.update_available && (
+                      <span className="topbar-update-dot" aria-hidden="true" />
+                    )}
                     <span
                       className={`topbar-update-label${version.data?.update_available ? " update-available" : ""}`}
                     >

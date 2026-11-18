@@ -75,6 +75,15 @@ export function StructuredEditor({
     (Array.isArray(value) ? "array" : value === null ? "string" : typeof value);
   if (kind === "array") {
     const items = Array.isArray(value) ? value : [];
+    const itemSchema = schema.items ?? {};
+    const scalarItem =
+      itemSchema.type === "string" ||
+      itemSchema.type === "integer" ||
+      itemSchema.type === "number" ||
+      (!itemSchema.type &&
+        items.every(
+          (item) => typeof item === "string" || typeof item === "number",
+        ));
     const move = (index: number, direction: number) => {
       const next = [...items];
       [next[index], next[index + direction]] = [
@@ -88,54 +97,111 @@ export function StructuredEditor({
         {!items.length && (
           <p className="settings-hint">{message("editor_empty")}</p>
         )}
-        {items.map((item, index) => (
-          <div className="settings-structured-item" key={index}>
-            <div className="settings-structured-heading">
-              <span>
-                {label} {index + 1}
-              </span>
-              <div className="settings-icon-actions">
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label={`${message("editor_move_up")}: ${index + 1}`}
-                  disabled={disabled || index === 0}
-                  onClick={() => move(index, -1)}
-                >
-                  <ArrowUp size={16} />
-                </button>
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label={`${message("editor_move_down")}: ${index + 1}`}
-                  disabled={disabled || index === items.length - 1}
-                  onClick={() => move(index, 1)}
-                >
-                  <ArrowDown size={16} />
-                </button>
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label={`${message("editor_remove")}: ${index + 1}`}
-                  disabled={disabled}
-                  onClick={() => onChange(items.filter((_, i) => i !== index))}
-                >
-                  <Trash2 size={16} />
-                </button>
+        {scalarItem ? (
+          <div className="settings-scalar-list">
+            {items.map((item, index) => (
+              <div className="settings-scalar-row" key={index}>
+                <span className="settings-order-badge" aria-hidden="true">
+                  {index + 1}
+                </span>
+                <div className="settings-scalar-input">
+                  <StructuredEditor
+                    value={item}
+                    schema={itemSchema}
+                    label={`${label} ${index + 1}`}
+                    message={message}
+                    disabled={disabled}
+                    onChange={(child) =>
+                      onChange(items.map((old, i) => (i === index ? child : old)))
+                    }
+                  />
+                </div>
+                <div className="settings-icon-actions">
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={`${message("editor_move_up")}: ${index + 1}`}
+                    disabled={disabled || index === 0}
+                    onClick={() => move(index, -1)}
+                  >
+                    <ArrowUp size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={`${message("editor_move_down")}: ${index + 1}`}
+                    disabled={disabled || index === items.length - 1}
+                    onClick={() => move(index, 1)}
+                  >
+                    <ArrowDown size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={`${message("editor_remove")}: ${index + 1}`}
+                    disabled={disabled}
+                    onClick={() =>
+                      onChange(items.filter((_, i) => i !== index))
+                    }
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
               </div>
-            </div>
-            <StructuredEditor
-              value={item}
-              schema={schema.items ?? {}}
-              label={`${label} ${index + 1}`}
-              message={message}
-              disabled={disabled}
-              onChange={(child) =>
-                onChange(items.map((old, i) => (i === index ? child : old)))
-              }
-            />
+            ))}
           </div>
-        ))}
+        ) : (
+          items.map((item, index) => (
+            <div className="settings-structured-item" key={index}>
+              <div className="settings-structured-heading">
+                <span>
+                  {label} {index + 1}
+                </span>
+                <div className="settings-icon-actions">
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={`${message("editor_move_up")}: ${index + 1}`}
+                    disabled={disabled || index === 0}
+                    onClick={() => move(index, -1)}
+                  >
+                    <ArrowUp size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={`${message("editor_move_down")}: ${index + 1}`}
+                    disabled={disabled || index === items.length - 1}
+                    onClick={() => move(index, 1)}
+                  >
+                    <ArrowDown size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={`${message("editor_remove")}: ${index + 1}`}
+                    disabled={disabled}
+                    onClick={() =>
+                      onChange(items.filter((_, i) => i !== index))
+                    }
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+              <StructuredEditor
+                value={item}
+                schema={itemSchema}
+                label={`${label} ${index + 1}`}
+                message={message}
+                disabled={disabled}
+                onChange={(child) =>
+                  onChange(items.map((old, i) => (i === index ? child : old)))
+                }
+              />
+            </div>
+          ))
+        )}
         <button
           type="button"
           className="button button-secondary"
@@ -306,14 +372,17 @@ export function StructuredEditor({
   }
   if (kind === "boolean")
     return (
-      <input
-        type="checkbox"
-        role="switch"
-        aria-label={label}
-        disabled={disabled}
-        checked={value === true}
-        onChange={(event) => onChange(event.target.checked)}
-      />
+      <label className="settings-switch settings-switch-inline">
+        <input
+          type="checkbox"
+          role="switch"
+          aria-label={label}
+          disabled={disabled}
+          checked={value === true}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+        <span aria-hidden="true" />
+      </label>
     );
   const multiline =
     schema.format === "multiline" ||
@@ -321,8 +390,9 @@ export function StructuredEditor({
   if (multiline)
     return (
       <textarea
+        className="settings-prompt-textarea"
         aria-label={label}
-        rows={5}
+        rows={6}
         disabled={disabled}
         value={typeof value === "string" ? value : ""}
         onChange={(event) => onChange(event.target.value)}
@@ -388,6 +458,7 @@ export function BindingEditor({
   }) as unknown as Binding;
   const update = (next: Binding) => onChange(next as unknown as Json);
   const [dragging, setDragging] = useState<number | null>(null);
+  const [dragTarget, setDragTarget] = useState<number | null>(null);
   const move = (from: number, to: number) => {
     if (
       disabled ||
@@ -443,6 +514,7 @@ export function BindingEditor({
             {accounts.map((item) => (
               <option key={item.id} value={item.id} disabled={!item.enabled}>
                 {item.name}
+                {item.provider_id ? ` · ${item.provider_id}` : ""}
                 {!item.enabled ? ` · ${message("account_disabled")}` : ""}
               </option>
             ))}
@@ -479,104 +551,133 @@ export function BindingEditor({
       </div>
     );
   };
+  const fallbacks = binding.fallback ?? [];
   return (
-    <div className="settings-structured" role="group" aria-label={field.label}>
-      <h4>{message("primary_assignment")}</h4>
-      {assignment(binding.primary ?? {}, -1)}
-      <h4>{message("fallback")}</h4>
-      <p className="settings-hint">{message("fallback_help")}</p>
-      {(binding.fallback ?? []).map((entry, index) => (
-        <div
-          className="settings-structured-item"
-          key={index}
-          role="group"
-          aria-label={`${message("fallback_item")} ${index + 1}`}
-          onDragOver={(event) => {
-            if (!disabled && dragging !== null) event.preventDefault();
-          }}
-          onDrop={(event) => {
-            event.preventDefault();
-            if (dragging !== null) move(dragging, index);
-            setDragging(null);
-          }}
-        >
-          <div className="settings-structured-heading">
-            <span>
-              {message("fallback_item")} {index + 1}
-            </span>
-            <div className="settings-icon-actions">
-              <button
-                type="button"
-                className="icon-button settings-drag-handle"
-                disabled={disabled}
-                draggable={!disabled}
-                aria-label={`${message("editor_drag")}: ${index + 1}`}
-                onDragStart={(event) => {
-                  if (disabled) return;
-                  setDragging(index);
-                  event.dataTransfer.effectAllowed = "move";
-                  event.dataTransfer.setData(
-                    "text/plain",
-                    `${field.id}:${index}`,
-                  );
-                }}
-                onDragEnd={() => setDragging(null)}
-              >
-                <GripVertical size={16} />
-              </button>
-              {[-1, 1].map((direction) => (
+    <div
+      className="settings-structured settings-binding-editor"
+      role="group"
+      aria-label={field.label}
+    >
+      <div className="settings-binding-primary">
+        <h4>{message("primary_assignment")}</h4>
+        {assignment(binding.primary ?? {}, -1)}
+      </div>
+      <div className="settings-binding-fallbacks">
+        <div className="settings-binding-fallback-header">
+          <h4>{message("fallback")}</h4>
+          <p className="settings-hint">{message("fallback_help")}</p>
+        </div>
+        {fallbacks.length === 0 && (
+          <p className="settings-hint">{message("fallback_empty")}</p>
+        )}
+        {fallbacks.map((entry, index) => (
+          <div
+            className={`settings-structured-item settings-fallback-row${dragging === index ? " is-dragging" : ""}${dragTarget === index && dragging !== index ? " is-drop-target" : ""}`}
+            key={index}
+            role="group"
+            aria-label={`${message("fallback_item")} ${index + 1}`}
+            onDragOver={(event) => {
+              if (!disabled && dragging !== null) {
+                event.preventDefault();
+                setDragTarget(index);
+              }
+            }}
+            onDragLeave={() => {
+              if (dragTarget === index) setDragTarget(null);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              if (dragging !== null) move(dragging, index);
+              setDragging(null);
+              setDragTarget(null);
+            }}
+          >
+            <div className="settings-structured-heading">
+              <span className="settings-fallback-title">
+                <span className="settings-order-badge" aria-hidden="true">
+                  {index + 1}
+                </span>
+                <span>
+                  {message("fallback_item")} {index + 1}
+                </span>
+              </span>
+              <div className="settings-icon-actions">
+                <button
+                  type="button"
+                  className="icon-button settings-drag-handle"
+                  disabled={disabled}
+                  draggable={!disabled}
+                  aria-label={`${message("editor_drag")}: ${index + 1}`}
+                  onDragStart={(event) => {
+                    if (disabled) return;
+                    setDragging(index);
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData(
+                      "text/plain",
+                      `${field.id}:${index}`,
+                    );
+                  }}
+                  onDragEnd={() => {
+                    setDragging(null);
+                    setDragTarget(null);
+                  }}
+                >
+                  <GripVertical size={16} />
+                </button>
+                {[-1, 1].map((direction) => (
+                  <button
+                    type="button"
+                    className="icon-button"
+                    key={direction}
+                    disabled={
+                      disabled ||
+                      index + direction < 0 ||
+                      index + direction >= fallbacks.length
+                    }
+                    aria-label={`${message(direction === -1 ? "editor_move_up" : "editor_move_down")}: ${index + 1}`}
+                    onClick={() => move(index, index + direction)}
+                  >
+                    {direction === -1 ? (
+                      <ArrowUp size={16} />
+                    ) : (
+                      <ArrowDown size={16} />
+                    )}
+                  </button>
+                ))}
                 <button
                   type="button"
                   className="icon-button"
-                  key={direction}
-                  disabled={
-                    disabled ||
-                    index + direction < 0 ||
-                    index + direction >= binding.fallback.length
+                  disabled={disabled}
+                  aria-label={`${message("remove_fallback")}: ${index + 1}`}
+                  onClick={() =>
+                    update({
+                      ...binding,
+                      fallback: fallbacks.filter((_, i) => i !== index),
+                    })
                   }
-                  aria-label={`${message(direction === -1 ? "editor_move_up" : "editor_move_down")}: ${index + 1}`}
-                  onClick={() => move(index, index + direction)}
                 >
-                  {direction === -1 ? (
-                    <ArrowUp size={16} />
-                  ) : (
-                    <ArrowDown size={16} />
-                  )}
+                  <Trash2 size={16} />
                 </button>
-              ))}
-              <button
-                type="button"
-                className="icon-button"
-                disabled={disabled}
-                aria-label={`${message("remove_fallback")}: ${index + 1}`}
-                onClick={() =>
-                  update({
-                    ...binding,
-                    fallback: binding.fallback.filter((_, i) => i !== index),
-                  })
-                }
-              >
-                <Trash2 size={16} />
-              </button>
+              </div>
             </div>
+            {assignment(entry, index)}
           </div>
-          {assignment(entry, index)}
-        </div>
-      ))}
-      <button
-        type="button"
-        className="button button-secondary"
-        disabled={disabled}
-        onClick={() =>
-          update({
-            ...binding,
-            fallback: [...(binding.fallback ?? []), { account: "", model: "" }],
-          })
-        }
-      >
-        <Plus size={16} />
-        {message("add_fallback")}
-      </button>
+        ))}
+        <button
+          type="button"
+          className="button button-secondary"
+          disabled={disabled}
+          onClick={() =>
+            update({
+              ...binding,
+              fallback: [...fallbacks, { account: "", model: "" }],
+            })
+          }
+        >
+          <Plus size={16} />
+          {message("add_fallback")}
+        </button>
+      </div>
     </div>
   );
 }

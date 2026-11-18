@@ -53,7 +53,7 @@ test("fallback drag order persists and model capabilities use configured account
     "second-fallback",
   );
   await expect(page.locator(".settings-dirty-bar")).toContainText(
-    "项未保存的修改",
+    "项未保存",
   );
   await row.getByRole("button", { name: "保存", exact: true }).click();
   await expect

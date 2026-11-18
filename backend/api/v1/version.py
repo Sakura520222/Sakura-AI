@@ -498,7 +498,7 @@ async def trigger_check(
     checker = getattr(request.app.state, "update_checker", None)
     if checker is not None:
         data = await checker.check_once()
-        if data.get("channel_check_error"):
+        if data.get("channel_check_error") or data.get("check_error"):
             return JSONResponse(
                 {"error": "update_check_failed"},
                 status_code=503,
@@ -519,15 +519,11 @@ async def trigger_check(
             return _updater_error(exc)
         return JSONResponse(data, headers={"Cache-Control": "no-store, max-age=0"})
 
-    checker = getattr(request.app.state, "update_checker", None)
-    if checker is None:
-        return JSONResponse(
-            {"error": "update_checker_unavailable"},
-            status_code=503,
-            headers={"Cache-Control": "no-store, max-age=0"},
-        )
-    data = await checker.check_once()
-    return JSONResponse(data, headers={"Cache-Control": "no-store, max-age=0"})
+    return JSONResponse(
+        {"error": "update_checker_unavailable"},
+        status_code=503,
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 @router.post("/readiness")

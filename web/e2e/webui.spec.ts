@@ -45,8 +45,8 @@ test('cross-category search and deep links locate a setting', async ({ page }) =
   await expect(page.locator('[id="setting-global/max_concurrent_reviews"]')).toBeVisible();
 });
 
-test('ordinary users cannot see administrator navigation or settings', async ({ context, page }) => {
-  await context.addCookies([{ name: 'test-role', value: 'user', url: 'http://127.0.0.1:8768' }]);
+test('ordinary users cannot see administrator navigation or settings', async ({ context, page, baseURL }) => {
+  await context.addCookies([{ name: 'test-role', value: 'user', url: baseURL! }]);
   await page.goto('/app/settings/personal');
   await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
   await expect(page.locator('.primary-nav').getByRole('link', { name: '仓库', exact: true })).toHaveCount(0);

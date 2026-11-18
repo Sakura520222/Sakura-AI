@@ -68,3 +68,52 @@ it("expands release notes inside their record and does not open a dialog", async
     within(record).queryByRole("heading", { name: "Fixed" }),
   ).not.toBeInTheDocument();
 });
+
+it("filters releases by backend tag field and preserves expanded notes across filtering", async () => {
+  const user = userEvent.setup();
+  render(
+    <LocaleProvider initial="en">
+      <VersionBrowser
+        currentChannel="stable"
+        catalog={query<Catalog>({ stale: false, heads: {}, images: [] })}
+        releases={query<{ releases: ReleaseRecord[] }>({
+          releases: [
+            {
+              tag: "v9.1.0",
+              name: "Newest release",
+              body: "Newest notes.",
+            },
+            {
+              tag: "v9.0.0",
+              name: "Earlier release",
+              body: "## Kept Open\n\nStill expanded after filtering.",
+            },
+          ],
+        })}
+        selected={null}
+        selectionDisabled={false}
+        onSelect={vi.fn()}
+      />
+    </LocaleProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Release history" }));
+  const earlierArticle = screen.getByText("Earlier release").closest("article")!;
+  await user.click(
+    within(earlierArticle).getByRole("button", { name: "Read notes" }),
+  );
+  expect(
+    within(earlierArticle).getByRole("heading", { name: "Kept Open" }),
+  ).toBeVisible();
+
+  const searchInput = screen.getByRole("searchbox", {
+    name: "Search versions",
+  });
+  await user.type(searchInput, "v9.0.0");
+  expect(screen.queryByText("Newest release")).not.toBeInTheDocument();
+  const filteredArticle = screen
+    .getByText("Earlier release")
+    .closest("article")!;
+  expect(
+    within(filteredArticle).getByRole("heading", { name: "Kept Open" }),
+  ).toBeVisible();
+});

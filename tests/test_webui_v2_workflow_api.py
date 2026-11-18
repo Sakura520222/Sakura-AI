@@ -231,3 +231,87 @@ async def test_review_api_exposes_repository_number_separately_from_global_id():
                 assert record["pr_id"] == 987654321
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_logs_and_csv_export_expose_pr_number_and_version_check_reports_503():
+    from backend.api.v1 import dashboard, logs, version
+    from backend.api.v1.deps import require_api_super_admin
+    from backend.models.database import ReviewComment
+    from backend.webui.deps import require_csrf_header
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(PRReview.__table__.create)
+            await connection.run_sync(ReviewComment.__table__.create)
+        async with sessions() as db:
+            db.add(
+                PRReview(
+                    id=1,
+                    pr_id=987654321,
+                    pr_number=42,
+                    repo_owner="alice",
+                    repo_name="app",
+                    author="alice",
+                    title="Fix settings UX",
+                    strategy="standard",
+                    status="completed",
+                )
+            )
+            await db.commit()
+
+        class FailingChecker:
+            async def check_once(self):
+                return {"check_error": "github_timeout", "last_checked": "2026-11-18T00:00:00Z"}
+
+        app = FastAPI()
+        app.state.update_checker = FailingChecker()
+        app.include_router(dashboard.router, prefix="/api/v1")
+        app.include_router(logs.router, prefix="/api/v1")
+        app.include_router(reviews.router, prefix="/api/v1")
+        app.include_router(version.router, prefix="/api/v1")
+        app.dependency_overrides[require_api_auth] = lambda: {
+            "user_id": 1,
+            "sub": "alice",
+            "role": "super_admin",
+        }
+        app.dependency_overrides[require_api_super_admin] = lambda: {
+            "user_id": 1,
+            "sub": "alice",
+            "role": "super_admin",
+        }
+        app.dependency_overrides[require_csrf_header] = lambda: "csrf-ok"
+
+        async def request_db():
+            async with sessions() as db:
+                yield db
+
+        app.dependency_overrides[get_db] = request_db
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="https://test"
+        ) as client:
+            recent = (await client.get("/api/v1/dashboard/recent-reviews")).json()["data"][0]
+            assert recent["pr_number"] == 42
+            assert recent["pr_id"] == 987654321
+
+            log_list = (await client.get("/api/v1/logs/reviews")).json()["data"]["items"][0]
+            log_detail = (await client.get("/api/v1/logs/reviews/1")).json()["data"]
+            assert log_list["pr_number"] == 42
+            assert log_detail["pr_number"] == 42
+
+            csv_resp = await client.get("/api/v1/reviews/export")
+            assert csv_resp.status_code == 200
+            lines = [line.strip() for line in csv_resp.text.lstrip("\ufeff").splitlines() if line.strip()]
+            headers = lines[0].split(",")
+            row = lines[1].split(",")
+            assert "PR 编号" in headers
+            assert row[headers.index("PR 编号")] == "42"
+            assert row[headers.index("PR ID")] == "987654321"
+
+            check_resp = await client.post("/api/v1/version/check")
+            assert check_resp.status_code == 503
+            assert check_resp.json()["error"] == "update_check_failed"
+    finally:
+        await engine.dispose()

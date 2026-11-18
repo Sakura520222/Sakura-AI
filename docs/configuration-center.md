@@ -11,17 +11,29 @@ contract. Previous settings URLs redirect to the matching category. See
 | --- | --- | --- |
 | `/settings/` | `/app/settings/personal` | Current user; WebUIConfig and UserConfig |
 | `/config/ai` | `/app/settings/ai` | Super admin; account/binding services and AppConfig |
-| `/config` | `/app/settings/review` | Super admin; scalars and registered strategy sections |
+| `/config`, `/config/general`, `/config/strategies` | `/app/settings/review` | Super admin; scalars and registered strategy sections |
+| `/config/labels` | `/app/settings/labels` | Super admin; label definitions, recommendation and conflict rules |
 | Strategy/label anchors | Review, Issue, Agent, Labels | Existing section JSON overrides |
 | `/system-config/` | `/app/settings/system` | Super admin; system validation and deployment settings |
 | `/config/backup` | `/app/settings/backup` | Super admin; existing backup services |
 
 The sidebar has one Settings entry. Only the selected category's values and DOM
-are loaded. Search uses a role-filtered, value-free index of names, descriptions
-and keys in both languages. All permitted groups and advanced fields in a category
-are visible on one continuous page. Business pages (tasks, Skills, billing, repositories, users) stay separate.
+are loaded. Desktop integrates a live section table of contents ("On this page")
+directly inside the active category navigation, while mobile provides a
+collapsible "On this page" drawer that collapses only the directory while keeping
+all permitted sections and advanced fields continuously visible. Search uses a
+role-filtered, value-free index of names, descriptions, keys, group titles and
+curated task aliases in both languages, displaying `Category › Section`
+breadcrumbs, match badges and a one-click return banner after jumping to a field.
+Each field shows its one-sentence purpose, unit/range/dependency hints and
+explicit status badges (`Customized`, `Env override`, `Deployment read-only`,
+`Restart required`, `Credential set/not set`) inline, while technical details
+(`id`, `source`, full `default` and reset) expand under `Details`. Business pages
+(tasks, Skills, billing, repositories, users) stay separate.
 Plugin permissions/credentials retain their dedicated editor, linked from Agent.
-AI role bindings use account/model rows with Add fallback, Remove and ordering
+AI settings follow the operator workflow: connect accounts → assign task models
+and fallback chains → tune per-model capabilities → configure request policy,
+fallback limits and activity capture. AI role bindings use account/model rows with Add fallback, Remove and ordering
 buttons, plus drag-and-drop sorting. Model capabilities are selected from enabled
 accounts and their configured models; overrides retain provider/model identity.
 The default fallback policy tries the full configured chain in order
@@ -51,7 +63,7 @@ notification binding, connection tests, App-slug lookup, restart, database reset
 and backup import/export retain dedicated workflows. Setup stays independent and
 continues sharing system/section validation.
 
-同一设置分类内连续展示所有有权限的分区和高级选项。回退链支持拖拽及键盘上移/下移，账号与模型一起排序、保存。模型能力覆盖从启用账号的已配置模型中选择，仍按供应商与模型标识读写。默认按配置顺序尝试完整回退链（候选上限 `0`，包含主模型）；正数上限会明确限制候选数。Sticky 默认关闭，启用时只适用于未改动的链，调整顺序会清除历史偏好。本地配置应用成功后下一次调用使用新值，其他进程按下述 revision 同步间隔更新。
+同一设置分类内连续展示所有有权限的分区和高级选项：桌面端在左侧分类下内嵌“本页目录”并随滚动高亮当前分区，移动端提供可收起的“本页目录”（仅收起目录，不隐藏字段）。AI 设置按“连接账号 → 分配任务模型与回退链 → 调整单模型能力与参数 → 请求策略、回退上限与采集”顺序组织；回退链支持拖拽及键盘上移/下移，账号与模型一起排序、保存。模型能力覆盖从启用账号的已配置模型中选择，仍按供应商与模型标识读写。字段行直接展示一句用途说明、单位/范围/依赖提示与明确文字状态标签，配置键、来源、默认值与恢复默认收入“详情”。未保存草稿在切换分类与搜索定位时按当前登录身份隔离保留，底部操作条支持“查看修改”清单核对差异（凭据仅显示“将更新”，绝不回显或写入浏览器存储）与集中提交，按字段版本依次校验持久化并明确区分已生效、等待生效、需重启、失败、冲突与跳过项。默认按配置顺序尝试完整回退链（候选上限 `0`，包含主模型）；正数上限会明确限制候选数。Sticky 默认关闭，启用时只适用于未改动的链，调整顺序会清除历史偏好。本地配置应用成功后下一次调用使用新值，其他进程按下述 revision 同步间隔更新。
 
 ## Metadata and API
 
@@ -143,13 +155,22 @@ source hot reload so active synchronization state is not replaced.
 ## Browser behaviour and validation
 
 The React `SettingsStore` separates drafts, confirmed values, request generations
-and durable revisions. Each field is saved explicitly; sensitive changes and
-resets require confirmation. Writes are serialized, sibling revisions are
-refreshed, and an earlier response cannot replace a newer draft. Failures retain
-the input for retry. Conflicts require explicitly adopting the server value;
-changed remote values are never silently overwritten. BroadcastChannel and focus
-refresh reconcile tabs. Outstanding drafts/requests trigger a navigation warning.
-Credentials are never persisted in browser storage.
+and durable revisions, isolated in memory per authenticated user identity and
+cleared on logout or session expiry. Users can save individual fields or review
+and submit pending edits across categories from the persistent unsaved-changes
+bar (`N unsaved · Review changes · Save changes`). Batch submission captures an
+immutable draft snapshot at confirmation time, orders cross-field bounds and
+credential/enable dependencies safely, rebases sibling versions within shared
+storage scopes, and reports exact counts and per-field reasons for `saved`,
+`pending`, `restart_required`, `failed`, `conflict` and `skipped` outcomes
+without pretending an atomic multi-store transaction; retrying submits only
+remaining retryable items. Sensitive changes and resets require confirmation.
+An earlier response cannot replace a newer draft typed while saving. Conflicts
+require explicitly adopting the server value; changed remote values are never
+silently overwritten. BroadcastChannel and focus refresh reconcile tabs. Leaving
+`/app/settings/*` or closing the tab with unsaved drafts triggers a confirmation
+warning, while switching categories or searching within Settings preserves drafts.
+Credentials are never persisted in browser storage, URLs or logs.
 
 ```sh
 uv sync --locked

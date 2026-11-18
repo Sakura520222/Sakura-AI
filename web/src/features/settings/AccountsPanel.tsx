@@ -170,11 +170,11 @@ export function AccountsPanel({ store }: { store: SettingsStore }) {
     <section className="settings-accounts-panel">
       <header>
         <div>
-          <h3>{t("AI 账号", "AI accounts")}</h3>
+          <h3 tabIndex={-1}>{t("1. 连接 AI 账号", "1. Connect AI accounts")}</h3>
           <p>
             {t(
-              "连接供应商后，在下方为不同任务选择模型。",
-              "Connect a provider, then assign models to your workflows below.",
+              "连接供应商并配置可用模型列表后，在下方为审查、摘要与 Agent 分配主模型和回退链。",
+              "Connect a provider and model list, then assign primary and fallback models below.",
             )}
           </p>
         </div>

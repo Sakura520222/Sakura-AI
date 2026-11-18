@@ -244,6 +244,11 @@
 }
 .activity-entry-failed {
   border-color: var(--danger);
+  padding-left: 14px;
+  border-left: 2px solid var(--danger);
+}
+.activity-entry-failed > header > span > svg {
+  color: var(--danger);
 }
 .activity-content {
   min-width: 0;

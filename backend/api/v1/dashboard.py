@@ -155,6 +155,7 @@ async def get_recent_reviews(
             {
                 "id": r.id,
                 "pr_id": r.pr_id,
+                "pr_number": r.pr_number,
                 "repo_name": r.repo_name,
                 "repo_owner": r.repo_owner,
                 "title": r.title,

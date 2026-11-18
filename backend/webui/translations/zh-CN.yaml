@@ -2182,12 +2182,12 @@ config_center:
     default_context_lines: "默认上下文行数"
     default_max_results: "默认最大结果数"
     description: "说明"
-    documentation: "文档冲突规则"
+    documentation: "文档（documentation）"
     enable_ai_tools: "启用 AI 函数工具"
     enable_idempotency_check: "启用幂等检查"
     enable_project_structure: "启用项目结构展示"
     enabled: "启用"
-    enhancement: "功能增强冲突规则"
+    enhancement: "功能增强（enhancement）"
     ignored_patterns: "忽略的文件模式"
     init_commit_message: "初始化提交说明"
     interval: "间隔"
@@ -2223,7 +2223,7 @@ config_center:
     priority: "优先级"
     prompt: "提示词"
     prompt_template: "提示词模板"
-    refactor: "重构冲突规则"
+    refactor: "重构（refactor）"
     repo_overrides: "仓库专属覆盖"
     request_changes: "请求修改模板"
     retention_days: "保留天数"
@@ -2231,11 +2231,21 @@ config_center:
     skip_extensions: "跳过的扩展名"
     skip_paths: "跳过的路径"
     skip_placeholder: "跳过占位内容"
-    style: "风格冲突规则"
+    style: "代码风格（style）"
     system_prompt: "系统提示词"
-    test: "测试冲突规则"
+    test: "测试（test）"
     use_search_api: "优先使用 GitHub Search API"
     user_template: "用户提示词模板"
+  section_field:
+    "label.conflict_rules.enhancement": "功能增强（enhancement）互斥标签"
+    "label.conflict_rules.refactor": "重构（refactor）互斥标签"
+    "label.conflict_rules.documentation": "文档（documentation）互斥标签"
+    "label.conflict_rules.test": "测试（test）互斥标签"
+    "label.conflict_rules.style": "代码风格（style）互斥标签"
+  whole_section:
+    "strategy.strategies": "自定义审查策略集合（新增或删除档位）"
+    "label.definitions": "自定义标签集合（新增或删除标签）"
+    "label.conflict_rules": "自定义互斥规则集合（新增或删除规则）"
   group:
     strategy.strategies: 审查分级与提示词
     strategy.file_filters: 文件过滤
@@ -2351,9 +2361,167 @@ config_center:
     top_p: "核采样参数；仅在模型支持此参数时使用。"
     top_k: "候选采样数量；仅在模型支持此参数时使用。"
     effort: "控制模型的推理强度；支持情况由模型能力配置决定。"
+    theme: "选择浅色、深色或跟随系统外观，修改后立即在当前界面生效。"
+    enable_rag: "启用代码与历史知识的向量检索增强（RAG），辅助审查与问题分析。"
+    chroma_persist_dir: "ChromaDB 向量索引在磁盘上的持久化存储目录（修改后需重启生效）。"
+    embedding_model: "用于生成代码与文档向量的嵌入模型标识。"
+    embedding_provider: "嵌入服务提供商或兼容协议类型。"
+    embedding_base_url: "嵌入服务 API 基础地址；凭据敏感保护，更新需确认。"
+    embedding_api_key: "调用嵌入服务所需的 API 密钥；保存后不回显明文。"
+    embedding_dimension: "嵌入向量的维度大小，需与所选嵌入模型一致。"
+    rerank_model: "对检索候选结果重新排序的重排序模型标识。"
+    rerank_provider: "重排序服务提供商类型。"
+    rerank_base_url: "重排序服务 API 基础地址；凭据敏感保护，更新需确认。"
+    rerank_api_key: "调用重排序服务所需的 API 密钥；保存后不回显明文。"
+    rerank_score_threshold: "重排序保留检索结果的最低相关度分数阈值。"
+    ai_fallback_enabled: "主模型请求失败或不可用时，自动按配置顺序尝试回退链中的备用模型。"
+    enable_context_compression: "对话或审查上下文接近窗口上限时自动摘要压缩历史消息。"
+    context_compression_threshold: "触发上下文自动压缩的窗口占用比例阈值（0.1–1.0）。"
+    enable_code_index: "为接入仓库建立代码切片索引，提升跨文件检索准确度。"
+    code_chunk_size: "单个代码切片的目标字符长度，需大于等于代码块重叠长度。"
+    code_chunk_overlap: "相邻代码切片之间保留的重叠字符数，避免跨块语义断裂（需 ≤ 代码块大小）。"
+    enable_inline_comments: "在 GitHub Pull Request 的具体代码行上直接发布行内问题评论。"
+    enable_pr_summary: "为 Pull Request 自动生成变更摘要说明。"
+    enable_pr_dependency_graph: "在 PR 审查中生成模块与文件变更依赖关系图。"
+    pr_dependency_graph_max_nodes: "依赖关系图中最多展示的节点数量上限。"
+    pr_dependency_graph_max_files: "生成依赖关系图时最多纳入分析的变更文件数量。"
+    pr_dependency_graph_mode: "选择使用静态导入解析或 AI 模型生成 PR 依赖关系图。"
+    enable_semantic_issue_linking: "在 PR 审查时基于语义相似度自动识别并关联相关 Issue。"
+    semantic_issue_similarity_threshold: "候选 Issue 进入关联判定的最低向量相似度阈值（0–1）。"
+    semantic_issue_max_links: "单个 PR 最多展示或关联的相关 Issue 数量。"
+    pr_issue_related_confidence_threshold: "判定 PR 与 Issue“相关”所需的最低置信度（需 ≤ 关闭置信度阈值）。"
+    pr_issue_closing_confidence_threshold: "判定 PR 可“修复/关闭”某 Issue 所需的最低置信度。"
+    payment_enabled: "控制套餐购买与充值入口是否开放；不影响已有钱包余额、账单历史与后台定价查看。"
+    payment_order_expire_minutes: "未完成支付的订单自动过期的等待时间（分钟）。"
+    payment_default_currency: "创建账单与展示价格时使用的默认结算币种。"
+    stripe_enabled: "启用 Stripe 银行卡与国际支付通道（需先配置密钥与 Webhook 签名密钥）。"
+    stripe_api_key: "Stripe 服务端 Secret API Key，用于创建支付与退款请求。"
+    stripe_webhook_secret: "Stripe Webhook 签名校验密钥，用于验证异步支付回调。"
+    stripe_currency: "Stripe 渠道下单时使用的结算币种。"
+    paddle_enabled: "启用 Paddle 支付与订阅通道（需配置 API Key 与 Webhook 密钥）。"
+    paddle_api_key: "Paddle 服务端 API Key，用于查询与管理交易。"
+    paddle_webhook_secret: "Paddle Webhook 签名校验密钥，用于验证回调通知。"
+    paddle_currency: "Paddle 渠道下单时使用的结算币种。"
+    paddle_vendor_id: "前端结账组件所需的 Paddle Client-side Token 或商户标识。"
+    alipay_enabled: "启用支付宝当面付/网页支付通道（需配置 App ID 与公私钥）。"
+    alipay_app_id: "支付宝开放平台应用 App ID。"
+    alipay_private_key: "支付宝应用 RSA2 私钥（PEM），用于请求签名。"
+    alipay_public_key: "支付宝平台公钥，用于验证异步通知签名。"
+    alipay_currency: "支付宝渠道下单时使用的结算币种。"
+    alipay_sandbox: "开启后支付宝请求将发往沙箱测试网关而非生产环境。"
+    nowpayments_enabled: "启用 NOWPayments 多币种加密货币支付通道。"
+    nowpayments_api_key: "NOWPayments API Key，用于创建加密货币支付单。"
+    nowpayments_ipn_secret: "NOWPayments IPN 回调签名密钥，用于校验到账通知。"
+    nowpayments_pay_currency: "NOWPayments 默认接收的加密货币代码（例如 usdttrc20）。"
+    tron_enabled: "启用 TRON 链上 USDT 直收校验通道。"
+    tron_wallet_address: "接收链上 USDT 转账的 TRON Base58 钱包地址。"
+    tron_api_key: "可选的 TronGrid API Key，用于提升链上交易查询速率上限。"
+    init_admin_agent_daily_quota: "首次初始化创建的管理员每日可用 Agent 任务额度。"
+    init_admin_agent_weekly_quota: "首次初始化创建的管理员每周可用 Agent 任务额度。"
+    init_admin_agent_monthly_quota: "首次初始化创建的管理员每月可用 Agent 任务额度。"
+    "capabilities.vision": "声明该模型是否支持读取图片与多模态视觉输入。"
+    "capabilities.tools": "声明该模型是否支持结构化函数/工具调用（Tool Calling）。"
+    "capabilities.streaming": "声明该模型是否支持流式增量返回生成内容。"
+    "capabilities.stream_usage": "流式请求时附带请求 Token 用量统计；若兼容网关报错可关闭。"
+    "capabilities.reasoning_content": "声明该模型是否返回独立的推理思考链内容字段。"
+    "capabilities.prompt_caching": "声明该模型是否支持提示词前缀缓存以降低重复上下文开销。"
+    "strategy.strategies": "增删自定义审查档位或统一编辑全部策略档位；内置档位也可在上方逐项调整。"
+    "strategy.strategies.*.name": "该审查档位在界面、日志与评论中展示的名称。"
+    "conditions.max_files": "命中该审查档位允许的最大变更文件数上限。"
+    "conditions.max_lines": "命中该审查档位允许的最大变更代码行数上限。"
+    "strategy.strategies.*.prompt": "命中该审查档位时注入给 AI 审查员的专属指令提示词。"
+    enable_project_structure: "审查时向模型提供仓库目录树摘要，帮助理解模块位置。"
+    max_structure_files: "目录树摘要中最多列出的仓库文件数量。"
+    enable_ai_tools: "允许审查模型按需调用文件读取、代码搜索与 Git 历史工具获取上下文。"
+    max_file_size: "工具读取单个源码文件时允许的最大字节数。"
+    max_files_for_deep_strategy: "深度审查模式下单次最多深入分析的文件数量。"
+    max_file_lines: "单次读取文件工具最多返回的代码行数。"
+    max_file_output_chars: "单次文件读取结果返回给模型的最大字符数。"
+    default_context_lines: "查看代码片段或匹配结果时默认附带的上下文行数。"
+    max_context_lines: "工具单次允许请求的最大上下文行数上限。"
+    "search_in_files.use_search_api": "优先通过 GitHub Search API 检索代码，不可用时回退本地扫描。"
+    "search_in_files.default_context_lines": "文件内容搜索命中处默认附带的上下行数量。"
+    "search_in_files.default_max_results": "单次文件内容搜索默认返回的最大匹配条数。"
+    "search_in_files.skip_binary": "搜索文件内容时自动忽略二进制文件。"
+    "search_in_files.max_files_to_search": "单次搜索最多遍历的候选文件数量。"
+    "search_in_files.concurrency": "并行读取与匹配文件内容时的最大并发数。"
+    "search_in_files.max_file_bytes": "参与全文搜索的单个文件最大字节限制。"
+    "search_in_files.max_total_scan_bytes": "单次搜索累计扫描源码字节数的总上限。"
+    "search_in_files.max_matches_per_file": "单个文件内最多返回的匹配片段数。"
+    "search_in_files.max_output_chars": "单次搜索工具返回给模型的总字符数上限。"
+    "git_tools.default_branch_count": "Git 分支查询工具默认返回的最大分支数。"
+    "git_tools.default_commit_count": "Git 提交历史查询工具默认返回的最大提交数。"
+    "ci_failure_injection.enabled": "将近期相关的 CI 失败摘要注入审查上下文辅助定位问题。"
+    "ci_failure_injection.retention_days": "保留历史 CI 失败上下文记录的天数。"
+    "ci_failure_injection.max_records": "单次最多注入的 CI 失败运行记录条数。"
+    "ci_failure_injection.max_annotations_per_record": "每条 CI 失败记录最多提取的错误注解条数。"
+    "sakura_memory.enabled": "启用仓库 `.sakura/` 长期记忆，在审查与修复间沉淀项目约定。"
+    "reflection.enabled": "PR 审查后续更新或合并时提炼审查反思记录。"
+    "reflection.model": "执行 PR 反思提炼使用的模型标识；留空继承默认审查模型。"
+    "reflection.prompt_template": "自定义 PR 反思提炼的提示词模板；留空使用内置模板。"
+    "reflection.max_comments": "单次反思最多纳入分析的历史审查评论条数。"
+    "reflection.max_changed_files": "单次反思最多纳入分析的变更文件数。"
+    "reflection.max_new_commits": "单次反思最多纳入分析的新增提交数量。"
+    "issue_reflection.enabled": "Issue 关闭或跟进后自动提炼问题排查经验到仓库记忆。"
+    "issue_reflection.model": "执行 Issue 反思使用的模型标识；留空继承默认模型。"
+    "issue_reflection.prompt_template": "自定义 Issue 反思提炼的提示词模板；留空使用内置模板。"
+    "consolidation.interval": "触发散落反思合并整理为结构化记忆的间隔阈值。"
+    "consolidation.model": "执行记忆合并整理使用的模型标识；留空继承默认模型。"
+    "consolidation.max_memory_chars": "单个记忆文档合并后的最大字符长度限制。"
+    "consolidation.max_sakura_chars": "`.sakura/` 记忆目录总注入内容的字符预算上限。"
+    "consolidation.cleanup_old_reflections": "完成记忆合并后自动清理已归档的旧反思片段。"
+    "consolidation.partial_commit": "部分子目录整理完成时允许先行提交可用更新。"
+    "knowledge_extraction.enabled": "从多次审查反思中自动归纳通用编码规范与踩坑知识。"
+    "knowledge_extraction.min_reflections": "触发自动知识提取前至少需要积累的反思记录数。"
+    "initialization.auto_init": "首次在仓库启用记忆时自动初始化 `.sakura/` 目录结构。"
+    "initialization.init_commit_message": "自动初始化 `.sakura/` 目录时使用的 Git 提交信息。"
+    "directory_convention.enabled": "按固定子目录分类组织记忆、规则、文档与计划文件。"
+    "directory_convention.auto_create_subdirs": "缺少约定子目录时自动补齐对应文件夹与占位说明。"
+    "memory.description": "`.sakura/memory` 分类目录的用途说明，指导模型读写长期记忆。"
+    "memory.priority": "上下文预算受限时，`memory` 分类内容的加载优先级权重。"
+    "memory.skip_placeholder": "初始化 `memory` 目录时不生成默认示例占位文件。"
+    "rules.description": "`.sakura/rules` 分类目录的用途说明，存放项目架构与代码规范。"
+    "rules.priority": "上下文预算受限时，`rules` 分类内容的加载优先级权重。"
+    "rules.placeholder": "初始化 `rules` 目录时写入的默认占位说明文本。"
+    "docs.description": "`.sakura/docs` 分类目录的用途说明，存放模块设计与背景文档。"
+    "docs.priority": "上下文预算受限时，`docs` 分类内容的加载优先级权重。"
+    "docs.placeholder": "初始化 `docs` 目录时写入的默认占位说明文本。"
+    "plans.description": "`.sakura/plans` 分类目录的用途说明，存放演进方案与任务计划。"
+    "plans.priority": "上下文预算受限时，`plans` 分类内容的加载优先级权重。"
+    "plans.placeholder": "初始化 `plans` 目录时写入的默认占位说明文本。"
+    "strategy.review_policy.enabled": "启用基于评分与问题严重程度的自动批准/请求修改评审策略。"
+    approve_threshold: "综合评分达到该分值且无阻断项时，可输出自动批准（Approve）结论。"
+    block_threshold: "综合评分低于该分值时，自动输出请求修改（Request Changes）结论。"
+    block_on_critical: "发现严重（Critical）级别问题时立即请求修改，不受评分阈值豁免。"
+    max_major_issues: "允许通过批准的最大重大（Major）问题数；超出后转为请求修改或评论。"
+    enable_idempotency_check: "相同提交 SHA 已完成同策略审查时跳过重复评审，避免刷屏评论。"
+    "review_templates.approve": "中文输出下评审结论为“批准”时使用的评论总结模板。"
+    "review_templates.request_changes": "中文输出下评审结论为“请求修改”时使用的评论总结模板。"
+    "review_templates.comment": "中文输出下评审结论为“仅评论”时使用的评论总结模板。"
+    "review_templates_en.approve": "英文输出下评审结论为 Approve 时使用的评论总结模板。"
+    "review_templates_en.request_changes": "英文输出下评审结论为 Request Changes 时使用的评论总结模板。"
+    "review_templates_en.comment": "英文输出下评审结论为 Comment 时使用的评论总结模板。"
+    issue_reference_keywords: "识别 PR 正文或提交关联 Issue 时匹配的关键词列表（如 fixes、closes）。"
+    max_linked_issues_in_prompt: "单次分析提示词中最多附带的关联 Issue 上下文条数。"
+    "strategy.issue_analysis.system_prompt": "指导 AI 分析 Issue 根因、分类、可行性与建议的系统提示词。"
+    "strategy.pr_summary.system_prompt": "生成 PR 变更摘要时设定角色与输出规范的系统提示词。"
+    "strategy.pr_summary.user_template": "构造 PR 摘要请求的用户消息模板，支持注入变更统计与文件差异。"
+    "strategy.pr_dependency_graph.system_prompt": "使用 AI 模式生成 PR 依赖关系图时的系统提示词。"
+    "strategy.pr_dependency_graph.user_template": "构造 PR 依赖图分析请求的用户提示词模板。"
+    "strategy.scan.system_prompt": "执行全仓质量与安全扫描时指导 AI 检查重点的系统提示词。"
+    "label.definitions": "统一管理全部标签或新增自定义标签；内置标签的颜色与说明也可在上方直接修改。"
+    "label.definitions.*.color": "该标签在 GitHub 仓库创建或同步时使用的 6 位十六进制颜色值（不含 #）。"
+    "label.definitions.*.description": "该标签在 GitHub 显示的说明文案，同时供 AI 推荐标签时理解语义。"
+    "label.recommendation.enabled": "分析 PR 或 Issue 时自动推荐并按规则应用合适的 GitHub 标签。"
+    "label.recommendation.confidence_threshold": "仅当 AI 对标签匹配的置信度达到该阈值（0–1）时才应用标签。"
+    "label.recommendation.auto_create": "目标仓库尚不存在推荐标签时，自动按上方标签定义创建。"
+    "label.conflict_rules": "统一管理或新增标签互斥组；命中主标签时将自动排除同组冲突标签。"
+    "label.conflict_rules.*": "当打上该标签时不允许同时共存的互斥标签名称列表。"
 
 # WebUI 2.0 messages (managed by scripts/sync_webui_translations.py)
 webui_v2:
+  m_0030f688e38f: 绑定个人邮箱、Telegram 或 Webhook 接收渠道，并设置事件通知规则。
+  m_0056773352f0: 显示前 80 项（共 {0} 项），请补充关键词缩小范围。
   m_00f0360d90df: 重排模型供应商
   m_01062ca78304: 跳至内容
   m_010bb9b5b006: Issue 分析次数
@@ -2362,11 +2530,14 @@ webui_v2:
   m_0176dc07f928: 文档索引
   m_017ed375e30e: 账单导航
   m_0185a9b9f0cb: 查看失败记录
+  m_018b828c2868: 本页分区目录
   m_020ebe4f8941: 创建任务
   m_022dd37ccbd1: 公开仓库
   m_02ac11b0cd74: 封禁或停用原因（可选）
   m_02f4bb7a6f3b: 正在重连
+  m_02fb8f5b981c: AI 与模型
   m_0309fb157426: 备份范围
+  m_031c49e04cd3: 连接测试、重启应用与重置数据库
   m_0323217bdfe5: 适用场景
   m_03a13e8739d4: 下一步
   m_03c70af5ace3: 版本
@@ -2377,6 +2548,7 @@ webui_v2:
   m_046068ff1812: 无法加载 AI 账号。
   m_049d6b1e6abf: 搜索用户
   m_04c114789c7e: 开始更新
+  m_04f122171112: 上次：{0}
   m_051187720189: 删除仓库工作区？
   m_0515ddc1bf6f: 最近更新
   m_054f0ab4d577: 已通过
@@ -2386,32 +2558,39 @@ webui_v2:
   m_05e05db487aa: 确认更新
   m_05e9af30b608: 退出失败，请重试。
   m_062b16e38dfc: 加载更早记录
+  m_0675146ee6a9: 凭据已设
   m_06cf635dfde4: 正在重连，定时刷新仍在运行
   m_070c10dbb583: 已放弃
   m_0722b7472b5a: 填入设置
+  m_072517af141e: 连接供应商并配置可用模型列表后，在下方为审查、摘要与 Agent 分配主模型和回退链。
   m_075708ba35df: 条款
   m_075d87fbb8fa: 个人设置
   m_077cdbe3e0a2: Telegram ID（可选）
   m_07a25915e57e: 当前退款状态
   m_07c372a0c509: 资源类型
   m_07d867d04c5d: 启用用户
+  m_07e8f9198efb: 调整语义关联与关闭判定所需的相似度、置信度与数量限制。
   m_0809cd8c17b2: 任务目标
   m_0833311dbaab: 描述
   m_084b62b4ca1f: 最近活动
   m_0875453a42ed: 恢复此备份？
   m_0878ef3bda47: 全部功能
   m_08d238289a05: 未配置凭据
-  m_09379fff771c: AI 账号
   m_09505f8fe7d0: 最新创建
   m_095ccc8edbd2: 缓存创建
+  m_0972b8d4daf7: 检索结果重排序
   m_09bd23e00422: 正在加载账号…
   m_0a10311e7f6a: 此账号已被其他人修改。请关闭编辑器并重新加载后再试。
   m_0a3c806f94ff: 此内容不可查看或未被记录。
+  m_0a5875c4f435: 单位：{0}
   m_0a62899e96f6: 取消任务
   m_0a7afbe10d98: 凭据在应用每次重启后更换，请以最新的 .setup-token 文件为准。
+  m_0b270533d8c7: 配置接收 Webhook 与执行仓库审查操作的主 GitHub App 凭据。
   m_0b3caf95797e: 完整配置
+  m_0b3e6f3de1c9: 配置 MCP 工具服务、生命周期钩子与工作区读写权限级别。
   m_0b7f46095d8a: 币种
   m_0b87822f8d09: 关闭记录
+  m_0bd98d57e4c1: 部分设置未保存成功，请核对原因
   m_0c01457f04b7: 请从订单列表查看支付状态
   m_0c08782c9307: 或
   m_0c2067b6a2fd: 发布
@@ -2431,13 +2610,18 @@ webui_v2:
   m_0dd8ccbb93f8: 实时连接
   m_0dd9358a739f: 任务目标（可选）
   m_0e6cb4d42965: 接收此通知
+  m_0e7f62706aed: 凭据未设
   m_0e9d1e9c783f: Host Updater 当前没有活跃任务，但此前请求的结果仍未确认。核对部署状态后，可解除本页提交锁并重新预检。
   m_0f1e60f2c9c8: 刷新模型
   m_0f3a32cb59c3: 服务地址
+  m_0f929e60c477: 返回“{0}”的搜索结果
+  m_0fdcb05cdc0b: 界面与输出偏好
   m_0fdfe2265827: 当前没有活跃更新任务。关闭记录后，仍需重新预检才能提交更新。
   m_0fea6d61c705: 不支持的历史币种（{0}）
   m_0ffec27b9ccf: 集合
   m_101d422a8332: 已有的身份验证器与通行密钥会保留。被要求启用验证的用户需要先完成安全设置。
+  m_10370a4e8549: 管理 PR 自动审查、并发与超时上限、最小触发间隔及 GitHub Check Runs。
+  m_10a3ee0b4078: 放弃此模型的修改
   m_10d2982bb8c0: 版本详情
   m_10ea5f4572d0: 审查意见
   m_10eb4566b20c: 启用
@@ -2455,6 +2639,7 @@ webui_v2:
   m_12d6c2e3a4fc: Pull Request 审查
   m_132395713990: 第
   m_13326276d555: 暂无兑换码
+  m_136f4923a2d0: 尝试输入功能词（如“回退”“并发”“SMTP”“配额”）或配置键名称。
   m_13812da3e3e8: 无法加载插件配置。
   m_139ceffeeca7: 关联 Issue
   m_139e2f691c07: 已验证
@@ -2473,14 +2658,20 @@ webui_v2:
   m_14f706073e84: 开发版
   m_1525fc00b8a8: 打开 Telegram
   m_15268584bc5b: 取消订单
+  m_15467e39f552: 与同一分区的整表编辑重叠，已跳过以避免覆盖其他子项。
+  m_156c003a51d2: 控制网页读取工具开关、域名访问策略、HTTPS 强制与下载体积上限。
   m_157b8bee9663: 已断开
   m_1591efae3da8: 重新生成
   m_15ac3f44b070: 标为已读
+  m_15ad11d2b0ec: 撤销
   m_15eda6aacfac: 已创建 Pull Request
+  m_1607a152dc72: 配置可选的私人 Telegram 通知绑定机器人与绑定有效期。
   m_16511d4a045a: 上次检查
+  m_1652b0b75c93: 配置对向量检索候选片段进行二次相关度排序的服务。
   m_16a886d3a200: 全部来源
   m_16e00f6c700d: 审查策略
   m_171f81d17d52: 强制验证
+  m_17264ab3620e: 通知投递与 Webhook 策略
   m_172b4f7ec37d: 操作
   m_1746dfba4a5a: 排序方式
   m_1787f8f8f2aa: 超级管理员
@@ -2497,6 +2688,7 @@ webui_v2:
   m_192ffed7a00f: 法律信息
   m_193de33db975: 完成时间
   m_19a9a3754657: 通知视图
+  m_19f8b38e2f60: 启用向量知识检索并管理 ChromaDB 持久化目录。
   m_1a1acc4e750b: 备份可能包含服务凭据和账户安全信息，请妥善保管。恢复运行中的系统不会替换当前数据库与 Redis 的部署连接。
   m_1a3fbfdd1cf3: 删除通知偏好？
   m_1a8befd4d2c3: 备份已恢复
@@ -2507,26 +2699,33 @@ webui_v2:
   m_1ac454adc15e: 重新处理支付事件？
   m_1b03d882eb26: 没有权限执行此操作。
   m_1b4392a4511d: 页面暂时无法打开
+  m_1b5b52b46002: 暂无可用的账号和模型，请先在上方配置并启用 AI 账号。
+  m_1b62a7128019: 执行数据库/Redis 连接测试、查询 GitHub App Slug、安全重启或重置数据库。
   m_1b68a8d2d2f0: 索引与扫描
   m_1b73774ba1c0: 所有用户
   m_1baaef267f6b: 全部内容
+  m_1bae08ecd973: 跳过 {0}
   m_1bb415ea7c70: 公告管理
   m_1bd6bf8c5c56: 将创建新的扫描任务，并按当前配额与计费规则执行。
   m_1bd8519620c0: 清理闲置工作树
   m_1bd9fd9af2d7: 保存中…
+  m_1c206cff7458: 个人通知渠道与订阅偏好
   m_1c2561ded2b9: 个仓库
   m_1c80b00b861c: 使用 GitHub 继续
   m_1d1733f7f96f: 版本分页
   m_1d38050b5b77: 有效配额
   m_1d9d43e49daa: 用量完整性
+  m_1dfd94c411a1: 界面语言、外观主题、账号安全与个人通知
   m_1e18fc052cec: 验证通知渠道
   m_1e202de4e83a: 删除兑换码？
   m_1e75b6db3719: 已选择
+  m_1ed12e6163b8: 保存修改 ({0})
   m_1f0917f65eb9: '{0} 个已通过'
   m_1f0d89c128e7: 购买 {0}？
   m_1f46219567ec: 复制失败，请手动复制
   m_1fb62d6d71f0: 关于
   m_1ffb5572bd0a: 确认调整
+  m_200b50b74eb5: 自动分析、相似查重、负责人推荐与评论模板
   m_201dcae027dd: 发现社区项目，管理你的展示仓库与互助参与状态。
   m_2020004cccba: 暂无可行性分析。
   m_20339ab89832: 等待中
@@ -2536,6 +2735,8 @@ webui_v2:
   m_2056f7c8a65d: 请使用指定网络和准确金额转账。
   m_205cbe72daa4: 历史提醒
   m_209fb815f51b: 候选
+  m_20e5dfa442c0: 控制新 Issue 自动分析、相似问题检测、指派建议与并发限制。
+  m_2122e3cdadac: 配置审查时跳过的目录、扩展名以及识别为源码的后缀列表。
   m_213511b228a8: 登录验证失败，请重试或重新使用 GitHub 登录。
   m_214b4fc1e896: 任务账单
   m_2170ac16f339: 核实证据
@@ -2546,6 +2747,7 @@ webui_v2:
   m_2225353fd2c7: 钱包
   m_2225f0c5bcbf: 还没有审查记录
   m_223b523f67c0: 取消全局强制验证？
+  m_22bdc0beec6c: 0 = 完整回退链
   m_22c9bca04e1a: 通知（可选）
   m_22d7fb77b527: 输入页面名称或配置关键词…
   m_22dbc9e940d3: 搜索运行活动
@@ -2553,6 +2755,7 @@ webui_v2:
   m_239c6083903d: 所有用户、配置和业务记录都将被删除。请确认你已准备好从首次设置重新开始。
   m_23ebb1a8859b: Redis 连接
   m_2404a3658e82: 编辑兑换码
+  m_241909335748: 采用服务端值
   m_244620c0ffb4: 更换密钥后需要重新验证接收地址。
   m_246afc51f2b4: 搜索 GitHub 用户
   m_2470951cf97e: 工作分支
@@ -2570,6 +2773,7 @@ webui_v2:
   m_25c66e736041: 参数与结果
   m_25d536e565fc: 发布历史
   m_2618da7a3299: 允许写入工作区
+  m_264553eebe04: 任务执行、隔离沙箱与闭环验证
   m_267c437db66b: 检查当前缓存与队列连接
   m_26e855ff98fa: 邮件地址
   m_26f17e8e6dbb: 正在验证…
@@ -2605,22 +2809,26 @@ webui_v2:
   m_2abca65396c0: 价格
   m_2aca617bae75: 检索（可选）
   m_2addf6811119: 常规
+  m_2aed7590607e: 配置审查工具限额、文件内容搜索、CI 失败上下文与 .sakura 长期记忆。
+  m_2b052830f9a7: 已持久化，后台正在同步运行时状态。
   m_2b135a3bf37a: 新的任务进展和账户消息会显示在这里。
   m_2b48e65117a9: 连接未通过。请检查地址、凭据和默认模型。
   m_2b692fb394f9: 验证中
   m_2b758259bba4: 正在检查
-  m_2b8e984fdd41: 暂无可用的账号和模型，请先配置并启用 AI 账号。
   m_2ba3ab76001b: 工作区已删除
   m_2bbb3adc24cd: 管理
   m_2bccc320bc7a: 操作者
   m_2ce5d56493a5: 个文档
   m_2cfa70246ea5: 个展示仓库
   m_2d1ba7b6300b: 正在恢复连接，更新结果尚未确认
+  m_2d4ac5b71365: 最小：{0}
   m_2d64e2b8f571: 操作未完成，请刷新状态后重试。
+  m_2de3b7ab0332: 触发并发、批准阻断策略、分级提示词与上下文工具
   m_2e104e31386b: 发送测试
   m_2e25a5c275bc: 搜索任务或仓库
   m_2e29873f2803: 删除此文件？
   m_2e39fdaa62a0: 无法访问此页面
+  m_2f0ffc4388dd: 字节
   m_2f5560045bf7: 发现
   m_2f615cbc3ef8: 从这里了解代码审查进展，继续你的工作。
   m_2f8616fa6cb1: GitHub 授权
@@ -2632,16 +2840,16 @@ webui_v2:
   m_2fc29a646c1b: 主导航
   m_2feb5a68a885: 账单与用量
   m_2ff4fa9c93ad: 渠道类型
+  m_3009ded95d14: 备份与恢复
   m_3020bdef65bf: 重新授权
   m_3073867631ac: 永久清空数据库
   m_3096b3a9dcec: 工作空间已初始化，前往登录即可开始使用。
   m_30ac847128e0: 请输入非负数，最多六位小数。
   m_30cdf415a947: 停用用户
+  m_30f3c444989e: 自动标签推荐
   m_318a310f3e14: 订单 ID
   m_319c413da254: 快速开始
-  m_319d75adfb7a: 尝试使用功能名称，或更短的关键词。
   m_31d5c3a91db5: 最近安全事件
-  m_31fefb68ebfa: 连接 AI 账号，选择模型和调用策略
   m_32157adcc31e: 所有审查
   m_321c6121e853: 欢迎回来
   m_323a14872cfe: 删除套餐 {0}？
@@ -2652,7 +2860,9 @@ webui_v2:
   m_32b63dd4d802: 添加渠道
   m_32f8ff0f7923: 创建公告
   m_32fa7999a19e: 应用配置
+  m_3328b3723ede: 需 ≤ 关闭关系置信度阈值
   m_332ec2a06d0b: 尚未添加通行密钥
+  m_335631293961: 管理各标签在 GitHub 同步的颜色与说明，支持增删自定义标签。
   m_335bbff128c3: 补充说明或反馈
   m_33942fde23b3: 凭据只用于连接服务，已保存的密钥不会显示。
   m_33aac21fe5e2: 发布记录
@@ -2669,6 +2879,7 @@ webui_v2:
   m_356d149c4836: 高级：导入或批量编辑 JSON
   m_35715a194715: SMTP 主机
   m_357c24ce1f82: 批准退款
+  m_35976c4f72d4: 设置新账号默认获得的日/周/月审查、Issue 与 Agent 初始配额。
   m_35d5bc50aa6b: 离开后，未保存的内容将丢失。
   m_35fd7ff73474: 默认模型
   m_3604502a2548: 已启用
@@ -2697,6 +2908,7 @@ webui_v2:
   m_39009718d93a: 共 {0} 项
   m_3921d943d1a0: 预留中
   m_392d2394f660: 任务已提交，后台正在处理。
+  m_3938f5f206b0: 添加供应商账号、API 密钥与可用模型清单，供下方任务绑定与能力设置调用。
   m_395fc29b0ff8: 消息
   m_39971e843a63: GitHub 登录未完成，请重新授权。
   m_39a70d4ba0c0: 移除用户
@@ -2730,11 +2942,13 @@ webui_v2:
   m_3ebe5067520b: 为登录增加一道保护
   m_3edd17413755: 还没有任务
   m_3f4d6cbde5b6: 默认
+  m_3f575503beca: 修改清单与保存结果
   m_3fb2517a80c0: 添加 AI 账号
   m_3fd708ab4ba3: 模型调用
   m_403b81ea18d1: 未找到仓库
   m_40509f837be5: 刷新以使用新版本
   m_40722432f2fe: 健康评分
+  m_40783491ecb1: 嵌入模型服务
   m_409f05c899aa: 添加通知渠道
   m_40e01c1aabec: 未发现可用模型。你仍可以手动输入模型 ID。
   m_4113d3eff908: 重置数据库…
@@ -2746,6 +2960,7 @@ webui_v2:
   m_419392a15261: 已排队
   m_419620a47535: 请在支持通行密钥的浏览器中，通过 HTTPS 访问此页面。
   m_41dcb0d31d0c: 已处理
+  m_421df3e2984f: 分类规则、优先级与评论模板
   m_423e2ad11fb5: 打开会话诊断日志
   m_42563775a11c: 用户已更新
   m_425f60a0ad83: 开启
@@ -2757,13 +2972,16 @@ webui_v2:
   m_42b377818478: 全部仓库
   m_4300d8c2afac: 查看数据表
   m_4312416ea113: 完整分析
+  m_4342da4b13b5: 未设置
   m_437c98af7e59: 任务账单
   m_43906f2fcc39: 可行性
   m_43f3b0123087: 尚未保存的账号设置将被丢弃。
   m_43fec8fb0578: 将切换当前部署的更新通道，请确认目标通道。
   m_440d6a085c1a: 应用域名
+  m_443181b4a5ff: 自定义生成 PR 摘要时使用的系统提示词与用户模板。
   m_44324e2b540f: 发布
   m_4451b4465994: 未能更新技能，请刷新后重试。
+  m_44c5b7d68c83: PR 依赖图提示词
   m_44d386341d17: 支付状态
   m_453299d9362d: 发放套餐
   m_4580ce4fb3ae: 打开报告
@@ -2777,14 +2995,17 @@ webui_v2:
   m_46d20e8a21a9: 创建时间
   m_470b613b9ef5: 保存配置并启动 Sakura AI？
   m_4746510edad3: 重新分析此 Issue？
+  m_476838497525: 用户授权 GitHub App
   m_4782dc2653f1: 服务条款
   m_4792bb2869fb: 名称
+  m_47c36724fdb7: 自动分析、指派与查重
   m_4800d6131c60: 私有仓库
   m_4806ba583121: 查看扫描任务
   m_48141772f1d3: 无标题
   m_48ae74c6c6eb: 订单金额
   m_48bc8eabeaca: 规划中
   m_48c7efa3796f: 限定特定资源
+  m_4916a08b4eaa: 配置用于个人仓库授权与互助功能的独立 GitHub App。
   m_491c76ddc9e3: 个技能
   m_494bd33554a7: 连接你的第一个 AI 账号
   m_494ef696f725: 只删除所选状态的队列记录，不会删除已生成的审查结果。
@@ -2794,14 +3015,16 @@ webui_v2:
   m_49bb5618b651: 用户
   m_49c4e81ff7ba: API 密钥
   m_49ea33ef68a7: 暂无符合筛选条件的发现
-  m_4a64441edc92: 项未保存的修改
   m_4a6d17c96f57: 分类、优先级和下一步建议
   m_4a942fd98407: 保存账号
   m_4af05344a3bb: 清除受保护的内容
   m_4af6a4122086: 条记录
+  m_4b168b55e0d4: 未展示
   m_4b19f90ecc19: 否
+  m_4b251af203fc: 冲突 {0}
   m_4b5d4cce371f: 正在安装…
   m_4b79494fb3bd: 平均健康评分
+  m_4b81ec61d960: 环境变量
   m_4bb18c0aca95: 两步验证已开启
   m_4c1e5e52ad10: 系统维护
   m_4c3ff3fe4b90: GitHub App 名称
@@ -2812,10 +3035,13 @@ webui_v2:
   m_4c979f6512aa: 连接身份验证器
   m_4ca273f608f3: 等待人工处理
   m_4cbd45cdde07: 改进
+  m_4cc968f28fb7: 配置站点域名、HTTP 监听地址与端口、时区、日志级别及签名密钥。
   m_4cd0d9aeeb35: 连接你的 GitHub 账号
   m_4cdea94fee82: SMTP 端口
+  m_4ce17db0cef2: 已暂停
   m_4cf923f611c8: 已履约
   m_4d04d3ef2eff: 输出 / 百万 Token
+  m_4d1777bbb5df: 管理仓库源码切片索引开关及分块大小与重叠参数。
   m_4d2f7a9780ac: 发送
   m_4d3c328a6052: 使用你为账号设置的验证方式。
   m_4d6361706cc2: 推理状态
@@ -2837,8 +3063,11 @@ webui_v2:
   m_4fe9d82e91eb: 已生成的代码反馈
   m_5010daf96f94: 会话
   m_5044e0c63125: 查看内容
+  m_505151db32d7: 自定义全仓质量与安全扫描所使用的系统提示词。
   m_50c015dd97a6: 登录你的
+  m_50e98d7278db: 按范围导出 JSON 备份或从备份文件恢复配置与用户
   m_50f123037259: 隐私政策
+  m_50ffa667ae9b: AI 摘要
   m_5139fceecbd4: 运行中
   m_51688cb42ffa: 清除
   m_518a9a767778: 我已核对，重新预检
@@ -2856,10 +3085,12 @@ webui_v2:
   m_5354f3927e4c: 下一页
   m_53610b40eae2: 已配置凭据
   m_538252cb92f5: 正在导出…
+  m_53a1d7a31d8d: 关闭保存提示
   m_53de84160ef9: 永久删除并重启
   m_54189cef33bf: 从 GitHub 安装技能，或上传 SKILL.md / ZIP 文件。
   m_5466a7f14cb5: 通行密钥需要支持的浏览器与 HTTPS 连接。
   m_54e3d09bc7ee: 已发行兑换码的套餐快照保持不变。更换套餐请生成新兑换码。
+  m_54eeaa052ba9: PR 摘要提示词
   m_54fc6b5824e3: 执行详情
   m_551984996d7c: 移除 {0}
   m_553b1409eef9: 复制失败
@@ -2872,16 +3103,15 @@ webui_v2:
   m_573e769b0c42: 嵌入维度
   m_57874b6ea163: 搜索队列仓库
   m_5797d75b9289: 未连接
-  m_57d2f0601d04: 搜索设置、功能或关键词…
   m_5825124730d4: 登录方式
   m_58aecb12e180: 停用仓库展示？
-  m_58c64720bb61: 分析流程、分类与回复内容
   m_58ed0a978813: 服务已恢复
   m_58eeb1a6e351: 兑换码
   m_58f2a6a5b058: 仓库互助
   m_5949920beee9: 剩余 {0} 个。重新生成会使旧恢复码失效。
   m_59605e5c3dc9: '选择兑换码 #{0}'
   m_59690652f991: 还没有工作区
+  m_599f316b44f3: 4. 调用超时、回退策略与活动采集
   m_59beda7112b6: 批准并执行退款？
   m_59c2355a08f3: 标题
   m_59f42b7c750c: 保存配额
@@ -2897,6 +3127,7 @@ webui_v2:
   m_5b5b00425e67: 系统
   m_5b794f23b482: 自动或手动更新检查失败，请稍后重试。
   m_5b94bd61997f: 任务
+  m_5bca8c2c68e1: 需 ≤ 代码块大小
   m_5bd06d2573e5: 已开启
   m_5bd1df2b6f9d: 所选账号或模型已不可用。请选择可用模型；未保存的修改仍保留。
   m_5be66e487b28: 已使用
@@ -2925,6 +3156,7 @@ webui_v2:
   m_5efb82c4d6f8: 刷新
   m_5efd7d233c27: 最近的审查
   m_5f2841af5735: 删除后将无法再用这把密钥登录。
+  m_5f32a0870b4a: 配置仓库互助总开关、自动互助调度间隔、每日上限与仓库摘要语言。
   m_5fff2dd95dc1: 建议标题
   m_601cd773c0a3: 导出 CSV
   m_603e47cbbcf5: 插件
@@ -2951,6 +3183,7 @@ webui_v2:
   m_6467047d8b0a: 轮
   m_649b2bfadb8a: 任务标题
   m_64c255fe369d: 从 Issue 分析和扫描发现中选择任务，确认目标后交给 Agent。
+  m_64d4024c1a86: 主模型 {0}/{1} · 无回退
   m_64dbc2b89edb: 最近 30 天
   m_651c9d3c9df8: 独立定价
   m_654b31243088: 无法加载备份配置。
@@ -2958,9 +3191,13 @@ webui_v2:
   m_6598a960008b: 读取中…
   m_65aeb0e22ebc: 重试
   m_65d3eb62f00b: 插件 JSON
+  m_65fb19f5739a: 名称匹配
   m_6644407510fa: 技能
+  m_664cfcb9d5fe: 导出当前配置或用户安全数据，或从备份文件恢复（自动保护部署连接配置）。
   m_665bf084bfbf: GitHub App 私钥
   m_66afb44c6959: 处理中
+  m_66ba85303d60: 范围：{0} – {1}
+  m_6728f850b2b1: 调整自注册新用户相对基础额度的初始倍率。
   m_674b6d2db8fc: 删除全部应用数据与用户，重新进入首次设置。此操作无法撤销。
   m_674cfed0f773: 尚未检查
   m_67b43e8352c6: 更改角色
@@ -2972,6 +3209,7 @@ webui_v2:
   m_686fee1b5706: 启用全局强制验证
   m_687d91fc8373: 调用数
   m_68c1ce795077: 正数增加，负数扣减。
+  m_69111a804bd0: 测试数据库与 Redis 连通性、查找 GitHub App Slug、重启当前实例或清空重置数据库。
   m_6939a2ad1767: 次要
   m_69508886259c: 文件内容
   m_695e6de8da1d: 仓库扫描
@@ -2980,14 +3218,17 @@ webui_v2:
   m_6977b6061875: 重试
   m_69aea807aa0d: 封禁成员？
   m_69df7cb46492: 删除通行密钥 {0}？
+  m_6a18c1b7e5a3: 代码审查
+  m_6a398e613822: 2. 分配任务模型与回退链
   m_6a4c688b7d1c: 收起说明
-  m_6a73b75c56a5: 连接供应商后，在下方为不同任务选择模型。
   m_6aae064d8519: 服务恢复后刷新此页面。重置数据库后将进入首次设置。
   m_6ace4f550995: 向量存储
   m_6af81ae0148f: 没有符合筛选条件的记录
+  m_6b41d2de3ec0: 关联 Issue 识别
   m_6bbbd92b5627: 任务
   m_6bd3bbc03b00: 确认是你本人
   m_6bffc8750304: Agent 工作区
+  m_6c03159a9410: 管理 Agent 可调用的 MCP 工具服务、生命周期钩子与只读/工作区写入权限。
   m_6c4e92e855ae: 状态
   m_6ca176d494c4: 失败
   m_6ca6d8b64f63: 仓库
@@ -2999,6 +3240,9 @@ webui_v2:
   m_6d7b9597e333: 拒绝
   m_6dfaec888f7a: 管理员 GitHub 用户名
   m_6e12a0d13028: 暂无摘要。
+  m_6e25ad434b1f: 长度：{0} – {1}
+  m_6ea0d7e8cfd7: 控制套餐销售入口，并配置 Stripe、Paddle、支付宝、NOWPayments 与 TRON 网关。
+  m_6ec168f251c4: 搜索设置名称、用途说明、配置键或中英文关键词…
   m_6ed7c1c95e0f: 全部严重程度
   m_6ee0fb7d1b2b: 生成新的恢复码
   m_6ee84489eb8d: 所有订单
@@ -3006,8 +3250,12 @@ webui_v2:
   m_6f2f8e350331: Host Updater
   m_6f4d5f1c7328: 日期
   m_6f5611800192: SMTP 用户名
+  m_6f7df93de4de: 网络请求失败，可稍后重试。
+  m_6f93e4b985f4: 查看修改
   m_6f9798549837: 搜索成员
+  m_6fa3b433580c: AI 供应商账号管理
   m_6fe3baac2fe2: 批次名称
+  m_70512ea00b26: 确认并保存
   m_70530a78f5fb: 审查队列
   m_70a9668db793: 仓库状态
   m_70abb21f80f0: 管理
@@ -3016,6 +3264,7 @@ webui_v2:
   m_712da14e1299: 显示最近 100 个有权访问的会话。
   m_7161bc9b15d6: 选择套餐 {0}
   m_716fc9ccde94: 套餐与价格
+  m_719761aca7bb: 评审结论与批准/阻断策略
   m_71cf81dc997a: JSON 文件，最大
   m_72030606ccba: 说明你希望 Agent 调整的地方…
   m_7266fee0533a: 放弃当前模型的未保存修改？
@@ -3030,19 +3279,28 @@ webui_v2:
   m_7362dd47ed49: 实际模型用量
   m_73c98e4d9e2a: 删除偏好 {0}
   m_73f82b6ed917: 已禁用
+  m_740a51b29653: 所选模型的账号已停用或移除，请先切换为可用账号。
+  m_744c1f2e2991: （空字符串）
   m_745a837aee45: 待验证
   m_74a6a386d7c4: 每用户业务执行上限
+  m_74aa4a86161a: 最大：{0}
+  m_74bc21e0c4b7: 配置外部搜索引擎供应商、API 密钥、返回条数与超时限制。
   m_7501c36a43be: 相关代码
   m_75223a4886f9: 加入仓库互助计划？
   m_7563a1f9785a: Pull Request
   m_759b479cb1f0: 显示更多
+  m_759e95c19db7: 导出与恢复备份
   m_75b1416a35ea: 调整用户余额？
   m_76056378570e: Telegram ID（留空解绑）
   m_76178e327d7f: 提取知识
+  m_7657a18c40b9: 通知与绑定
   m_765ef60e13e4: 离开设置？
+  m_767dbfd7363f: 活跃
   m_77002ea6ee6a: 确认验证
   m_771388c1fc61: 正在获取模型…
+  m_774ee1b6725c: 配置用户登录所使用的 GitHub OAuth Client ID、密钥与回调地址。
   m_7763e1a2e8e6: 余额提醒已更新
+  m_7787667847b0: '{0} 行 · {1} 字符（{2}…）'
   m_778bc94ad04a: 检查用户 ID 和金额（Credits 最多六位小数）。
   m_77bee6301e1c: 账号安全
   m_78298e5f96fd: 仓库名称
@@ -3053,6 +3311,7 @@ webui_v2:
   m_7944d36ea16b: 维护
   m_79db5ab8907a: 清除搜索
   m_79f048036fb6: 可用版本
+  m_7a5a65649a64: 配置发送邮件通知与验证邮件所需的 SMTP 连接与发件人信息。
   m_7a9dea9c2f9d: 插件与运行权限
   m_7ad3f05ca994: Credits 流水
   m_7af529b02a7f: 没有找到相关设置
@@ -3060,6 +3319,7 @@ webui_v2:
   m_7bd9b5a8bab2: 搜索仓库…
   m_7bef21343a36: 搜索社区项目
   m_7c24b43c3577: 检查失败，保留上次成功结果
+  m_7c328c4265e9: 仓库扫描提示词
   m_7c3c0ba74f68: 创建订单
   m_7c7db4304e8c: 继续支付
   m_7c822f53ae9e: 插件配置已保存
@@ -3073,9 +3333,11 @@ webui_v2:
   m_7dad0bc8578e: 暂无公告
   m_7db93b761c14: 此页面需要超级管理员权限
   m_7e4e168279ba: 扫描设置
+  m_7e4fa4ed7839: 自动标签推荐、GitHub 标签定义、互斥规则与仓库扫描
   m_7e61a885a65e: 退款申请
   m_7e886613664f: 管理计费
   m_7eee80e776ad: 下次检查
+  m_7eef2252cbb0: 数据库与缓存连接
   m_7eff4efac768: 启用 {0}
   m_7f0c6bb8bc3b: 生成兑换码
   m_7f5d15fe637d: 放弃修改
@@ -3087,11 +3349,13 @@ webui_v2:
   m_801410fafe94: 内容（Markdown）
   m_8073cbccceb0: 新任务将使用保存的工具、钩子和权限配置。
   m_8074ed055d37: 对话
+  m_809193551843: 开启前需配置渠道密钥
   m_809542dc43c8: 未能保存。请检查服务 ID、地址、权限和凭据引用；环境凭据只支持 SAKURA_MCP_*。
   m_809fa044a64b: 提交核对证据
   m_80b1cce01127: 绑定链接已生成
   m_80e1fdb9c2bf: 暂时没有通知
   m_810699cc9113: 保存选择
+  m_811cd21d353d: 配置自动批准与请求修改的评分门槛、单仓库覆盖及中英文评论模板。
   m_8125de9f2065: 最近配额使用
   m_812c103556ab: 服务器上的插件配置已更新。重新加载后再修改，避免覆盖其他人的变更。
   m_813a23f51b04: 渠道不可用
@@ -3114,7 +3378,9 @@ webui_v2:
   m_83554ef6b87d: 无法确认重置结果。请检查服务状态后再试。
   m_8369b221ac61: 版本视图
   m_836ae5716d11: 缓存读取 / 百万 Token（可选）
+  m_83dd274bceb9: 设置 TOTP 身份验证器、恢复码或设备指纹/安全密钥登录。
   m_83e0b025008a: 请输入以下确认文字：
+  m_84782e1984b7: 查看当前版本、项目文档与服务协议
   m_84799702ecf5: 代码文件
   m_849822ed75b1: 测试通知已进入发送队列
   m_854e8701f20d: 扫描统计暂时不可用。列表仍可独立查看。
@@ -3136,10 +3402,13 @@ webui_v2:
   m_86fe4b67ae6f: 模型已更新
   m_8727bc13f0e1: 无法删除工作区。请确认相关任务已经结束。
   m_87936ade9a32: 无法确认恢复结果。请先刷新并核对当前设置，再决定是否重试。
+  m_87b5b1cc8349: 已保存 {0} 项修改并生效
   m_87bd696d4277: 配额已更新
+  m_87e3bf867d2b: 配置 Agent 启用范围、沙箱与网络策略、依赖安装、测试运行及 Draft PR 审查闭环。
   m_87e6d28d183a: 接收渠道
   m_87ec7884ad93: 检查更新失败，请重试。
   m_880dfdedd8eb: 镜像摘要
+  m_8822cda1e4ae: 已持久化，重启应用后生效。
   m_885a77c73324: 角色
   m_88632e66cfa1: 添加账号
   m_887904c730e5: 将使用当前配置在后台更新索引。任务可能需要几分钟。
@@ -3147,6 +3416,7 @@ webui_v2:
   m_889c15b3269c: 这会开始新一轮扫描，并重新执行配额和计费准入。
   m_88de49b9f8be: 通知偏好
   m_88e1e7b9bdf4: 登录 OAuth Client Secret
+  m_88e43b583283: 默认：{0}
   m_89008ab5317f: GitHub App 接收到 Pull Request 后，审查结果会显示在这里。
   m_891db4eff48c: 请选择 Sakura AI 导出的有效 JSON 备份。
   m_8958a5748a0c: 载入为新版本
@@ -3178,6 +3448,8 @@ webui_v2:
   m_8d5bb76cc554: 身份验证器
   m_8d8c535b9227: 嵌入接口地址
   m_8dcb633ca982: 所有仓库
+  m_8de7072edbc7: 列表（{0} 项）
+  m_8e6611ce7dc0: 默认语言与全局输出
   m_8e6db71bdf64: 代码审查、Issue 分析与 Agent 任务，从这里继续。
   m_8eaf4ef3f83f: 该变更将立即应用于此用户。
   m_8ecf894b5201: 审查详情
@@ -3188,7 +3460,9 @@ webui_v2:
   m_8ff2a3e14649: 无法启动扫描，请检查仓库授权、冷却期与扫描配置。
   m_902452e587c0: 删除
   m_902ec401475f: 全部
+  m_904e8b91c6b1: 正在提交 {0}/{1}…
   m_904f86d32648: 候选评分
+  m_9088b3e98098: 控制周期性代码扫描开关、执行间隔、冷却时间与自动建单严重度。
   m_909af76c789f: 压缩与上下文操作
   m_90a0a392915b: 已结算
   m_90b3c7a2d17b: 清理未完成，请刷新列表后检查任务状态。
@@ -3200,6 +3474,7 @@ webui_v2:
   m_921160999ed6: 重新执行扫描？
   m_922aa9e6d222: 搜索成员…
   m_925538222947: 申请人将看到此审核结果。
+  m_926c334d2657: 配置不能同时应用在同一 PR 或 Issue 上的互斥标签列表。
   m_926e26a15b07: 管理员 Telegram ID（可选）
   m_92925c1224bf: 位小数
   m_92a5cd1a9f8b: 语言
@@ -3208,6 +3483,7 @@ webui_v2:
   m_936810909e34: 该分类不存在，或你的账号没有访问权限。
   m_936ef0edb262: 更换签名密钥（留空保留）
   m_93742227be67: OAuth 回调地址
+  m_93909bce4d60: 修改需重启
   m_93935476e49c: 重排模型
   m_94688a3a4cec: 从订单列表隐藏
   m_9471013d85b2: 任务对话
@@ -3229,18 +3505,23 @@ webui_v2:
   m_96c6ee79ee6e: 对当前仓库发起新的完整扫描。
   m_96cbd19e3765: 将创建新的分析任务，并按当前配额与计费规则执行。
   m_96e8551e6ac4: 没有匹配的用户
-  m_96f7c3548af9: 应用、身份验证与服务配置
   m_97450793e2bc: 实现
   m_976c8ba94741: 账号不可用
   m_979c39a688a5: JSON 格式不完整，请修正后保存。
+  m_97a1d546d0bf: 上下文工具与仓库记忆
   m_97b40f6249ca: 正在处理
+  m_97d44bc52c21: 导出配置备份与导入恢复
   m_97f334dd9041: 你没有查看此内容的权限。
+  m_97fba9d228a3: GitHub 标签定义
+  m_983e15563fba: 文件过滤规则
   m_9855e963248b: 仅严重
   m_9857aabae342: 下载备份
   m_986421599659: 代码审查
   m_9869e722767d: 有效天数
   m_987cf24bb210: 工作树 · {0}
+  m_989269d3823e: 控制是否自动生成 Pull Request 变更总结。
   m_98d4f497ae0a: 新增 {0} · 更新 {1} · 删除 {2} · 未变 {3}
+  m_99023d6c6c4a: PR 变更摘要
   m_997a12bf5a9a: 当前配额权益
   m_998286e93513: 运行权限
   m_9989753b65f3: 成本币种
@@ -3248,6 +3529,7 @@ webui_v2:
   m_99efa9d0c3de: 扫描将使用现有 AI 配置，并按当前配额与计费规则执行。
   m_99fb3e894170: 将删除 {0} 的所有本地副本与工作树。不会删除远程仓库。
   m_9a11ab757c04: 使用设备上的指纹、面容或安全密钥登录。
+  m_9a11febac58e: 连接 AI 账号，分配任务模型与回退链，调整能力与调用策略
   m_9a2e6bad7bad: 请检查来源地址或技能文件格式。
   m_9a3dbc0f25d4: 每月 PR 审查次数
   m_9a46ea7816ef: 优先级 {0}
@@ -3255,6 +3537,7 @@ webui_v2:
   m_9a634dad2a65: 搜索仓库
   m_9a8916c2c50c: 预检通过
   m_9ad62a468cb1: 反馈未提交，请检查任务状态后重试。
+  m_9b204c60495f: 联网网页搜索
   m_9b475aed382b: 其他镜像
   m_9b4ac8e5a707: 关闭导航
   m_9b7299260186: 管理已授权仓库的索引，查看审查与分析活动。
@@ -3269,6 +3552,7 @@ webui_v2:
   m_9c4dbf86047f: 缓存读取
   m_9c6b6c636247: 正在获取…
   m_9c738307eaea: 更新时间
+  m_9c81fe520af0: 定位
   m_9c9e29487861: 备份已生成，请在浏览器下载中查看。
   m_9caf7c199c17: 没有匹配的版本
   m_9ccc99b874a6: 获取已保存账号的模型
@@ -3283,9 +3567,11 @@ webui_v2:
   m_9e9051a09aa4: 启动扫描
   m_9e940281a66e: 操作未完成，请检查相关设置与运行日志后重试。
   m_9ea3c47cec32: 建立索引
+  m_9ec4367bd178: 空列表（0 项）
   m_9ee63a595610: 价格倍率
   m_9ef3ff8d89d4: 检查结果与逐文件意见
   m_9f05ac92e9cb: 连接
+  m_9f124acac318: 主 GitHub App 接入
   m_9f3741e2a68a: 个发现
   m_9f41cb5755c3: 生成数量
   m_9f49c76cda6b: 已完成绑定，刷新
@@ -3295,9 +3581,11 @@ webui_v2:
   m_9f75f3907d4d: 公告将按用户通知偏好发布和投递。
   m_9f81a10385a7: 正在加载设置
   m_9fa37bbd482e: 提交内容预览
+  m_9fba667f204b: 失败 {0}
   m_9fbac189773f: 自动检查
   m_9fd74418a53a: 审核说明
   m_9ff92dd84e64: 评论
+  m_a01d95c3015c: 个人偏好
   m_a01d96e16b7a: 没有匹配的审查
   m_a04f5000f7d6: 正在重启应用
   m_a0603e6d31ab: 已复制
@@ -3311,24 +3599,31 @@ webui_v2:
   m_a26c047b8dea: 兑换
   m_a290d5147baf: 将删除没有活跃任务使用的本地工作树，包括其中未提交的文件。
   m_a2d3e6ea626d: 身份验证器已关闭
+  m_a2e626bae524: 主模型 {0}/{1} · 回退 [{2}]
   m_a33b2db3c941: 此操作会改变该账号的登录验证方式，并写入安全审计记录。
   m_a344d59dfba9: 任务编号
   m_a368773302f4: 上下文更新
   m_a36b8ce26adf: 用户与安全信息
+  m_a38f8a6b1074: 需重启
   m_a3c6290e2312: Issue 分析
   m_a3c62fc054b8: 已用尽
   m_a3e3416f7de8: 全部已读
   m_a3f34ea9d99c: 账面余额
   m_a406baec40f8: 备注
+  m_a419209f8ce3: 自定义 AI 模式下生成 PR 依赖关系图的提示词模板。
   m_a4616f886214: PR 审查次数
+  m_a4680af1e270: 已保存 {0} 项（{1} 项等待后台同步生效）
   m_a4817887f916: 工具结果
   m_a4d1179d3d59: 预留 Credits
+  m_a5272ab60378: 按分类下载 JSON 备份文件，或上传备份文件恢复配置与用户数据。
+  m_a52747668624: 检索增强（RAG）
   m_a53cd7e87214: 选择配置备份。当前部署的连接设置会保留。
   m_a543b977fca0: 发件地址
   m_a59fd504e163: 确认创建
   m_a5d002294b72: 操作未完成，请刷新队列状态后重试。
   m_a6598d012d65: 签名密钥
   m_a65ef6d11a21: 组织
+  m_a6727b7613d6: 已保存 {0} 项（其中 {1} 项需重启应用生效）
   m_a6a59ac138aa: 保存套餐
   m_a704adad1edb: 参数
   m_a717906cbfa6: 调用类型
@@ -3338,15 +3633,18 @@ webui_v2:
   m_a7f5c0e6f13c: 分析任务已提交
   m_a7f8e61799e8: 无法加载该模型的设置，请检查模型 ID。
   m_a7fcc561364b: 暂无符合条件的候选任务
+  m_a81a63c3a078: 版本冲突
   m_a81b58b245d5: 已压缩的历史记录
   m_a82fed991f69: 账号名称
   m_a83515106e98: 锁定
   m_a86575877bb7: 所有扫描
   m_a8726f601875: 变更
+  m_a88768377925: 控制自动打标开关、推荐置信度门槛以及缺失标签自动创建。
   m_a895fc626257: 安装 Agent 技能
   m_a89e25b646cf: 分析摘要
   m_a8a9fe034a79: 将移除集合 {0} 中的索引内容。
   m_a8b198e0e8a3: 可能重复于
+  m_a8d7ea10882f: 代码切片索引
   m_a927cea4e134: 重排接口地址
   m_a94a1384d44a: 刷新摘要
   m_a951fafd38e4: 通行密钥已添加
@@ -3362,11 +3660,13 @@ webui_v2:
   m_aad81a4f78bc: 删除 AI 账号？
   m_ab0356a68ebf: 订阅
   m_ab037fd09a6e: 发放 Credits
+  m_ab1b8754bab9: 重试未成功项 ({0})
   m_ab1e668d0407: 等待定价
   m_ab6256bbf179: 换个账号登录
   m_ab91c1bf0713: 个人设置
   m_ab9bc2fd38b2: 恢复码
   m_abbd63820a65: 登录 OAuth Client ID
+  m_abe31334a3d1: 字符
   m_ac2360cb2370: 搜索仓库或编号…
   m_ac64340e6b7a: 文件超过允许的大小。
   m_ac9552fa58a3: 设备名称
@@ -3379,6 +3679,7 @@ webui_v2:
   m_adc04e3440c3: 队列已更新
   m_addce7efe157: 已提交 {0} 个仓库扫描
   m_ae522b5b46c8: 没有匹配的技能
+  m_ae52342a2436: 账号安全
   m_ae5519560e68: 删除技能？
   m_ae82259d8d71: 全选当前列表
   m_af1c7eeb45e1: 已发行的套餐
@@ -3392,9 +3693,12 @@ webui_v2:
   m_b09513d63a09: 触发来源
   m_b0b6963ec1b0: 两步验证
   m_b0f2efb4b14c: 检查结果
+  m_b0f5cc0b4c9f: MCP 服务、钩子与 Agent 运行权限
   m_b102991b6ca0: 建议指派人
   m_b131ac1e184b: 搜索标题、仓库或作者
   m_b13bac2c7bb8: 跳过
+  m_b18559b80a89: 秒
+  m_b19bba8a86eb: 设置当前账号的界面语言、主题模式、列表每页条数与审查回复语言。
   m_b19e8572b94b: 切换模型？
   m_b2239eb15dbf: 完整访问
   m_b248fc2d6f93: 发布后会开始向符合条件的订阅者投递通知。
@@ -3406,6 +3710,7 @@ webui_v2:
   m_b2f0208b9680: 选择模型
   m_b2f2956f387b: 创建用户
   m_b32f4b968d74: 清理失败记录
+  m_b3582d90a32f: 邮件通知（SMTP）
   m_b39ad495a579: 天
   m_b3c1d962097d: 已拒绝
   m_b3d72e8f930a: 新线程
@@ -3417,44 +3722,56 @@ webui_v2:
   m_b4ed2ae2aaae: 有可用更新
   m_b514bf896866: 对选中的 {0} 项执行「{1}」？
   m_b53efee332c8: 通过指纹、面容或设备密码登录。
+  m_b546f066cd11: 小于 {0}
   m_b580f9cc9924: 仓库
   m_b5879e7f5b62: 搜索页面或设置
   m_b58dd024f4f0: 执行批次
   m_b58fa1271338: 已启用
+  m_b641c0aef9ee: 分区匹配
   m_b644c72d62eb: 重新加载
   m_b653be6075e1: 管理授权
   m_b66312de82fd: 需要处理
-  m_b6679b4b6015: 显示前 80 项，请缩小搜索范围。
   m_b66c6b1983b4: 审查中
   m_b6a08d758238: 有财务记录的用户将停用并保留账务；其他用户将被删除。
   m_b6c48a7addcb: 清空集合？
+  m_b6cc28749ec6: 部署只读
   m_b72f992913e5: 协议
   m_b78650777d9a: 请确保金额、币种和支付来源已经核实。该操作可能完成入账或退款。
   m_b78727c01cca: 订单历史
+  m_b7950209d7e7: 今日互助
   m_b7a969e429e8: 余额提醒
   m_b7eedc82b89f: 没有关联任务
+  m_b806c732a73b: 已封禁
+  m_b807f56b5db3: 设置实例默认界面语言与全局 AI 回复语言。
   m_b82e96f12e30: 源码提交
   m_b8bc5e95d108: 暂无可购买套餐
   m_b8eaccdde98f: 关闭已不可用的任务记录？
+  m_b8f2bafceb0c: 行内代码评论
+  m_b90ea9540f83: 3. 单模型能力与参数覆盖
+  m_b94c0e029ccb: 初始用户与管理员额度
   m_b98693a362d0: Agent 任务次数
   m_b9b0d48a7bfe: 创建失败，请检查 Issue 权限与配置。
   m_b9e540e269ef: 每单位价格
   m_b9f7e39d9894: 保存到仓库？
+  m_b9ffb1b01b6d: 查看由部署配置管理的数据库与 Redis 连接；连接测试位于底部系统维护区。
   m_ba0916a9ac4b: 版本更新
   m_ba340104a257: 开始
+  m_ba36f21a005c: 本页目录
   m_ba489ffa895e: 首次部署
   m_ba74d3bd5baa: 你的反馈
   m_ba85595a3266: 当前实例将暂时停止服务。请先保存你的修改。
   m_baadb96f42f1: 正在执行…
   m_babe142e148a: 未命名版本
   m_bad85bee2685: 关闭
-  m_bb0ac7ce40bb: 界面、语言与个人体验
   m_bb3c6aa16182: 重构
   m_bb592def8e88: 无法加载设置索引。
   m_bb7bddf3312f: 提交核对
   m_bbc0d2bbb472: 尚不满足更新条件
+  m_bbc7228fda18: 小时
   m_bbd7ff70a013: 至
   m_bc19ed365dd7: 重试查询
+  m_bc1f2fe7d353: 保存修改
+  m_bc3b2a185363: 配置变更模块依赖图开关、节点/文件上限及生成方式。
   m_bc4f5ca95cf5: 显示明文
   m_bc662c08e369: 未填写原因
   m_bca3d4a94a8c: 已支付
@@ -3462,17 +3779,24 @@ webui_v2:
   m_bcf85d1ac434: 已核对部署状态？
   m_bd103c2be075: 已连接
   m_bd270c72228e: 推送中
-  m_be1877c8a04f: 标签定义、推荐与仓库扫描
+  m_be15428ae6b5: 计费销售与支付网关
   m_be1bdaf3b998: 正在保存配置并初始化数据，完成后应用会自动重启，请勿关闭页面…
+  m_be7012c8976a: 未保存修改操作栏
   m_be8886f09463: 刷新状态
+  m_bea8ddb28168: 用途说明匹配
   m_beee9b52d339: 暂无操作记录
   m_bf014482c474: 每月
+  m_bf5b57d440f0: 应用监听与运行基础
   m_bfe4773ceecc: 输入 / 输出 Token
+  m_c0280eac7684: 按变更文件数与行数匹配快速、标准、深度或大型审查档位及专属提示词。
   m_c055e632b1b6: 到期时间（包含时区，留空为永不过期）
   m_c07de6e60255: 已记录 Token 用量
   m_c0820929048e: 管理备注
   m_c08a56d6be8b: 结算币种
+  m_c09852f4f2cb: 配置对象（{0} 项）
+  m_c0cc39e830a9: 定义 Issue 分类关键词、紧急度判定规则及中英文回复模板。
   m_c0ce9858bf3e: 展开摘要
+  m_c12f18bf2f18: 自注册配额倍率
   m_c140b96d11df: 开始部署更新？
   m_c155b062d6e8: 备份类型
   m_c183c458b48f: 搜索发布记录…
@@ -3487,7 +3811,6 @@ webui_v2:
   m_c36afb3403e2: 运行详情
   m_c37483f04163: 未运行
   m_c39688cc15ff: 此内容当前无法读取。
-  m_c3bae2867635: 导出配置或从备份中恢复
   m_c3bc65946d8c: 选择备份文件
   m_c3d06e89eb38: 说明要完成的目标；留空使用默认目标。
   m_c461cafecb64: 建议里程碑
@@ -3495,6 +3818,7 @@ webui_v2:
   m_c46383b3b381: 错误及以上
   m_c4aaf8e3f8f3: 任务状态暂时不可用
   m_c4c126084872: 要求重新验证
+  m_c4e10d39f473: 已保存 {0}
   m_c50149813655: 同步 GitHub 仓库
   m_c5805d4949d6: 通知偏好
   m_c5a946f69369: 模型列表（每行一个）
@@ -3503,9 +3827,13 @@ webui_v2:
   m_c67d82626c17: 重新加载服务器上保存的插件与权限配置。
   m_c68dbd98c8e2: 用户
   m_c6aea3fc9d28: 请填写账号名称，并检查凭据格式。
+  m_c6ff1383e89b: 添加、测试、编辑或停用 OpenAI、Anthropic、Gemini 及自定义兼容接口账号。
+  m_c710125c157b: GitHub OAuth 登录
+  m_c72a3f0261b5: 标签互斥规则
   m_c7359f084879: 缓存创建 / 百万 Token（可选）
   m_c747a7596c5d: 严重
   m_c79302e0431f: 套餐
+  m_c7ac567714f6: 按分类核对修改内容。每项设置按各自版本独立校验并持久化，未成功项会保留在草稿中。
   m_c7bf287c23e6: 应用端口
   m_c804c0d4931a: 全部类型
   m_c80bf265972c: 查看记录
@@ -3521,6 +3849,7 @@ webui_v2:
   m_ca508dd3844d: 订单
   m_ca7018465b00: 更新目标
   m_ca97a036b892: 通行密钥
+  m_cb267ed2509a: 大于 {0}
   m_cb31737a72c9: 历史余额提醒
   m_cb55478c491e: 语言、外观和通知偏好
   m_cb71de60ba3c: 技能已安装
@@ -3540,6 +3869,7 @@ webui_v2:
   m_cd1c72871657: 每条偏好对应一个事件和一个接收渠道。敏感通知只发送到已验证的私人渠道。
   m_cd4dd922b140: 发现失败，保留已保存模型
   m_cd5a39b55907: 操作已提交
+  m_cd6be42fb89e: 确认更新敏感配置？
   m_cdbe94f00dd9: 此操作会更新仓库互助状态。
   m_ce38d9f6be09: 分支与执行选项
   m_ce6cb799a805: 目标
@@ -3548,8 +3878,10 @@ webui_v2:
   m_ceccd72fb60d: 全部队列记录
   m_ced4a6c0425b: 为你的账号或组织安装 GitHub App 后，刷新此页。
   m_cf1f93877d34: 检查数据库连接
+  m_cf46de558e9d: 标签与扫描
   m_cf6f93797fbb: 切换启停
   m_cf738610b335: 未提供
+  m_cf9573730598: '{0} 项未保存'
   m_cf9a8aee5803: 查看订单
   m_cfa67756244a: 剩余历史权益
   m_cff6ba5e1b83: 更新通道
@@ -3564,6 +3896,7 @@ webui_v2:
   m_d0b1943d5772: 只看未读
   m_d0e946a21212: 页面不存在
   m_d1516c39157e: 消耗
+  m_d164a9b68706: 从已启用账号中选择具体模型，按需调整上下文窗口、工具/视觉能力与推理参数。
   m_d172e103335f: 确认切换更新目标
   m_d18c499c2c2c: 公告
   m_d1cebd81f67c: 已选 {0} 项
@@ -3576,15 +3909,19 @@ webui_v2:
   m_d221dcc0a573: 修改中
   m_d22e33e20bee: 修改尚未保存。
   m_d24789b0643b: 审查与反馈
-  m_d2be13afd3f4: 审查策略、上下文与输出规则
   m_d2de8275a18b: 用户 ID
   m_d314cc991966: 已结算 Credits
   m_d332f9374510: '{0} 个审查需要留意'
   m_d33a88af425f: 暂无套餐
+  m_d3654fc05d6e: PR 依赖关系图
   m_d380333e180f: 添加通行密钥
   m_d3a470679f41: 按所有者或仓库名称搜索
+  m_d3abdef5194d: 返回当前分类
   m_d3bd838e45c4: 默认值
+  m_d41767f4baed: 本次保存将更新 {0} 项敏感凭据（{1}），可能影响正在运行的服务。继续提交？
+  m_d4498e08cc6f: 功能面板
   m_d44aa977abf2: 低
+  m_d4654751052a: 单模型上下文窗口、视觉工具与推理参数
   m_d465584b46b0: 取消扫描？
   m_d46dbe6e0da7: 后续调用使用新版本；已有调用与历史账单继续使用冻结的报价。
   m_d47442d32ce3: 详细内容未能记录
@@ -3595,12 +3932,16 @@ webui_v2:
   m_d4c7df05c5fe: 已连接 GitHub
   m_d4d9fc7072ff: 从备份恢复
   m_d4ffd45302c5: 删除选中
+  m_d501d8c27412: 放弃全部未保存的设置修改？
+  m_d50f636d1dc0: 应用监听、GitHub 接入、通知渠道、计费配额与实例维护
   m_d5725bbf4ad4: 审查摘要
   m_d573d023e310: 从检查点继续
+  m_d5abd6db3e8c: 未配置凭据 → 将写入新凭据（不显示内容）
   m_d611074485e1: 每月 Issue 分析次数
   m_d6142dbcc032: 先选择要管理的仓库。
   m_d68736a683b6: 没有匹配的仓库
   m_d6e45500970e: 暂无流水
+  m_d6fd2605966b: 为主审查、变更摘要与 Agent 指定主模型和按优先级排列的备用模型。
   m_d7234fe8fcc1: 正在等待服务恢复。请勿重复提交重启。
   m_d738574e0527: 工具
   m_d764b4d2641c: 查看余额、每笔支出和历史订单。
@@ -3611,16 +3952,17 @@ webui_v2:
   m_d80deadf38e0: 更新代码检索索引，帮助定位相关实现。
   m_d8331898204c: 安全
   m_d837f52f7ffa: 前置条件
+  m_d8391a90c21e: 配置键
   m_d84d47082e7c: 评分
   m_d8c0e383d3c2: 审查结果
   m_d8eda41b6541: 保存
-  m_d9097c3f93bb: 任务执行、工具与搜索能力
   m_d923bfb0d34e: 解封
   m_d93d72dcb832: 迁移
   m_d95212cab7d2: 基础分支
   m_d96a3f2dce64: 需要修改
   m_d9773b808f51: 为 Agent 安装可复用的工作方法和工具说明。
   m_d99d8e5add59: 通知分页
+  m_d9a1c233e3e2: 展示中
   m_d9c65043d62d: 当前通道的最新版本
   m_d9cb0f16083f: 确认
   m_d9f4c553096a: 全局设置
@@ -3629,6 +3971,7 @@ webui_v2:
   m_dabecf4652b4: 更新诊断日志
   m_db0a4c75d56f: 链上状态
   m_db0ec63cc027: 成员排序
+  m_db60fe9bb890: 网页链接抓取
   m_db62bee76c63: 打开导航
   m_db76a849ed60: 移除通知渠道？
   m_dbba1b5b86fc: AI 筛选要求（可选）
@@ -3642,21 +3985,30 @@ webui_v2:
   m_dca8c3930eff: Star 互助
   m_dce63ce1a2da: 取消任务
   m_dcf3abd2d14c: 余额不足
+  m_dd1b11e69186: 等待生效 {0}
   m_dd7c4a1b6c74: 订单已更新
   m_dda2ccb423f1: 候选任务
+  m_ddbfb6c437b5: 已配置凭据 → 将更新（不显示内容）
+  m_dddecc0176a5: 管理通知并发、重试退避、外部 Webhook 安全限制与验证码有效期。
   m_ddf41461379d: 请检查网络后重试。若仍无法访问，请确认账户权限。
   m_de1510069bb9: 凭据存放在配置目录的 .setup-token 文件中。
   m_de4eef18ce09: 重新分析
   m_de5e2ffdbb74: 审查
   m_de7483414e04: 发放
+  m_de9bd952de98: 需重新授权
   m_deb952deb7c8: 成员管理
   m_debbf078e7e5: GitHub App 授权
   m_debe15c715ca: 加入时间
   m_dedadf342ad8: 此事件将恢复默认通知规则。
   m_def0763956e8: 复制
+  m_df299a373736: 控制是否将发现的问题直接评论在 PR 代码差异对应行。
+  m_df4bc97e3b1e: 配置生成代码切片与文档向量所使用的嵌入模型与接口。
   m_df859a7d97fa: 系统将保存配置、创建管理员并重启应用。
   m_df87b28e3cd7: 重新查询
   m_dfa6b16b199a: 查看报价
+  m_dfaaf950a641: 分钟
+  m_dfe2123ed0ac: 关闭搜索提示
+  m_e00201add187: 仓库互助全局策略
   m_e032d507a97e: 没有工作树
   m_e042ea14dbf6: 今日 PR
   m_e04ea2ceccd7: 购买
@@ -3666,18 +4018,20 @@ webui_v2:
   m_e12fab4b4c95: 等待 Agent 开始工作。
   m_e17cdb6bf2d6: 操作类型
   m_e18c9dff6573: 输入 API 密钥
+  m_e1ba019a0566: 审查分级与提示词
   m_e1c0144f7b69: 当前版本
   m_e1d05ee56b79: 选择
   m_e2212f458dc8: 已退款
   m_e22b63a7b496: 账户安全
   m_e22bd72f0b4b: 操作已完成
+  m_e258596ea9ff: 服务端值已被修改，请先核对服务端值后再提交。
   m_e2bffcfe5ea6: 类型
   m_e2d3d402c2c1: 执行轮次
   m_e359157e73bd: 最大上传大小
-  m_e36122f2c596: 从已配置的账号选择模型。能力覆盖由相同供应商和模型的所有账号共享。
   m_e389a3905d50: 允许的工具
   m_e3f5ec711cfa: 区域
   m_e3f9a4f371e2: 中
+  m_e4002ed85285: 两步验证与通行密钥（2FA / Passkey）
   m_e42dd5e1f731: 部分配置需要重启应用后生效。
   m_e438e92a7d48: 完成配置
   m_e4498fee5623: 预览内容
@@ -3689,6 +4043,8 @@ webui_v2:
   m_e499afaeb3c4: 最近 30 天每日审查量，详细数据见下方表格。
   m_e4c169a04955: 验证
   m_e4cdac946be7: 编辑、发布和管理公告投递。
+  m_e5150ff2688d: 系统维护与连接诊断
+  m_e51672283f3c: 控制请求重试超时、回退候选上限、上下文自动压缩以及运行活动记录范围。
   m_e5846d3da70d: 审计日志
   m_e59c73274325: 退出登录
   m_e5b47096a07b: 上次使用：
@@ -3714,6 +4070,7 @@ webui_v2:
   m_eaae875b61be: 跳至最新记录
   m_eac34c8e1818: 停止当前扫描执行。
   m_eb0a02631bba: 通知中心
+  m_eb113a5f77c8: 仓库扫描策略
   m_eb39d25f5c79: 跟随系统
   m_eb9005291d5d: 保存展示仓库？
   m_eb943af0cd67: 文档数
@@ -3739,6 +4096,7 @@ webui_v2:
   m_ef1195d46d5b: 查看详情
   m_efc016afbf49: 发放套餐？
   m_efcab8534ad5: 实际用量字段
+  m_f058f39b0f9c: 需 ≤ 最长互助间隔
   m_f07cfbf0dd72: 计划
   m_f0844827ffa2: 管理 Sakura AI 可以访问的账号和仓库。
   m_f0e8068d8670: 数据库重置确认
@@ -3747,21 +4105,28 @@ webui_v2:
   m_f111b3aabf7b: 查看全部
   m_f114589dc985: 提交核对证据？
   m_f1259a613419: 输出 Token
+  m_f14ae97686ad: 从已配置的启用账号选择具体模型。能力覆盖按“供应商 + 模型 ID”读写并由相同供应商模型的账号共享。
   m_f1531b1eaeb6: 无法读取 Issue 预览，请检查地址和访问权限。
+  m_f1764bac98e1: 部署只读
   m_f17b418bd665: 无法删除。请先移除此账号的模型绑定，并检查计费配置。
   m_f18c1911d114: 基于版本 {0} 新建报价
+  m_f1b72c45450f: 需要重启 {0}
   m_f1db6ad31828: 已使用的兑换码会由服务器保护。
+  m_f26ca26e2ac5: 命中别名 / 双语
+  m_f27217101c50: Telegram 通知机器人
   m_f2934f35a54f: 历史订单与已购买权益不会改变。仍被引用的套餐不能永久删除。
   m_f2977891e300: GitHub 授权
   m_f2f30981c396: 没有退款申请
   m_f3171248b548: 任务标题（可选）
   m_f31db8e475fb: 选择仓库
+  m_f37e8dc8a9b1: 按已启用账号中的具体模型覆盖 Token 上限、流式用量、思考模式与采样参数。
   m_f3952207f6d6: 应用时区（留空跟随系统）
   m_f3bfa9ee2012: 编辑套餐
   m_f3d3eb5ef99a: 正在保存…
   m_f3da338521ab: 每日 Issue 分析次数
   m_f4838009bb37: 输入 Token
   m_f48ede8cbacb: 已更新
+  m_f4bafe36d89a: 当前没有未保存的设置修改。
   m_f4d509b48cb8: 连接 GitHub
   m_f4e28a6a12a3: 退款政策
   m_f538dce8806c: 没有符合条件的队列记录
@@ -3771,6 +4136,7 @@ webui_v2:
   m_f65f6e1e6009: 金额与 ID 必须是正整数。
   m_f6684186983a: 筛选
   m_f68f1c3a1eb2: 此设置不可用
+  m_f70e5eb0a78e: 校验或保存未通过
   m_f728949e790e: 阅读全文
   m_f733ce5bcab7: 代码索引
   m_f759f8a7faf8: 清理不再运行的工作树？
@@ -3790,6 +4156,7 @@ webui_v2:
   m_f8da7b70ea93: 停用 {0}
   m_f8f467e66879: 恢复码只显示这一次。请将它们保存到安全的地方，每个恢复码只能使用一次。
   m_f90563d06210: '{0} 个等待中'
+  m_f90817b66da9: 任务执行环境、网络与验证策略、搜索抓取工具及插件权限
   m_f9092eb5690e: 配置已完成
   m_f917a29c1f6b: 无法确认任务状态，请检查后再重试。
   m_f93e5d0d5476: 开始分析
@@ -3803,13 +4170,16 @@ webui_v2:
   m_faa5b37a0615: 支持多供应商、多个账号和有序的备用模型。
   m_fad9d8279690: 完善账户安全
   m_faf42acc16ab: 分页
+  m_fb3e52a2364e: 放弃本地草稿并读取当前服务端值？
   m_fbc31281df67: 例如：仅在 Agent 需要处理时发送邮件。
   m_fc6871eeffad: 安装方式
   m_fc8e644fc752: 管理中心
   m_fca5b6d1f87e: 已自定义
+  m_fcc3456bcb9c: 1. 连接 AI 账号
   m_fcc5f1bdeee7: 变更行数
   m_fced7be4bc2a: 开始验证
   m_fd32702a490a: 获取候选任务
+  m_fd4ca7c358a8: 触发、并发与状态检查
   m_fd560b7e2a76: 高级 JSON 编辑
   m_fd583de610b9: 取消
   m_fd78d0dc9a94: 用量与账单

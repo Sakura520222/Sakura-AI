@@ -97,6 +97,7 @@ async def list_review_logs(
         {
             "id": r.id,
             "pr_id": r.pr_id,
+            "pr_number": r.pr_number,
             "repo_name": r.repo_name,
             "repo_owner": r.repo_owner,
             "title": r.title,
@@ -147,6 +148,7 @@ async def get_review_log(
     data = {
         "id": review.id,
         "pr_id": review.pr_id,
+        "pr_number": review.pr_number,
         "repo_name": review.repo_name,
         "repo_owner": review.repo_owner,
         "title": review.title,

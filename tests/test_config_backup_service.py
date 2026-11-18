@@ -771,3 +771,15 @@ async def test_download_response_is_attachment_and_never_cached(monkeypatch):
         'attachment; filename="sakura-ai-config-global-'
     )
     assert json.loads(response.body)["format"] == BACKUP_FORMAT
+
+
+def test_ai_backup_round_trip_accepts_zero_fallback_max_candidates():
+    """ai_fallback_max_candidates=0 表示遍历完整回退链，备份导出与导入均须允许。"""
+    document = build_backup_document(
+        [BackupRecord("ai_fallback_max_candidates", "0", "回退候选上限")],
+        "ai",
+    )
+    parsed = parse_config_backup(serialize_config_backup(document))
+    assert len(parsed[AI_SECTION]) == 1
+    assert parsed[AI_SECTION][0].key == "ai_fallback_max_candidates"
+    assert parsed[AI_SECTION][0].value == "0"
