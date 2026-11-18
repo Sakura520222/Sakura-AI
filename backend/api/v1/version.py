@@ -187,6 +187,11 @@ def build_version_info(
         available = channel_data.get("update_available")
         if type(available) is not bool:
             available = None
+    uses_channel_check = (
+        mode == "image"
+        and build.get("channel") in {"stable", "development"}
+        and "channel_check_error" in ui
+    )
     return {
         "current_version": __version__,
         "build": build,
@@ -196,9 +201,15 @@ def build_version_info(
         "update_unsupported_reason": reason,
         "update_available": available,
         "latest_version": latest,
-        "last_checked": ui.get("last_checked"),
-        "check_error": ui.get("check_error"),
-        "fetched_at": ui.get("channel_fetched_at") or ui.get("fetched_at"),
+        "last_checked": ui.get(
+            "channel_last_checked" if uses_channel_check else "last_checked"
+        ),
+        "check_error": ui.get(
+            "channel_check_error" if uses_channel_check else "check_error"
+        ),
+        "fetched_at": ui.get(
+            "channel_fetched_at" if uses_channel_check else "fetched_at"
+        ),
         "updater_connected": updater_connected,
         "updater_version": updater_version,
         "updater_compatibility": contract,
@@ -498,14 +509,17 @@ async def trigger_check(
     checker = getattr(request.app.state, "update_checker", None)
     if checker is not None:
         data = await checker.check_once()
-        if data.get("channel_check_error") or data.get("check_error"):
+        channel_result = data.get("channel_result")
+        if data.get("channel_check_error") or (
+            channel_result is None and data.get("check_error")
+        ):
             return JSONResponse(
                 {"error": "update_check_failed"},
                 status_code=503,
                 headers={"Cache-Control": "no-store, max-age=0"},
             )
         return JSONResponse(
-            data.get("channel_result") or data,
+            channel_result if channel_result is not None else data,
             headers={"Cache-Control": "no-store, max-age=0"},
         )
 

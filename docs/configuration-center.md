@@ -169,7 +169,8 @@ An earlier response cannot replace a newer draft typed while saving. Conflicts
 require explicitly adopting the server value; changed remote values are never
 silently overwritten. BroadcastChannel and focus refresh reconcile tabs. Leaving
 `/app/settings/*` or closing the tab with unsaved drafts triggers a confirmation
-warning, while switching categories or searching within Settings preserves drafts.
+warning. Switching categories or searching preserves drafts from typed settings.
+Dedicated editors prompt before navigation would discard their own unsaved changes.
 Credentials are never persisted in browser storage, URLs or logs.
 
 ```sh

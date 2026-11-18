@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { expect, it, vi } from "vitest";
 import { LocaleProvider } from "../../app/locale";
-import VersionBrowser, { type ReleaseRecord } from "./VersionBrowser";
+import VersionBrowser, { type ReleaseHistory } from "./VersionBrowser";
 import type { Catalog } from "./state";
 
 function query<T>(data: T) {
@@ -43,7 +43,8 @@ it("expands release notes inside their record and does not open a dialog", async
       <VersionBrowser
         currentChannel="stable"
         catalog={query<Catalog>({ stale: false, heads: {}, images: [] })}
-        releases={query<{ releases: ReleaseRecord[] }>({
+        releases={query<ReleaseHistory>({
+          check_error: "rate limit",
           releases: [
             {
               tag_name: "v9.0.0",
@@ -58,7 +59,13 @@ it("expands release notes inside their record and does not open a dialog", async
       />
     </LocaleProvider>,
   );
+  expect(
+    screen.queryByText("Could not refresh release history."),
+  ).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Release history" }));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Could not refresh release history.",
+  );
   await user.click(screen.getByRole("button", { name: "Read notes" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   const record = screen.getByText("Release nine").closest("article")!;
@@ -76,7 +83,7 @@ it("filters releases by backend tag field and preserves expanded notes across fi
       <VersionBrowser
         currentChannel="stable"
         catalog={query<Catalog>({ stale: false, heads: {}, images: [] })}
-        releases={query<{ releases: ReleaseRecord[] }>({
+        releases={query<ReleaseHistory>({
           releases: [
             {
               tag: "v9.1.0",
@@ -97,7 +104,9 @@ it("filters releases by backend tag field and preserves expanded notes across fi
     </LocaleProvider>,
   );
   await user.click(screen.getByRole("button", { name: "Release history" }));
-  const earlierArticle = screen.getByText("Earlier release").closest("article")!;
+  const earlierArticle = screen
+    .getByText("Earlier release")
+    .closest("article")!;
   await user.click(
     within(earlierArticle).getByRole("button", { name: "Read notes" }),
   );

@@ -73,6 +73,15 @@ import "./settings.css";
 
 const AboutPanel = lazy(() => import("./AboutPanel"));
 
+function isSettingsPath(pathname: string) {
+  return pathname === "/settings" || pathname.startsWith("/settings/");
+}
+
+function personalTab(params: URLSearchParams) {
+  const tab = params.get("tab");
+  return tab === "security" || tab === "notifications" ? tab : "preferences";
+}
+
 function safeHash(hash: string) {
   try {
     return decodeURIComponent(hash.slice(1));
@@ -326,25 +335,40 @@ export default function SettingsPage() {
     );
   };
 
-  // Guard ONLY when leaving /settings/* (preserve drafts freely within settings).
-  const blocker = useBlocker(
-    ({ nextLocation }) =>
-      store.dirty && !nextLocation.pathname.startsWith("/settings"),
-  );
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => {
+    if (!isSettingsPath(nextLocation.pathname)) return store.dirty;
+    if (!store.hasExternalDrafts) return false;
+    const nextParams = new URLSearchParams(nextLocation.search);
+    // Dedicated editors own their drafts and lose them if their panel unmounts.
+    return (
+      currentLocation.pathname !== nextLocation.pathname ||
+      Boolean(nextParams.get("q")?.trim()) ||
+      (category === "personal" &&
+        personalTab(searchParams) !== personalTab(nextParams))
+    );
+  });
   useEffect(() => {
     if (blocker.state !== "blocked") return;
+    const leavingSettings = !isSettingsPath(blocker.location.pathname);
     let active = true;
     void confirm({
-      title: t("离开设置？", "Leave settings?"),
-      description: t(
-        "有未保存的修改。放弃修改并离开？",
-        "You have unsaved changes. Discard them and leave?",
-      ),
+      title: leavingSettings
+        ? t("离开设置？", "Leave settings?")
+        : t("放弃面板修改？", "Discard panel changes?"),
+      description: leavingSettings
+        ? t(
+            "有未保存的修改。放弃修改并离开？",
+            "You have unsaved changes. Discard them and leave?",
+          )
+        : t(
+            "当前面板有未保存的修改。放弃这些修改并继续？",
+            "This panel has unsaved changes. Discard them and continue?",
+          ),
       destructive: true,
     }).then((accepted) => {
       if (!active) return;
       if (accepted) {
-        store.discardAll();
+        if (leavingSettings) store.discardAll();
         blocker.proceed();
       } else blocker.reset();
     });
@@ -1356,12 +1380,9 @@ function CategoryPanel({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const location = useLocation();
-  const requestedTab = new URLSearchParams(location.search).get("tab");
-  const personalTab =
-    requestedTab === "security" || requestedTab === "notifications"
-      ? requestedTab
-      : "preferences";
-  const showFields = category !== "personal" || personalTab === "preferences";
+  const activePersonalTab = personalTab(new URLSearchParams(location.search));
+  const showFields =
+    category !== "personal" || activePersonalTab === "preferences";
 
   const key = ["settings", category, language] as const;
   const read = useCallback(
@@ -1518,7 +1539,7 @@ function CategoryPanel({
             <button
               type="button"
               role="tab"
-              aria-selected={personalTab === tab.id}
+              aria-selected={activePersonalTab === tab.id}
               key={tab.id}
               onClick={() =>
                 void navigate({
@@ -1533,10 +1554,10 @@ function CategoryPanel({
         </div>
       )}
 
-      {category === "personal" && personalTab === "security" && (
+      {category === "personal" && activePersonalTab === "security" && (
         <SecurityPanel store={store} />
       )}
-      {category === "personal" && personalTab === "notifications" && (
+      {category === "personal" && activePersonalTab === "notifications" && (
         <NotificationsPanel store={store} />
       )}
 

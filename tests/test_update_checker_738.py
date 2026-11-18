@@ -76,11 +76,70 @@ async def test_channel_check_uses_same_cycle_and_keeps_last_good_on_error(cache)
         callback.side_effect = RuntimeError("network")
         failed = await checker.check_once()
         assert failed["channel_result"] == first["channel_result"]
-        assert failed["check_error"] == "network"
+        assert failed["channel_check_error"] == "network"
+        assert failed["check_error"] is None
         assert failed["last_checked"]
         callback.side_effect = None
         assert (await checker.check_once())["check_error"] is None
         assert callback.await_count == 3
+    finally:
+        await checker.stop()
+
+
+@pytest.mark.parametrize("channel", ["stable", "development"])
+@pytest.mark.asyncio
+async def test_manual_image_check_reports_release_errors_separately(
+    cache, monkeypatch, channel
+):
+    import json
+    from types import SimpleNamespace
+
+    from fastapi import Request
+
+    from backend.api.v1 import version
+    from backend.core import build_info
+
+    build = {"channel": channel, "revision": "a" * 40}
+    monkeypatch.setattr(build_info, "get_build_info", lambda: build)
+    monkeypatch.setattr(version, "get_build_info", lambda: build)
+    monkeypatch.setattr(version, "read_cache", AsyncMock(side_effect=cache.copy))
+    result = {
+        "data": {
+            "target": {"channel": channel, "version": "3.2.8"},
+            "update_available": True,
+        }
+    }
+    channel_check = AsyncMock(return_value=result)
+    checker = module.UpdateChecker(repo="example/project", channel_check=channel_check)
+    releases = AsyncMock(side_effect=RuntimeError("release rate limit"))
+    checker._client.list_releases = releases
+    request = Request(
+        {
+            "type": "http",
+            "app": SimpleNamespace(state=SimpleNamespace(update_checker=checker)),
+        }
+    )
+    try:
+        response = await version.trigger_check(request, user={}, _csrf="")
+        assert response.status_code == 200
+        assert json.loads(response.body) == result
+        info = version.build_version_info("image", update_info=cache)
+        assert info["check_error"] is None
+        assert info["last_checked"] == cache["channel_last_checked"]
+        assert info["update_available"] is True
+        history = await version.get_version_releases(user={})
+        assert json.loads(history.body)["check_error"] == "release rate limit"
+
+        channel_check.side_effect = RuntimeError("updater offline")
+        releases.side_effect = None
+        releases.return_value = []
+        response = await version.trigger_check(request, user={}, _csrf="")
+        assert response.status_code == 503
+        assert cache["channel_result"] == result
+        info = version.build_version_info("image", update_info=cache)
+        assert info["check_error"] == "updater offline"
+        history = await version.get_version_releases(user={})
+        assert json.loads(history.body)["check_error"] is None
     finally:
         await checker.stop()
 
@@ -176,6 +235,10 @@ async def test_manual_request_joins_the_scheduler_inflight_cycle(cache):
         automatic_data, response = await asyncio.gather(scheduled, manual)
         assert json.loads(response.body) == automatic_data
         assert checker._client.list_releases.await_count == 1
+        checker._client.list_releases.side_effect = RuntimeError("release outage")
+        response = await version.trigger_check(request, user={}, _csrf="")
+        assert response.status_code == 503
+        assert cache["check_error"] == "release outage"
     finally:
         await checker.stop()
 

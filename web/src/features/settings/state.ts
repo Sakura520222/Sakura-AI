@@ -443,9 +443,12 @@ export class SettingsStore {
   get dirty() {
     return (
       this.batchSaving ||
-      this.externalDirty.size > 0 ||
+      this.hasExternalDrafts ||
       [...this.entries.values()].some((entry) => isDirty(entry) || entry.saving)
     );
+  }
+  get hasExternalDrafts() {
+    return this.externalDirty.size > 0;
   }
   get dirtyCount() {
     return [...this.entries.values()].filter(isDirty).length;

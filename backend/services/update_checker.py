@@ -301,13 +301,11 @@ class UpdateChecker:
 
     async def _check_once(self) -> dict:
         last_known = await read_cache()
-        errors: list[str] = []
         try:
             releases = await self._client.list_releases()
             data = _build_cache_data(releases, None, last_known, success=True)
         except Exception as exc:
-            error = sanitize_exception_text(exc)[:240]
-            errors.append(error)
+            error = sanitize_exception_text(exc)[:240] or type(exc).__name__
             data = _build_cache_data([], error, last_known, success=False)
 
         if self._channel_check is not None:
@@ -321,13 +319,11 @@ class UpdateChecker:
                 data["channel_fetched_at"] = format_rfc3339(now_utc())
                 data["channel_check_error"] = None
             except Exception as exc:
-                error = sanitize_exception_text(exc)[:240]
-                errors.append(error)
+                error = sanitize_exception_text(exc)[:240] or type(exc).__name__
                 data["channel_result"] = previous.get("channel_result")
                 data["channel_build"] = previous.get("channel_build")
                 data["channel_fetched_at"] = previous.get("channel_fetched_at")
                 data["channel_check_error"] = error
             data["channel_last_checked"] = format_rfc3339(now_utc())
-        data["check_error"] = "; ".join(errors) or None
         await write_cache(data)
         return data
