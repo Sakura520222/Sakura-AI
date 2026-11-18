@@ -27,6 +27,11 @@ export interface ReleaseRecord {
   published_at?: string;
 }
 
+export interface ReleaseHistory {
+  releases: ReleaseRecord[];
+  check_error?: string | null;
+}
+
 const releaseTag = (release: ReleaseRecord) =>
   release.tag || release.tag_name || "";
 
@@ -41,7 +46,7 @@ export default function VersionBrowser({
   onSelect,
 }: {
   catalog: UseQueryResult<Catalog, Error>;
-  releases: UseQueryResult<{ releases: ReleaseRecord[] }, Error>;
+  releases: UseQueryResult<ReleaseHistory, Error>;
   currentChannel?: string;
   selected: Target | null;
   selectionDisabled: boolean;
@@ -171,6 +176,11 @@ export default function VersionBrowser({
             "当前显示的是缓存目录，刷新成功前无法选择更新目标。",
             "This is a cached catalog. Refresh it successfully before selecting an update target.",
           )}
+        </p>
+      )}
+      {view === "releases" && releases.data?.check_error && (
+        <p className="version-notice" role="status">
+          {t("发布记录刷新失败。", "Could not refresh release history.")}
         </p>
       )}
       {query.isPending ? (

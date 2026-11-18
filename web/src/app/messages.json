@@ -1839,6 +1839,10 @@
     "发布",
     "Publish"
   ],
+  "[\"发布记录刷新失败。\",\"Could not refresh release history.\"]": [
+    "发布记录刷新失败。",
+    "Could not refresh release history."
+  ],
   "[\"未能更新技能，请刷新后重试。\",\"Could not update the skill. Refresh and try again.\"]": [
     "未能更新技能，请刷新后重试。",
     "Could not update the skill. Refresh and try again."
@@ -1930,6 +1934,10 @@
   "[\"订单金额\",\"Order amount\"]": [
     "订单金额",
     "Order amount"
+  ],
+  "[\"当前面板有未保存的修改。放弃这些修改并继续？\",\"This panel has unsaved changes. Discard them and continue?\"]": [
+    "当前面板有未保存的修改。放弃这些修改并继续？",
+    "This panel has unsaved changes. Discard them and continue?"
   ],
   "[\"规划中\",\"Planning\"]": [
     "规划中",
@@ -5454,6 +5462,10 @@
   "[\"剩余历史权益\",\"Remaining legacy benefits\"]": [
     "剩余历史权益",
     "Remaining legacy benefits"
+  ],
+  "[\"放弃面板修改？\",\"Discard panel changes?\"]": [
+    "放弃面板修改？",
+    "Discard panel changes?"
   ],
   "[\"更新通道\",\"Update channel\"]": [
     "更新通道",

@@ -69,6 +69,66 @@ const response = (fields: ConfigField[]): SettingsResponse => ({
   syncIntervalMs: 5000,
   csrf: "csrf",
 });
+
+it.each(["/settings/review", "/settings/agent?q=runtime"])(
+  "asks before losing a plugin draft on navigation to %s and retains shared drafts",
+  async (destination) => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.startsWith("/api/v1/webui/plugins?"))
+        return {
+          plugins: {},
+          profile: "default",
+          profiles: ["default", "restricted"],
+          messages: {},
+          schema: { type: "object" },
+        };
+      return response([
+        { ...field("global/retries", "first"), category: "agent" },
+      ]);
+    });
+    const { router } = mount("/settings/agent#plugins");
+    const settingsInput = await screen.findByRole("spinbutton", {
+      name: "global/retries",
+    });
+    const profile = await screen.findByLabelText("Runtime permissions");
+    fireEvent.change(settingsInput, { target: { value: "3" } });
+    fireEvent.change(profile, { target: { value: "restricted" } });
+
+    await act(async () => {
+      await router.navigate("/settings/agent#section-first");
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(profile).toHaveValue("restricted");
+
+    confirm.mockResolvedValueOnce(false);
+    await act(async () => {
+      await router.navigate(destination);
+    });
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Discard panel changes?" }),
+    );
+    expect(router.state.location.pathname).toBe("/settings/agent");
+    expect(router.state.location.search).toBe("");
+    expect(profile).toHaveValue("restricted");
+
+    await act(async () => {
+      await router.navigate(destination);
+    });
+    await waitFor(() => {
+      const { pathname, search } = router.state.location;
+      expect(pathname + search).toBe(destination);
+    });
+    await act(async () => {
+      await router.navigate("/settings/agent#plugins");
+    });
+    expect(await screen.findByLabelText("Runtime permissions")).toHaveValue(
+      "default",
+    );
+    expect(
+      await screen.findByRole("spinbutton", { name: "global/retries" }),
+    ).toHaveValue(3);
+  },
+);
 const accounts = [
   {
     id: "acct-one",

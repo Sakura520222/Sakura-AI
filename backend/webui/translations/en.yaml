@@ -2981,6 +2981,7 @@ webui_v2:
   m_440d6a085c1a: Application domain
   m_443181b4a5ff: Customize system and user templates used for PR summaries.
   m_44324e2b540f: Publish
+  m_44500e72453d: Could not refresh release history.
   m_4451b4465994: Could not update the skill. Refresh and try again.
   m_44c5b7d68c83: PR dependency graph prompts
   m_44d386341d17: Payment status
@@ -3004,6 +3005,7 @@ webui_v2:
   m_4806ba583121: View scan tasks
   m_48141772f1d3: Untitled
   m_48ae74c6c6eb: Order amount
+  m_48b80b7c60ec: This panel has unsaved changes. Discard them and continue?
   m_48bc8eabeaca: Planning
   m_48c7efa3796f: Limit to a specific resource
   m_4916a08b4eaa: Configure the user-scoped GitHub App used for repository authorization.
@@ -3885,6 +3887,7 @@ webui_v2:
   m_cf9573730598: '{0} unsaved'
   m_cf9a8aee5803: View order
   m_cfa67756244a: Remaining legacy benefits
+  m_cfb78ed0e81d: Discard panel changes?
   m_cff6ba5e1b83: Update channel
   m_d01340fcd7f7: Date
   m_d01f9ee2380a: Hide

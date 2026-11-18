@@ -38,7 +38,7 @@ import {
 } from "./state";
 import "./version.css";
 import versionMessages from "./messages.json";
-import VersionBrowser, { type ReleaseRecord } from "./VersionBrowser";
+import VersionBrowser, { type ReleaseHistory } from "./VersionBrowser";
 
 const base = "/api/v1/version";
 
@@ -70,9 +70,7 @@ export default function VersionPanel() {
   const releases = useQuery({
     queryKey: ["version-releases"],
     queryFn: ({ signal }) =>
-      api<{
-        releases: ReleaseRecord[];
-      }>(base + "/releases", { signal }),
+      api<ReleaseHistory>(base + "/releases", { signal }),
   });
   const preflight = useMutation({
     mutationFn: async (target: Target | null) =>
@@ -92,11 +90,11 @@ export default function VersionPanel() {
     mutationFn: () => api(base + "/check", { method: "POST" }),
     onSuccess: () => {
       void catalog.refetch();
-      void releases.refetch();
       preflight.reset();
     },
     onSettled: () => {
       void info.refetch();
+      void releases.refetch();
     },
   });
   function remember(jobId: string) {
