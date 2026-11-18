@@ -38,7 +38,7 @@ export default function AboutPanel() {
             GitHub
           </a>
           <a
-            href="https://sakura520222.github.io/Sakura-AI/"
+            href="https://sakura-ai.pyabunny.com"
             target="_blank"
             rel="noreferrer"
           >
