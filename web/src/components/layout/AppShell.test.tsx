@@ -65,19 +65,40 @@ beforeEach(() => {
   });
 });
 
-it("shows current running version and update availability separately with a Star icon", async () => {
+it("shows only the running version and a dot when an update is available", async () => {
   mount();
-  expect(await screen.findByText("3.2.6")).toBeVisible();
-  expect(screen.getByText("Update available")).toBeVisible();
+  const version = await screen.findByRole("link", {
+    name: "3.2.6 · Update available",
+  });
+  expect(version).toHaveTextContent(/^3\.2\.6$/);
+  expect(version.querySelector("svg")).toBeNull();
+  expect(version.querySelector(".topbar-update-dot")).toBeInTheDocument();
   const community = screen.getByRole("link", { name: "Star community" });
   expect(community.querySelector(".lucide-star")).not.toBeNull();
 });
+
+it.each([false, null])(
+  "keeps the version link without a dot when update_available is %s",
+  async (updateAvailable) => {
+    vi.mocked(api).mockResolvedValue({
+      current_version: "3.2.6",
+      update_available: updateAvailable,
+    });
+    mount();
+    const version = await screen.findByRole("link", {
+      name: "3.2.6 · Updates",
+    });
+    expect(version).toHaveTextContent(/^3\.2\.6$/);
+    expect(version.querySelector(".topbar-update-dot")).toBeNull();
+    expect(version).toHaveAttribute("href", "/admin/version");
+  },
+);
 
 it("keeps the version visible without privileged management actions for ordinary users", () => {
   mount(false);
   expect(screen.getByText("3.2.5")).toBeVisible();
   expect(
-    screen.queryByRole("link", { name: "Updates" }),
+    screen.queryByRole("link", { name: /Updates/ }),
   ).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Restart application" }),

@@ -312,25 +312,17 @@ svg {
   gap: 16px;
   flex-shrink: 0;
 }
-.topbar-version-links {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.topbar-version-links a {
+.topbar-version-link {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
   min-height: 36px;
   padding: 8px 10px;
   border-radius: 8px;
-  font-size: 12px;
-  white-space: nowrap;
   color: var(--muted);
 }
-.topbar-version-links a:hover,
-.topbar-version-links a.active {
+.topbar-version-link:hover,
+.topbar-version-link.active {
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -340,14 +332,10 @@ svg {
   }
 }
 @media (max-width: 760px) {
-  .topbar-version-links {
-    gap: 2px;
-  }
-  .topbar-version-links a {
+  .topbar-version-link {
     padding: 8px;
     min-height: 32px;
   }
-  .topbar-update-label,
   .global-search > span {
     display: none;
   }
@@ -675,13 +663,24 @@ svg {
   line-height: 1.6;
 }
 
-.topbar-current-version { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.topbar-version-links a.has-update { color: var(--accent); }
-.topbar-version-links a.has-update .topbar-current-version { color: var(--accent); font-weight: 600; }
-.topbar-update-dot { display: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
-@media (max-width: 760px) {
-  .topbar-update-dot { display: inline-block; }
+.topbar-current-version {
+  position: relative;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
-.topbar-update-label.update-available { color: var(--accent); }
+.topbar-version-link .topbar-current-version {
+  color: inherit;
+}
+.topbar-update-dot {
+  position: absolute;
+  top: -2px;
+  right: -6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+}
 .topbar-restart-status { position: absolute; top: 65px; right: 20px; z-index: 40; max-width: min(340px, calc(100vw - 32px)); padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); font-size: 13px; }
 .topbar-restart-status p { color: var(--muted); margin: 8px 0 12px; }
