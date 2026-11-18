@@ -676,6 +676,12 @@ svg {
 }
 
 .topbar-current-version { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.topbar-version-links a.has-update { color: var(--accent); }
+.topbar-version-links a.has-update .topbar-current-version { color: var(--accent); font-weight: 600; }
+.topbar-update-dot { display: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+@media (max-width: 760px) {
+  .topbar-update-dot { display: inline-block; }
+}
 .topbar-update-label.update-available { color: var(--accent); }
 .topbar-restart-status { position: absolute; top: 65px; right: 20px; z-index: 40; max-width: min(340px, calc(100vw - 32px)); padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); font-size: 13px; }
 .topbar-restart-status p { color: var(--muted); margin: 8px 0 12px; }

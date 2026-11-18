@@ -4,6 +4,7 @@ Only the test runner imports this module. Production never mounts test auth.
 External providers and deployment operations remain disabled by the base fixture.
 """
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -169,7 +170,11 @@ async def browser_lifespan(application):
                 mfa_lockout_service, "get_async_redis", AsyncMock(return_value=redis)
             ),
             patch.object(get_settings(), "passkeys_rp_id", "localhost"),
-            patch.object(get_settings(), "passkeys_origin", "http://localhost:8768"),
+            patch.object(
+                get_settings(),
+                "passkeys_origin",
+                f"http://localhost:{int(os.environ.get('SAKURA_E2E_PORT', '8768'))}",
+            ),
             patch.object(get_settings(), "passkeys_enabled", True),
         ):
             yield

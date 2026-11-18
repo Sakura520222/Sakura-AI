@@ -156,6 +156,7 @@ async def export_reviews_csv(
     writer.writerow(
         [
             "PR ID",
+            "PR 编号",
             "仓库名",
             "PR 标题",
             "作者",
@@ -171,6 +172,7 @@ async def export_reviews_csv(
         writer.writerow(
             [
                 r.pr_id,
+                r.pr_number or "",
                 r.repo_name,
                 r.title or "",
                 r.author or "",

@@ -37,6 +37,7 @@ from backend.services.config_metadata import (
     CATEGORIES,
     DEPLOYMENT_KEYS,
     PERSONAL_DEFAULTS,
+    SEARCH_ALIASES,
     ConfigField,
     field_catalog,
     lookup_path,
@@ -649,7 +650,8 @@ class ConfigCenterService:
         if item.key in aliases:
             candidates.insert(0, f"config.{aliases[item.key]}")
         if item.storage == "section" and not item.path:
-            candidates.insert(0, f"config_center.group.{item.key}")
+            candidates.insert(0, f"config_center.whole_section.{item.key}")
+            candidates.insert(1, f"config_center.group.{item.key}")
         if item.scope == "user":
             candidates.insert(0, f"settings.{item.key}")
         label = (
@@ -663,6 +665,11 @@ class ConfigCenterService:
         if item.path:
             parts = []
             for part in item.path:
+                scoped_key = f"config_center.section_field.{item.key}.{part}"
+                scoped_translated = i18n.t(scoped_key, lang=lang)
+                if scoped_translated != scoped_key:
+                    parts.append(scoped_translated)
+                    continue
                 key = f"config_center.field.{part}"
                 translated = i18n.t(key, lang=lang)
                 parts.append(
@@ -676,9 +683,25 @@ class ConfigCenterService:
             f"config.desc.{item.key}",
             f"system_config.key_{item.key}_desc",
             f"config.{item.key}_desc",
+            f"settings.{item.key}_desc",
         ]
         if item.path:
-            desc_keys.insert(1, f"config_center.help.{item.path[-1]}")
+            if len(item.path) >= 2:
+                desc_keys.insert(
+                    1, f"config_center.help.{item.path[-2]}.{item.path[-1]}"
+                )
+            desc_keys.insert(
+                min(2, len(desc_keys)),
+                f"config_center.help.{item.key}.*.{item.path[-1]}",
+            )
+            desc_keys.insert(
+                min(3, len(desc_keys)),
+                f"config_center.help.{item.key}.*",
+            )
+            desc_keys.insert(
+                min(4, len(desc_keys)),
+                f"config_center.help.{item.path[-1]}",
+            )
         if item.storage == "binding":
             desc_keys.insert(0, "config_center.binding_help")
         if item.key.startswith("activity_"):
@@ -696,6 +719,21 @@ class ConfigCenterService:
         ):
             description = i18n.t("strategy.issue_template_layout_hint", lang=lang)
         return label, description
+
+    @staticmethod
+    def _group_label(group: str, lang: str) -> str:
+        from backend.webui.i18n import i18n
+
+        for key in (
+            f"config_center.group.{group}",
+            f"config.group.{group}",
+            f"system_config.group_{group}",
+            f"config.{group.removeprefix('strategy.').removeprefix('label.')}",
+        ):
+            text = i18n.t(key, lang=lang)
+            if text != key:
+                return text
+        return group
 
     async def describe(
         self, db, user, *, category=None, lang="zh-CN", search=False, model=None
@@ -717,13 +755,23 @@ class ConfigCenterService:
             raise ConfigError("unknown_category", status=404)
         snapshot = None if search else await self._snapshot(db, user, allowed)
         deployment = Settings()
+        other_lang = "en" if lang == "zh-CN" else "zh-CN"
         result = []
         for item in allowed.values():
             if category and item.category != category:
                 continue
             label, description = self._text(item, lang)
-            other_label, other_description = self._text(
-                item, "en" if lang == "zh-CN" else "zh-CN"
+            other_label, other_description = self._text(item, other_lang)
+            group_text = self._group_label(item.group, lang)
+            other_group_text = self._group_label(item.group, other_lang)
+            aliases = " ".join(
+                filter(
+                    None,
+                    (
+                        SEARCH_ALIASES.get(item.key, ""),
+                        SEARCH_ALIASES.get(item.group, ""),
+                    ),
+                )
             )
             view = {
                 "id": item.id,
@@ -734,7 +782,22 @@ class ConfigCenterService:
                 "type": item.type,
                 "label": label,
                 "description": description,
-                "searchText": f"{item.id} {label} {description} {other_label} {other_description}",
+                "searchText": " ".join(
+                    filter(
+                        None,
+                        (
+                            item.id,
+                            item.key,
+                            group_text,
+                            other_group_text,
+                            label,
+                            description,
+                            other_label,
+                            other_description,
+                            aliases,
+                        ),
+                    )
+                ),
                 "scope": item.scope,
                 "constraints": item.constraints,
                 "sensitive": item.sensitive,

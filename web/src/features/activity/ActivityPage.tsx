@@ -557,6 +557,38 @@ export function TimelineEntry({
           thread_boundary: t("新线程", "New thread"),
           invocation_boundary: t("新的执行", "New invocation"),
         }[entry.type] || entry.type;
+  const hasVisibleMessage =
+    isMessage && entry.content_visibility === "visible" && entry.content != null;
+  const visibleArtifacts = (entry.artifacts ?? []).filter((artifact) => {
+    if (pairedResult && artifact.artifact_id === pairedResult.result_artifact_id)
+      return false;
+    if (entry.type === "tool_result") {
+      if (
+        entry.arguments_artifact_id != null &&
+        artifact.artifact_id === entry.arguments_artifact_id &&
+        artifact.artifact_id !== entry.result_artifact_id
+      )
+        return false;
+      if (
+        entry.result_artifact_id != null &&
+        artifact.artifact_id !== entry.result_artifact_id
+      )
+        return false;
+    }
+    if (hasVisibleMessage && !artifact.can_request && !artifact.capture_error)
+      return false;
+    return true;
+  });
+  const canRequestMessageArtifact =
+    isMessage && visibleArtifacts.some((artifact) => artifact.can_request);
+  const messageCaptureError =
+    isMessage &&
+    !canRequestMessageArtifact &&
+    visibleArtifacts.some((artifact) => artifact.capture_error);
+  const renderedArtifacts = visibleArtifacts.filter(
+    (artifact) =>
+      !(isMessage && !hasVisibleMessage && !artifact.can_request),
+  );
   return (
     <article
       className={`activity-entry activity-entry-${entry.type} ${["failed", "error", "cancelled"].includes(entry.status ?? "") ? "activity-entry-failed" : ""}`}
@@ -570,16 +602,15 @@ export function TimelineEntry({
         <Timestamp value={entry.created_at} />
       </header>
       {isMessage &&
-        (entry.content_visibility === "visible" && entry.content != null ? (
+        (hasVisibleMessage ? (
           <div className="activity-message-content">
-            <ActivityContent content={entry.content} />
+            <ActivityContent content={entry.content!} />
           </div>
-        ) : entry.role === "user" &&
-          entry.artifacts?.some(
-            (artifact) =>
-              artifact.can_request &&
-              artifact.artifact_kind === "request_projection",
-          ) ? null : (
+        ) : canRequestMessageArtifact ? null : messageCaptureError ? (
+          <p className="muted">
+            {t("详细内容未能记录", "Detailed content was not captured")}
+          </p>
+        ) : (
           <p className="activity-restricted">
             <LockKeyhole size={14} />
             {entry.content_visibility === "restricted"
@@ -602,7 +633,7 @@ export function TimelineEntry({
             <ActivityContent content={entry.content} />
           )}
           {entry.content_visibility !== "visible" &&
-            !entry.artifacts?.length && (
+            !renderedArtifacts.length && (
               <p className="activity-restricted">
                 {t(
                   "此内容不可查看或未被记录。",
@@ -644,37 +675,28 @@ export function TimelineEntry({
           {t("已压缩的历史记录", "Compacted history")}
         </p>
       )}
-      {entry.artifacts
-        ?.filter(
-          (artifact) =>
-            (!pairedResult ||
-              artifact.artifact_id !== pairedResult.result_artifact_id) &&
-            (entry.type !== "tool_result" ||
-              entry.result_artifact_id == null ||
-              artifact.artifact_id === entry.result_artifact_id),
-        )
-        .map((artifact) => (
-          <ArtifactView
-            key={artifact.artifact_id}
-            artifact={artifact}
-            automaticTool={
-              (entry.type === "tool_call" &&
-                artifact.artifact_id ===
-                  (entry.arguments_artifact_id ??
-                    pairedResult?.arguments_artifact_id) &&
-                artifact.artifact_kind === "request_projection") ||
-              (entry.type === "tool_result" &&
-                artifact.artifact_id === entry.result_artifact_id &&
-                artifact.artifact_kind === "response_projection")
-            }
-            automaticMessage={
-              isMessage &&
-              entry.role === "user" &&
-              artifact.artifact_kind === "request_projection"
-            }
-            sessionId={sessionId}
-          />
-        ))}
+      {renderedArtifacts.map((artifact) => (
+        <ArtifactView
+          key={artifact.artifact_id}
+          artifact={artifact}
+          automaticTool={
+            (entry.type === "tool_call" &&
+              artifact.artifact_id ===
+                (entry.arguments_artifact_id ??
+                  pairedResult?.arguments_artifact_id) &&
+              artifact.artifact_kind === "request_projection") ||
+            (entry.type === "tool_result" &&
+              artifact.artifact_id === entry.result_artifact_id &&
+              artifact.artifact_kind === "response_projection")
+          }
+          automaticMessage={
+            isMessage &&
+            entry.role === "user" &&
+            artifact.artifact_kind === "request_projection"
+          }
+          sessionId={sessionId}
+        />
+      ))}
       {pairedResult && (
         <TimelineEntry entry={pairedResult} sessionId={sessionId} />
       )}
@@ -742,10 +764,33 @@ function ArtifactView({
           typeof message === "object" &&
           "role" in message &&
           message.role === "user" &&
-          "content" in message &&
-          typeof message.content === "string"
-        )
-          content = message.content;
+          "content" in message
+        ) {
+          if (typeof message.content === "string") content = message.content;
+          else if (Array.isArray(message.content)) {
+            const parts = message.content
+              .map((part: unknown) => {
+                if (typeof part === "string") return part;
+                if (
+                  part &&
+                  typeof part === "object" &&
+                  "text" in part &&
+                  typeof part.text === "string"
+                )
+                  return part.text;
+                if (
+                  part &&
+                  typeof part === "object" &&
+                  "type" in part &&
+                  typeof part.type === "string"
+                )
+                  return `[${part.type}]`;
+                return "";
+              })
+              .filter(Boolean);
+            content = parts.join("\n\n");
+          }
+        }
       } catch {
         /* Do not fall back to displaying a native request. */
       }

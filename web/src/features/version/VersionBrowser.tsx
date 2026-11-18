@@ -19,12 +19,16 @@ import {
 } from "./state";
 
 export interface ReleaseRecord {
+  tag?: string;
   tag_name?: string;
   version?: string;
   name?: string;
   body?: string;
   published_at?: string;
 }
+
+const releaseTag = (release: ReleaseRecord) =>
+  release.tag || release.tag_name || "";
 
 const PAGE_SIZE = 6;
 
@@ -70,7 +74,7 @@ export default function VersionBrowser({
         .includes(term),
   );
   const history = (releases.data?.releases ?? []).filter((release) =>
-    [release.name, release.tag_name, release.version]
+    [release.name, releaseTag(release), release.version]
       .join(" ")
       .toLowerCase()
       .includes(term),
@@ -87,7 +91,7 @@ export default function VersionBrowser({
     t("未命名版本", "Unnamed version");
   const releaseTitle = (release: ReleaseRecord) =>
     release.name ||
-    release.tag_name ||
+    releaseTag(release) ||
     release.version ||
     t("发布说明", "Release notes");
   function changeView(next: typeof view) {
@@ -250,62 +254,58 @@ export default function VersionBrowser({
             ) : (
               history
                 .slice(offset, offset + PAGE_SIZE)
-                .map((release, index) => (
-                  <article
-                    className="version-release"
-                    key={release.tag_name || `${offset}-${index}`}
-                  >
-                    <div className="version-row">
-                      <div className="version-row-copy">
-                        <strong
-                          className="version-release-name"
-                          title={releaseTitle(release)}
-                        >
-                          {releaseTitle(release)}
-                        </strong>
-                        <span className="version-row-meta">
-                          {release.published_at ? (
-                            <Timestamp value={release.published_at} />
-                          ) : (
-                            release.tag_name || release.version || "—"
-                          )}
-                        </span>
-                      </div>
-                      <button
-                        className="button"
-                        aria-expanded={
-                          expandedRelease ===
-                          (release.tag_name || `${offset}-${index}`)
-                        }
-                        onClick={() =>
-                          setExpandedRelease((current) =>
-                            current ===
-                            (release.tag_name || `${offset}-${index}`)
-                              ? null
-                              : release.tag_name || `${offset}-${index}`,
-                          )
-                        }
-                      >
-                        {expandedRelease ===
-                        (release.tag_name || `${offset}-${index}`)
-                          ? t("收起说明", "Hide notes")
-                          : t("查看说明", "Read notes")}
-                      </button>
-                    </div>
-                    {expandedRelease ===
-                      (release.tag_name || `${offset}-${index}`) && (
-                      <div className="version-release-notes">
-                        <Markdown>
-                          {release.body ||
-                            t(
-                              "此版本没有发布说明。",
-                              "This release has no notes.",
+                .map((release, index) => {
+                  const key =
+                    releaseTag(release) ||
+                    release.version ||
+                    `${offset}-${index}`;
+                  const isExpanded = expandedRelease === key;
+                  return (
+                    <article className="version-release" key={key}>
+                      <div className="version-row">
+                        <div className="version-row-copy">
+                          <strong
+                            className="version-release-name"
+                            title={releaseTitle(release)}
+                          >
+                            {releaseTitle(release)}
+                          </strong>
+                          <span className="version-row-meta">
+                            {release.published_at ? (
+                              <Timestamp value={release.published_at} />
+                            ) : (
+                              releaseTag(release) || release.version || "—"
                             )}
-                        </Markdown>
+                          </span>
+                        </div>
+                        <button
+                          className="button"
+                          aria-expanded={isExpanded}
+                          onClick={() =>
+                            setExpandedRelease((current) =>
+                              current === key ? null : key,
+                            )
+                          }
+                        >
+                          {isExpanded
+                            ? t("收起说明", "Hide notes")
+                            : t("查看说明", "Read notes")}
+                        </button>
                       </div>
-                    )}
-                  </article>
-                ))
+                      {isExpanded && (
+                        <div className="version-release-notes">
+                          <Markdown>
+                            {release.body ||
+                              t(
+                                "此版本没有发布说明。",
+                                "This release has no notes.",
+                              )}
+                          </Markdown>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })
             )}
           </div>
           <nav

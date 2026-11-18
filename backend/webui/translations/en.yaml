@@ -2175,7 +2175,7 @@ config_center:
     color: "Color"
     comment: "Comment"
     comment_template: "Comment template"
-    comment_template_en: "Comment template en"
+    comment_template_en: "English comment template"
     concurrency: "Concurrency"
     confidence_threshold: "Confidence threshold"
     default_branch_count: "Default branch count"
@@ -2184,7 +2184,7 @@ config_center:
     default_max_results: "Default max results"
     description: "Description"
     documentation: "Documentation"
-    enable_ai_tools: "Enable ai tools"
+    enable_ai_tools: "Enable AI function tools"
     enable_idempotency_check: "Enable idempotency check"
     enable_project_structure: "Enable project structure"
     enabled: "Enabled"
@@ -2235,20 +2235,30 @@ config_center:
     style: "Style"
     system_prompt: "System prompt"
     test: "Test"
-    use_search_api: "Use search api"
+    use_search_api: "Prefer GitHub Search API"
     user_template: "User template"
+  section_field:
+    "label.conflict_rules.enhancement": "Enhancement mutually exclusive labels"
+    "label.conflict_rules.refactor": "Refactor mutually exclusive labels"
+    "label.conflict_rules.documentation": "Documentation mutually exclusive labels"
+    "label.conflict_rules.test": "Test mutually exclusive labels"
+    "label.conflict_rules.style": "Style mutually exclusive labels"
+  whole_section:
+    "strategy.strategies": "Manage review strategy tiers (add or remove tiers)"
+    "label.definitions": "Manage label definitions (add or remove labels)"
+    "label.conflict_rules": "Manage label conflict rules (add or remove rules)"
   group:
-    strategy.strategies: Strategies
+    strategy.strategies: Review tiers & prompts
     strategy.file_filters: File filters
-    strategy.context_enhancement: Context enhancement
-    strategy.review_policy: Review policy
-    strategy.issue_analysis: Issue analysis
-    strategy.pr_summary: Pr summary
-    strategy.pr_dependency_graph: Pr dependency graph
-    strategy.scan: Scan
-    label.definitions: Definitions
-    label.recommendation: Recommendation
-    label.conflict_rules: Conflict rules
+    strategy.context_enhancement: Context tools & memory
+    strategy.review_policy: Approval & blocking policy
+    strategy.issue_analysis: Issue analysis & templates
+    strategy.pr_summary: PR summary prompts
+    strategy.pr_dependency_graph: PR dependency graph prompts
+    strategy.scan: Scan prompt
+    label.definitions: Label definitions
+    label.recommendation: Label recommendation
+    label.conflict_rules: Label conflict rules
     preferences: Preferences
     ai_strategy: "AI calls, compression and usage capture"
     bindings: "AI roles and fallbacks"
@@ -2352,9 +2362,167 @@ config_center:
     top_p: "Nucleus sampling; used only when the model supports this parameter."
     top_k: "Number of sampling candidates; used only when the model supports this parameter."
     effort: "Reasoning effort; support is determined by the model capability configuration."
+    theme: "Choose light, dark or system appearance; takes effect immediately in this browser."
+    enable_rag: "Enable vector retrieval-augmented generation (RAG) over code and historical context."
+    chroma_persist_dir: "On-disk persistence directory for ChromaDB vector indexes (restart required)."
+    embedding_model: "Embedding model identifier used to vectorize code chunks and documents."
+    embedding_provider: "Provider or protocol family used for embedding requests."
+    embedding_base_url: "Base API URL for the embedding service; treated as sensitive and confirmed on update."
+    embedding_api_key: "API key for the embedding service; saved secrets are never echoed back."
+    embedding_dimension: "Vector dimension produced by the configured embedding model."
+    rerank_model: "Reranker model identifier used to re-score retrieved context candidates."
+    rerank_provider: "Provider family used for reranking requests."
+    rerank_base_url: "Base API URL for the reranking service; treated as sensitive and confirmed on update."
+    rerank_api_key: "API key for the reranking service; saved secrets are never echoed back."
+    rerank_score_threshold: "Minimum relevance score required for reranked chunks to be retained."
+    ai_fallback_enabled: "Automatically try configured fallback models in order when the primary model fails."
+    enable_context_compression: "Automatically summarize and compact history when context approaches the window limit."
+    context_compression_threshold: "Context window utilization ratio (0.1–1.0) that triggers automatic compression."
+    enable_code_index: "Build chunked code indexes for connected repositories to improve cross-file lookup."
+    code_chunk_size: "Target character length per indexed code chunk (must be ≥ chunk overlap)."
+    code_chunk_overlap: "Overlapping characters kept between adjacent code chunks (must be ≤ chunk size)."
+    enable_inline_comments: "Publish line-level review findings directly on GitHub Pull Request diffs."
+    enable_pr_summary: "Generate a structured change summary for Pull Requests automatically."
+    enable_pr_dependency_graph: "Include a module and file dependency graph in Pull Request reviews."
+    pr_dependency_graph_max_nodes: "Maximum number of nodes rendered in a PR dependency graph."
+    pr_dependency_graph_max_files: "Maximum number of changed files analyzed when building a dependency graph."
+    pr_dependency_graph_mode: "Choose static import analysis or AI generation for PR dependency graphs."
+    enable_semantic_issue_linking: "Automatically discover and link related Issues during PR review using semantic similarity."
+    semantic_issue_similarity_threshold: "Minimum vector similarity score (0–1) for candidate Issues to be evaluated."
+    semantic_issue_max_links: "Maximum number of related Issues linked to a single Pull Request."
+    pr_issue_related_confidence_threshold: "Minimum confidence required to mark an Issue as related (must be ≤ closing threshold)."
+    pr_issue_closing_confidence_threshold: "Minimum confidence required to mark a PR as resolving or closing an Issue."
+    payment_enabled: "Controls public plan purchase and top-up entry points; wallet history and admin pricing stay accessible."
+    payment_order_expire_minutes: "Minutes before an unpaid checkout order expires automatically."
+    payment_default_currency: "Default settlement currency used when displaying prices and creating orders."
+    stripe_enabled: "Enable Stripe card and international checkout (requires API key and webhook secret)."
+    stripe_api_key: "Server-side Stripe Secret API Key used for payment intents and refunds."
+    stripe_webhook_secret: "Stripe webhook signing secret used to verify asynchronous payment receipts."
+    stripe_currency: "Settlement currency used for Stripe checkout orders."
+    paddle_enabled: "Enable Paddle billing and checkout (requires API key and webhook secret)."
+    paddle_api_key: "Server-side Paddle API key used to verify and manage transactions."
+    paddle_webhook_secret: "Paddle webhook signing secret used to verify incoming billing events."
+    paddle_currency: "Settlement currency used for Paddle orders."
+    paddle_vendor_id: "Paddle client-side token or seller ID used by the browser checkout flow."
+    alipay_enabled: "Enable Alipay checkout (requires App ID, private key and Alipay public key)."
+    alipay_app_id: "Alipay Open Platform application ID."
+    alipay_private_key: "Alipay RSA2 application private key (PEM) used to sign requests."
+    alipay_public_key: "Alipay platform public key used to verify callback signatures."
+    alipay_currency: "Settlement currency used for Alipay orders."
+    alipay_sandbox: "Route Alipay requests to the sandbox gateway instead of production."
+    nowpayments_enabled: "Enable NOWPayments cryptocurrency checkout."
+    nowpayments_api_key: "NOWPayments API key used to create crypto payment invoices."
+    nowpayments_ipn_secret: "NOWPayments IPN signing secret used to verify payment callbacks."
+    nowpayments_pay_currency: "Default cryptocurrency code accepted via NOWPayments (e.g. usdttrc20)."
+    tron_enabled: "Enable direct on-chain TRON USDT receipt verification."
+    tron_wallet_address: "Base58 TRON wallet address that receives direct USDT transfers."
+    tron_api_key: "Optional TronGrid API key to raise rate limits when verifying on-chain transfers."
+    init_admin_agent_daily_quota: "Initial daily Agent task quota granted to the setup administrator."
+    init_admin_agent_weekly_quota: "Initial weekly Agent task quota granted to the setup administrator."
+    init_admin_agent_monthly_quota: "Initial monthly Agent task quota granted to the setup administrator."
+    "capabilities.vision": "Whether this model accepts image and multimodal visual inputs."
+    "capabilities.tools": "Whether this model supports structured function and tool calling."
+    "capabilities.streaming": "Whether this model supports incremental streaming responses."
+    "capabilities.stream_usage": "Request token usage in streamed responses; turn off if a compatible gateway rejects it."
+    "capabilities.reasoning_content": "Whether this model returns a dedicated reasoning trace field."
+    "capabilities.prompt_caching": "Whether this model supports prompt prefix caching for repeated context."
+    "strategy.strategies": "Add or remove custom review tiers, or edit individual built-in tier settings above."
+    "strategy.strategies.*.name": "Display name shown in review comments, logs and dashboards for this tier."
+    "conditions.max_files": "Maximum changed files for a Pull Request to match this review tier."
+    "conditions.max_lines": "Maximum changed lines for a Pull Request to match this review tier."
+    "strategy.strategies.*.prompt": "Review instructions sent to the AI reviewer when this tier is selected."
+    enable_project_structure: "Include a repository directory tree summary in review context."
+    max_structure_files: "Maximum number of repository files listed in the directory structure summary."
+    enable_ai_tools: "Allow the review model to call file-reading, code-search and Git history tools on demand."
+    max_file_size: "Maximum size in bytes allowed when reading a single source file via tools."
+    max_files_for_deep_strategy: "Maximum number of files inspected in depth during deep reviews."
+    max_file_lines: "Maximum number of lines returned in a single file-read tool call."
+    max_file_output_chars: "Maximum characters returned to the model from a single file read."
+    default_context_lines: "Default surrounding context lines included with code snippets."
+    max_context_lines: "Maximum surrounding context lines a tool call may request."
+    "search_in_files.use_search_api": "Prefer the GitHub Search API for code queries and fall back to local scanning when unavailable."
+    "search_in_files.default_context_lines": "Default surrounding lines returned around each search match."
+    "search_in_files.default_max_results": "Default maximum matches returned by one file-content search."
+    "search_in_files.skip_binary": "Skip binary files automatically when searching repository contents."
+    "search_in_files.max_files_to_search": "Maximum candidate files scanned during a single search call."
+    "search_in_files.concurrency": "Maximum concurrent file reads during content search."
+    "search_in_files.max_file_bytes": "Maximum file size in bytes eligible for full-text search."
+    "search_in_files.max_total_scan_bytes": "Cumulative byte budget scanned across all files in one search."
+    "search_in_files.max_matches_per_file": "Maximum matched snippets returned from any single file."
+    "search_in_files.max_output_chars": "Maximum total characters returned by a single search tool call."
+    "git_tools.default_branch_count": "Default maximum branches returned by Git branch lookup tools."
+    "git_tools.default_commit_count": "Default maximum commits returned by Git history lookup tools."
+    "ci_failure_injection.enabled": "Inject recent related CI failure summaries into review context."
+    "ci_failure_injection.retention_days": "Number of days to retain historical CI failure context records."
+    "ci_failure_injection.max_records": "Maximum CI failure runs injected into a single review."
+    "ci_failure_injection.max_annotations_per_record": "Maximum error annotations extracted per CI failure run."
+    "sakura_memory.enabled": "Enable persistent `.sakura/` repository memory across reviews and Issue investigations."
+    "reflection.enabled": "Extract review reflections automatically when Pull Requests update or close."
+    "reflection.model": "Model ID used for PR reflection extraction; leave empty to inherit the main review model."
+    "reflection.prompt_template": "Custom prompt template for PR reflection extraction; leave empty for the built-in template."
+    "reflection.max_comments": "Maximum review comments included in a single reflection pass."
+    "reflection.max_changed_files": "Maximum changed files included in a single reflection pass."
+    "reflection.max_new_commits": "Maximum new commits analyzed in a single reflection pass."
+    "issue_reflection.enabled": "Extract troubleshooting lessons into repository memory as Issues progress or close."
+    "issue_reflection.model": "Model ID used for Issue reflection; leave empty to inherit the default model."
+    "issue_reflection.prompt_template": "Custom prompt template for Issue reflection; leave empty for the built-in template."
+    "consolidation.interval": "Number of reflections accumulated before compacting them into structured memory."
+    "consolidation.model": "Model ID used for memory consolidation; leave empty to inherit the default model."
+    "consolidation.max_memory_chars": "Maximum character length of a consolidated memory document."
+    "consolidation.max_sakura_chars": "Total character budget injected from `.sakura/` repository memory."
+    "consolidation.cleanup_old_reflections": "Remove archived reflection fragments after consolidation succeeds."
+    "consolidation.partial_commit": "Allow committing completed memory subdirectories when another subdirectory fails."
+    "knowledge_extraction.enabled": "Distill recurring conventions and pitfalls from accumulated reflections."
+    "knowledge_extraction.min_reflections": "Minimum reflections required before running automatic knowledge extraction."
+    "initialization.auto_init": "Initialize the `.sakura/` directory structure automatically when memory is enabled."
+    "initialization.init_commit_message": "Git commit message used when initializing `.sakura/` automatically."
+    "directory_convention.enabled": "Organize repository knowledge into standard memory, rules, docs and plans subdirectories."
+    "directory_convention.auto_create_subdirs": "Create missing standard subdirectories and placeholders automatically."
+    "memory.description": "Purpose description for `.sakura/memory` guiding long-term memory reads and writes."
+    "memory.priority": "Context-loading priority weight for `memory` files when token space is limited."
+    "memory.skip_placeholder": "Skip creating a placeholder file when initializing `.sakura/memory`."
+    "rules.description": "Purpose description for `.sakura/rules` storing architecture and coding rules."
+    "rules.priority": "Context-loading priority weight for `rules` files when token space is limited."
+    "rules.placeholder": "Default placeholder content written when initializing `.sakura/rules`."
+    "docs.description": "Purpose description for `.sakura/docs` storing design and background notes."
+    "docs.priority": "Context-loading priority weight for `docs` files when token space is limited."
+    "docs.placeholder": "Default placeholder content written when initializing `.sakura/docs`."
+    "plans.description": "Purpose description for `.sakura/plans` storing roadmaps and implementation plans."
+    "plans.priority": "Context-loading priority weight for `plans` files when token space is limited."
+    "plans.placeholder": "Default placeholder content written when initializing `.sakura/plans`."
+    "strategy.review_policy.enabled": "Enable score- and severity-based automatic Approve / Request Changes decisions."
+    approve_threshold: "Minimum review score required to recommend Approve when no blocking issues exist."
+    block_threshold: "Review score below which Request Changes is triggered automatically."
+    block_on_critical: "Trigger Request Changes whenever any Critical finding is reported, regardless of score."
+    max_major_issues: "Maximum Major findings allowed for an Approve decision before downgrading."
+    enable_idempotency_check: "Skip duplicate reviews when the exact commit SHA was already reviewed with the same policy."
+    "review_templates.approve": "Summary comment template used for Chinese Approve reviews."
+    "review_templates.request_changes": "Summary comment template used for Chinese Request Changes reviews."
+    "review_templates.comment": "Summary comment template used for Chinese Comment-only reviews."
+    "review_templates_en.approve": "Summary comment template used for English Approve reviews."
+    "review_templates_en.request_changes": "Summary comment template used for English Request Changes reviews."
+    "review_templates_en.comment": "Summary comment template used for English Comment-only reviews."
+    issue_reference_keywords: "Keywords matched in PR descriptions or commits to detect linked Issues (e.g. fixes, closes)."
+    max_linked_issues_in_prompt: "Maximum linked Issue summaries included in one review prompt."
+    "strategy.issue_analysis.system_prompt": "System prompt guiding Issue classification, root-cause investigation and recommendations."
+    "strategy.pr_summary.system_prompt": "System prompt defining tone and structure when generating PR summaries."
+    "strategy.pr_summary.user_template": "User prompt template populated with diff statistics and file changes for PR summaries."
+    "strategy.pr_dependency_graph.system_prompt": "System prompt used when generating PR dependency graphs in AI mode."
+    "strategy.pr_dependency_graph.user_template": "User prompt template used to construct AI dependency graph requests."
+    "strategy.scan.system_prompt": "System prompt guiding full-repository security and quality scans."
+    "label.definitions": "Add or remove custom labels, or edit individual built-in label colors and descriptions above."
+    "label.definitions.*.color": "Six-digit hex color code (without #) used when creating or syncing this GitHub label."
+    "label.definitions.*.description": "Description synced to GitHub and used by AI label recommendation."
+    "label.recommendation.enabled": "Automatically recommend and apply matching GitHub labels during PR and Issue analysis."
+    "label.recommendation.confidence_threshold": "Minimum AI confidence (0–1) required before applying a recommended label."
+    "label.recommendation.auto_create": "Create recommended labels on GitHub automatically using the definitions above if missing."
+    "label.conflict_rules": "Add or remove mutually exclusive label groups so conflicting labels are not applied together."
+    "label.conflict_rules.*": "Labels that cannot be applied at the same time as this primary label."
 
 # WebUI 2.0 messages (managed by scripts/sync_webui_translations.py)
 webui_v2:
+  m_0030f688e38f: Bind personal email, Telegram or Webhook channels and configure event subscriptions.
+  m_0056773352f0: Showing the first 80 of {0} results. Add another keyword to narrow down.
   m_00f0360d90df: Rerank provider
   m_01062ca78304: Skip to content
   m_010bb9b5b006: Issue analyses
@@ -2363,11 +2531,14 @@ webui_v2:
   m_0176dc07f928: Documentation index
   m_017ed375e30e: Billing navigation
   m_0185a9b9f0cb: View failed reviews
+  m_018b828c2868: Page sections
   m_020ebe4f8941: Create task
   m_022dd37ccbd1: Public repository
   m_02ac11b0cd74: Reason for banning or disabling (optional)
   m_02f4bb7a6f3b: Reconnecting
+  m_02fb8f5b981c: AI & models
   m_0309fb157426: Backup scope
+  m_031c49e04cd3: Connection probes, application restart & database reset
   m_0323217bdfe5: When to use
   m_03a13e8739d4: Next
   m_03c70af5ace3: Version
@@ -2378,6 +2549,7 @@ webui_v2:
   m_046068ff1812: Could not load AI accounts.
   m_049d6b1e6abf: Search users
   m_04c114789c7e: Start update
+  m_04f122171112: 'Recent: {0}'
   m_051187720189: Delete repository workspace?
   m_0515ddc1bf6f: Recently updated
   m_054f0ab4d577: Approved
@@ -2387,32 +2559,39 @@ webui_v2:
   m_05e05db487aa: Update securely
   m_05e9af30b608: Sign out failed. Please try again.
   m_062b16e38dfc: Load earlier entries
+  m_0675146ee6a9: Secret set
   m_06cf635dfde4: Reconnecting; periodic refresh is active
   m_070c10dbb583: Abandoned
   m_0722b7472b5a: Use this value
+  m_072517af141e: Connect a provider and model list, then assign primary and fallback models below.
   m_075708ba35df: Terms
   m_075d87fbb8fa: Your preferences
   m_077cdbe3e0a2: Telegram ID (optional)
   m_07a25915e57e: Current refund status
   m_07c372a0c509: Resource type
   m_07d867d04c5d: Enable user
+  m_07e8f9198efb: Tune similarity and confidence thresholds for linking Issues to PRs.
   m_0809cd8c17b2: Task goal
   m_0833311dbaab: Description
   m_084b62b4ca1f: Last activity
   m_0875453a42ed: Restore this backup?
   m_0878ef3bda47: All features
   m_08d238289a05: No credential
-  m_09379fff771c: AI accounts
   m_09505f8fe7d0: Newest
   m_095ccc8edbd2: Cache write
+  m_0972b8d4daf7: Reranking service
   m_09bd23e00422: Loading accounts…
   m_0a10311e7f6a: This account changed elsewhere. Close the editor and reload before trying again.
   m_0a3c806f94ff: This content is restricted or was not captured.
+  m_0a5875c4f435: 'Unit: {0}'
   m_0a62899e96f6: Cancel task
   m_0a7afbe10d98: The credential rotates on every restart. Use the latest .setup-token file.
+  m_0b270533d8c7: Configure the primary GitHub App ID, private key and webhook secret.
   m_0b3caf95797e: All configuration
+  m_0b3e6f3de1c9: Configure MCP services, lifecycle hooks and workspace permission profiles.
   m_0b7f46095d8a: Currency
   m_0b87822f8d09: Close record
+  m_0bd98d57e4c1: Some changes were not saved; review details
   m_0c01457f04b7: Open your order to view payment status
   m_0c08782c9307: or
   m_0c2067b6a2fd: Published
@@ -2432,13 +2611,18 @@ webui_v2:
   m_0dd8ccbb93f8: Live
   m_0dd9358a739f: Goal (optional)
   m_0e6cb4d42965: Receive this notification
+  m_0e7f62706aed: Not set
   m_0e9d1e9c783f: Host Updater reports no active job, but the previous request outcome remains unconfirmed. After checking the deployment, unlock this page and run preflight again.
   m_0f1e60f2c9c8: Refresh models
   m_0f3a32cb59c3: API endpoint
+  m_0f929e60c477: Back to results for “{0}”
+  m_0fdcb05cdc0b: Appearance & output preferences
   m_0fdfe2265827: No update job is active. A fresh preflight is still required before another update can be submitted.
   m_0fea6d61c705: Unsupported historical currency ({0})
   m_0ffec27b9ccf: Collection
   m_101d422a8332: Existing authenticators and passkeys are retained. Users required to enroll must complete security setup first.
+  m_10370a4e8549: Control automatic PR review, concurrency, timeouts and GitHub Check Runs.
+  m_10a3ee0b4078: Discard model changes
   m_10d2982bb8c0: Version details
   m_10ea5f4572d0: Review feedback
   m_10eb4566b20c: Enable
@@ -2456,6 +2640,7 @@ webui_v2:
   m_12d6c2e3a4fc: Pull request reviews
   m_132395713990: Round
   m_13326276d555: No codes yet
+  m_136f4923a2d0: Try a task keyword (such as fallback, concurrency, SMTP or quota) or a setting key.
   m_13812da3e3e8: Could not load plugin configuration.
   m_139ceffeeca7: Related issues
   m_139e2f691c07: Verified
@@ -2474,14 +2659,20 @@ webui_v2:
   m_14f706073e84: Development
   m_1525fc00b8a8: Open Telegram
   m_15268584bc5b: Cancel order
+  m_15467e39f552: Overlaps with a whole-section edit in the same group; skipped to prevent overwriting.
+  m_156c003a51d2: Control URL fetching, domain policy, HTTPS enforcement and size limits.
   m_157b8bee9663: Disconnected
   m_1591efae3da8: Generate new codes
   m_15ac3f44b070: Mark read
+  m_15ad11d2b0ec: Revert
   m_15eda6aacfac: Pull request opened
+  m_1607a152dc72: Configure the optional Telegram notification binding bot.
   m_16511d4a045a: Last checked
+  m_1652b0b75c93: Configure secondary relevance reranking for retrieved context chunks.
   m_16a886d3a200: All sources
   m_16e00f6c700d: Review strategies
   m_171f81d17d52: Enrollment required
+  m_17264ab3620e: Notification delivery & Webhook policy
   m_172b4f7ec37d: Actions
   m_1746dfba4a5a: Sort by
   m_1787f8f8f2aa: Super admin
@@ -2498,6 +2689,7 @@ webui_v2:
   m_192ffed7a00f: Legal information
   m_193de33db975: Completed
   m_19a9a3754657: Notification view
+  m_19f8b38e2f60: Enable vector retrieval and manage the ChromaDB storage directory.
   m_1a1acc4e750b: Backups may contain service credentials and account security information. Store them securely. Restoring a running deployment preserves its database and Redis connections.
   m_1a3fbfdd1cf3: Delete notification preference?
   m_1a8befd4d2c3: Backup restored
@@ -2508,26 +2700,33 @@ webui_v2:
   m_1ac454adc15e: Replay this payment event?
   m_1b03d882eb26: You do not have permission to perform this action.
   m_1b4392a4511d: Unable to open this page
+  m_1b5b52b46002: No available accounts and models. Configure and enable an AI account above first.
+  m_1b62a7128019: Test database/Redis connections, look up App slugs, restart the service or reset the database.
   m_1b68a8d2d2f0: Indexes and scans
   m_1b73774ba1c0: All users
   m_1baaef267f6b: All entries
+  m_1bae08ecd973: Skipped {0}
   m_1bb415ea7c70: Announcement management
   m_1bd6bf8c5c56: This creates a new scan using the current quota and billing policy.
   m_1bd8519620c0: Clean inactive worktrees
   m_1bd9fd9af2d7: Saving…
+  m_1c206cff7458: Personal delivery channels & subscriptions
   m_1c2561ded2b9: repositories
   m_1c80b00b861c: Continue with GitHub
   m_1d1733f7f96f: Version pages
   m_1d38050b5b77: Effective limit
   m_1d9d43e49daa: Usage completeness
+  m_1dfd94c411a1: UI language, theme appearance, account security and notifications
   m_1e18fc052cec: Verify delivery channel
   m_1e202de4e83a: Delete this code?
   m_1e75b6db3719: Selected
+  m_1ed12e6163b8: Save changes ({0})
   m_1f0917f65eb9: '{0} approved'
   m_1f0d89c128e7: Purchase {0}?
   m_1f46219567ec: Copy failed; please copy manually
   m_1fb62d6d71f0: About
   m_1ffb5572bd0a: Apply adjustment
+  m_200b50b74eb5: Automatic analysis, duplicate detection, assignee suggestions and templates
   m_201dcae027dd: Discover community projects and manage the repositories you share.
   m_2020004cccba: No feasibility analysis available.
   m_20339ab89832: Pending
@@ -2537,6 +2736,8 @@ webui_v2:
   m_2056f7c8a65d: Transfer the exact amount using the specified network.
   m_205cbe72daa4: Past alerts
   m_209fb815f51b: Candidate
+  m_20e5dfa442c0: Control Issue analysis, duplicate detection, assignee suggestions and concurrency.
+  m_2122e3cdadac: Specify skipped paths, ignored extensions and recognized source code extensions.
   m_213511b228a8: Verification failed. Try again or sign in with GitHub again.
   m_214b4fc1e896: Operations
   m_2170ac16f339: Verified evidence
@@ -2547,6 +2748,7 @@ webui_v2:
   m_2225353fd2c7: Wallet
   m_2225f0c5bcbf: No reviews yet
   m_223b523f67c0: Remove global verification requirement?
+  m_22bdc0beec6c: 0 = full chain
   m_22c9bca04e1a: Notifications (optional)
   m_22d7fb77b527: Page name or setting keyword…
   m_22dbc9e940d3: Search activity
@@ -2554,6 +2756,7 @@ webui_v2:
   m_239c6083903d: All users, settings and business records will be deleted. Confirm that you are ready to start again from initial setup.
   m_23ebb1a8859b: Redis connection
   m_2404a3658e82: Edit code
+  m_241909335748: Use server value
   m_244620c0ffb4: Verify the receiver again after replacing its secret.
   m_246afc51f2b4: Search GitHub users
   m_2470951cf97e: Working branch
@@ -2571,6 +2774,7 @@ webui_v2:
   m_25c66e736041: Arguments and result
   m_25d536e565fc: Publication history
   m_2618da7a3299: Workspace write
+  m_264553eebe04: Execution, sandbox & PR closed loop
   m_267c437db66b: Check the active cache and queue connection
   m_26e855ff98fa: Email address
   m_26f17e8e6dbb: Verifying…
@@ -2606,22 +2810,26 @@ webui_v2:
   m_2abca65396c0: Price
   m_2aca617bae75: Retrieval (optional)
   m_2addf6811119: General
+  m_2aed7590607e: Configure file/search/Git tool limits, CI failure context and .sakura memory.
+  m_2b052830f9a7: Persisted; runtime synchronization is pending.
   m_2b135a3bf37a: New task updates and account messages will appear here.
   m_2b48e65117a9: Connection failed. Check the endpoint, credential and default model.
   m_2b692fb394f9: Validating
   m_2b758259bba4: Checking
-  m_2b8e984fdd41: No available accounts and models. Configure and enable an AI account first.
   m_2ba3ab76001b: Workspace deleted
   m_2bbb3adc24cd: Administration
   m_2bccc320bc7a: Actor
   m_2ce5d56493a5: documents
   m_2cfa70246ea5: shared repositories
   m_2d1ba7b6300b: Reconnecting; the update outcome is not yet confirmed
+  m_2d4ac5b71365: 'Min: {0}'
   m_2d64e2b8f571: The action could not complete. Refresh the task and try again.
+  m_2de3b7ab0332: Triggers, approval/blocking policy, review tiers and context tools
   m_2e104e31386b: Send test
   m_2e25a5c275bc: Search tasks or repositories
   m_2e29873f2803: Delete this file?
   m_2e39fdaa62a0: Access denied
+  m_2f0ffc4388dd: bytes
   m_2f5560045bf7: Findings
   m_2f615cbc3ef8: Keep up with your reviews and pick up where you left off.
   m_2f8616fa6cb1: GitHub access
@@ -2633,16 +2841,16 @@ webui_v2:
   m_2fc29a646c1b: Main navigation
   m_2feb5a68a885: Billing & usage
   m_2ff4fa9c93ad: Channel type
+  m_3009ded95d14: Backup & restore
   m_3020bdef65bf: Reauthorize
   m_3073867631ac: Permanently erase the database
   m_3096b3a9dcec: Your workspace is ready. Sign in to get started.
   m_30ac847128e0: Enter a nonnegative amount with at most six decimal places.
   m_30cdf415a947: Disable user
+  m_30f3c444989e: Automatic label recommendation
   m_318a310f3e14: Order ID
   m_319c413da254: Quick access
-  m_319d75adfb7a: Try a feature name or a shorter keyword.
   m_31d5c3a91db5: Latest security event
-  m_31fefb68ebfa: Connect accounts, choose models and tune requests
   m_32157adcc31e: All reviews
   m_321c6121e853: Welcome back
   m_323a14872cfe: Delete plan {0}?
@@ -2653,7 +2861,9 @@ webui_v2:
   m_32b63dd4d802: Add channel
   m_32f8ff0f7923: Create announcement
   m_32fa7999a19e: Application configuration
+  m_3328b3723ede: Must be ≤ closing confidence
   m_332ec2a06d0b: No passkeys added
+  m_335631293961: Manage GitHub label colors and descriptions, or add custom labels.
   m_335bbff128c3: Add guidance or feedback
   m_33942fde23b3: Credentials are used to connect to the service. Saved secrets are never displayed.
   m_33aac21fe5e2: Release history
@@ -2670,6 +2880,7 @@ webui_v2:
   m_356d149c4836: 'Advanced: import or bulk-edit JSON'
   m_35715a194715: SMTP host
   m_357c24ce1f82: Approve refund
+  m_35976c4f72d4: Set initial daily, weekly and monthly quotas for new users and admins.
   m_35d5bc50aa6b: Unsaved content will be lost when you leave.
   m_35fd7ff73474: Default model
   m_3604502a2548: Active
@@ -2698,6 +2909,7 @@ webui_v2:
   m_39009718d93a: '{0} items'
   m_3921d943d1a0: Reserved
   m_392d2394f660: Submitted for background processing.
+  m_3938f5f206b0: Add provider endpoints, credentials and model lists used by role bindings below.
   m_395fc29b0ff8: Messages
   m_39971e843a63: GitHub sign-in did not complete. Please authorize again.
   m_39a70d4ba0c0: Remove user
@@ -2731,11 +2943,13 @@ webui_v2:
   m_3ebe5067520b: Add protection to your sign-in
   m_3edd17413755: No tasks yet
   m_3f4d6cbde5b6: Default
+  m_3f575503beca: Pending changes & save results
   m_3fb2517a80c0: Add AI account
   m_3fd708ab4ba3: Model calls
   m_403b81ea18d1: Repository not found
   m_40509f837be5: Reload to use the new version
   m_40722432f2fe: Health score
+  m_40783491ecb1: Embedding service
   m_409f05c899aa: Add delivery channel
   m_40e01c1aabec: No models discovered. You can still enter model IDs manually.
   m_4113d3eff908: Reset database…
@@ -2747,6 +2961,7 @@ webui_v2:
   m_419392a15261: Queued
   m_419620a47535: Open this page over HTTPS in a browser that supports passkeys.
   m_41dcb0d31d0c: Processed
+  m_421df3e2984f: Categories, priority rules & templates
   m_423e2ad11fb5: Open session logs
   m_42563775a11c: User updated
   m_425f60a0ad83: 'On'
@@ -2758,13 +2973,16 @@ webui_v2:
   m_42b377818478: All repositories
   m_4300d8c2afac: View data table
   m_4312416ea113: Full analysis
+  m_4342da4b13b5: Not set
   m_437c98af7e59: Operation charges
   m_43906f2fcc39: Feasibility
   m_43f3b0123087: Unsaved account settings will be lost.
   m_43fec8fb0578: This changes the deployment update channel. Confirm the selected channel.
   m_440d6a085c1a: Application domain
+  m_443181b4a5ff: Customize system and user templates used for PR summaries.
   m_44324e2b540f: Publish
   m_4451b4465994: Could not update the skill. Refresh and try again.
+  m_44c5b7d68c83: PR dependency graph prompts
   m_44d386341d17: Payment status
   m_453299d9362d: Grant a plan
   m_4580ce4fb3ae: Open report
@@ -2778,14 +2996,17 @@ webui_v2:
   m_46d20e8a21a9: Created
   m_470b613b9ef5: Save configuration and start Sakura AI?
   m_4746510edad3: Analyze this issue again?
+  m_476838497525: User authorization GitHub App
   m_4782dc2653f1: Terms of service
   m_4792bb2869fb: Name
+  m_47c36724fdb7: Automatic analysis, assignment & deduplication
   m_4800d6131c60: Private repository
   m_4806ba583121: View scan tasks
   m_48141772f1d3: Untitled
   m_48ae74c6c6eb: Order amount
   m_48bc8eabeaca: Planning
   m_48c7efa3796f: Limit to a specific resource
+  m_4916a08b4eaa: Configure the user-scoped GitHub App used for repository authorization.
   m_491c76ddc9e3: skills
   m_494bd33554a7: Connect your first AI account
   m_494ef696f725: This deletes queue records in the selected state. Generated review results are retained.
@@ -2795,14 +3016,16 @@ webui_v2:
   m_49bb5618b651: User
   m_49c4e81ff7ba: API key
   m_49ea33ef68a7: No findings match this filter
-  m_4a64441edc92: unsaved changes
   m_4a6d17c96f57: Triage, priorities and next steps
   m_4a942fd98407: Save account
   m_4af05344a3bb: Clear protected content
   m_4af6a4122086: records
+  m_4b168b55e0d4: Not displayed
   m_4b19f90ecc19: 'No'
+  m_4b251af203fc: Conflict {0}
   m_4b5d4cce371f: Installing…
   m_4b79494fb3bd: Average health score
+  m_4b81ec61d960: From env
   m_4bb18c0aca95: Two-step verification is on
   m_4c1e5e52ad10: System maintenance
   m_4c3ff3fe4b90: GitHub App slug
@@ -2813,10 +3036,13 @@ webui_v2:
   m_4c979f6512aa: Connect your authenticator
   m_4ca273f608f3: Awaiting human input
   m_4cbd45cdde07: Enhancement
+  m_4cc968f28fb7: Configure public domain, bind host/port, timezone, log level and signing secrets.
   m_4cd0d9aeeb35: Connect your GitHub account
   m_4cdea94fee82: SMTP port
+  m_4ce17db0cef2: Paused
   m_4cf923f611c8: Fulfilled
   m_4d04d3ef2eff: Output / million tokens
+  m_4d1777bbb5df: Manage repository code chunk indexing, chunk size and overlap.
   m_4d2f7a9780ac: Send
   m_4d3c328a6052: Use a verification method set up for your account.
   m_4d6361706cc2: Reasoning status
@@ -2838,8 +3064,11 @@ webui_v2:
   m_4fe9d82e91eb: Feedback generated for your code
   m_5010daf96f94: Session
   m_5044e0c63125: View content
+  m_505151db32d7: Customize the system prompt used for full-repository scans.
   m_50c015dd97a6: Sign in to
+  m_50e98d7278db: Export scoped JSON backups or restore configuration and user data
   m_50f123037259: Privacy policy
+  m_50ffa667ae9b: AI summary
   m_5139fceecbd4: Running
   m_51688cb42ffa: Clear
   m_518a9a767778: Status checked; allow preflight
@@ -2857,10 +3086,12 @@ webui_v2:
   m_5354f3927e4c: Next page
   m_53610b40eae2: Credential configured
   m_538252cb92f5: Exporting…
+  m_53a1d7a31d8d: Dismiss save notice
   m_53de84160ef9: Erase and restart
   m_54189cef33bf: Install from GitHub or upload a SKILL.md / ZIP file.
   m_5466a7f14cb5: Passkeys require a supported browser and an HTTPS connection.
   m_54e3d09bc7ee: An issued code retains its purchased offer. Generate a new code to use a different plan.
+  m_54eeaa052ba9: PR summary prompts
   m_54fc6b5824e3: Execution details
   m_551984996d7c: Remove {0}
   m_553b1409eef9: Copy failed
@@ -2873,16 +3104,15 @@ webui_v2:
   m_573e769b0c42: Embedding dimensions
   m_57874b6ea163: Search queued repositories
   m_5797d75b9289: Not connected
-  m_57d2f0601d04: Search settings, features or keywords…
   m_5825124730d4: Sign-in options
   m_58aecb12e180: Disable repository display?
-  m_58c64720bb61: Analysis, classification and responses
   m_58ed0a978813: Service is back
   m_58eeb1a6e351: Code
   m_58f2a6a5b058: Repository community
   m_5949920beee9: '{0} remaining. Generating new codes invalidates the previous codes.'
   m_59605e5c3dc9: 'Select code #{0}'
   m_59690652f991: No workspaces yet
+  m_599f316b44f3: 4. Request policy, fallback & capture
   m_59beda7112b6: Approve and issue refund?
   m_59c2355a08f3: Title
   m_59f42b7c750c: Save quota
@@ -2898,6 +3128,7 @@ webui_v2:
   m_5b5b00425e67: System
   m_5b794f23b482: An automatic or manual update check failed. Try again later.
   m_5b94bd61997f: Operation
+  m_5bca8c2c68e1: Must be ≤ chunk size
   m_5bd06d2573e5: Enabled
   m_5bd1df2b6f9d: The selected account or model is unavailable. Select an available model; unsaved changes are retained.
   m_5be66e487b28: Used
@@ -2926,6 +3157,7 @@ webui_v2:
   m_5efb82c4d6f8: Refresh
   m_5efd7d233c27: Recent reviews
   m_5f2841af5735: You will no longer be able to sign in with this key.
+  m_5f32a0870b4a: Configure global Star community switch, scheduler intervals, daily limits and summaries.
   m_5fff2dd95dc1: Suggested title
   m_601cd773c0a3: Export CSV
   m_603e47cbbcf5: Plugins
@@ -2952,6 +3184,7 @@ webui_v2:
   m_6467047d8b0a: rounds
   m_649b2bfadb8a: Task title
   m_64c255fe369d: Choose a task from issue analyses and scan findings, then confirm the goal for the Agent.
+  m_64d4024c1a86: Primary {0}/{1} · No fallback
   m_64dbc2b89edb: Last 30 days
   m_651c9d3c9df8: Unbound pricing
   m_654b31243088: Could not load backup options.
@@ -2959,9 +3192,13 @@ webui_v2:
   m_6598a960008b: Loading…
   m_65aeb0e22ebc: Retries
   m_65d3eb62f00b: Plugin JSON
+  m_65fb19f5739a: Name match
   m_6644407510fa: Skills
+  m_664cfcb9d5fe: Export configuration or user backups, or restore from a file while preserving deployment connections.
   m_665bf084bfbf: GitHub App private key
   m_66afb44c6959: In progress
+  m_66ba85303d60: 'Range: {0}–{1}'
+  m_6728f850b2b1: Adjust initial quota multiplier for self-registered users.
   m_674b6d2db8fc: Delete all application data and users, then return to initial setup. This cannot be undone.
   m_674cfed0f773: Not checked yet
   m_67b43e8352c6: Change role
@@ -2973,6 +3210,7 @@ webui_v2:
   m_686fee1b5706: Require verification globally
   m_687d91fc8373: Calls
   m_68c1ce795077: Positive adds Credits; negative deducts Credits.
+  m_69111a804bd0: Probe active database/Redis connections, look up GitHub App slugs, restart Sakura AI or reset the database.
   m_6939a2ad1767: Minor
   m_69508886259c: File content
   m_695e6de8da1d: Repository scan
@@ -2981,14 +3219,17 @@ webui_v2:
   m_6977b6061875: Retry
   m_69aea807aa0d: Ban member?
   m_69df7cb46492: Delete passkey {0}?
+  m_6a18c1b7e5a3: Code review
+  m_6a398e613822: 2. Task models & fallback chains
   m_6a4c688b7d1c: Hide notes
-  m_6a73b75c56a5: Connect a provider, then assign models to your workflows below.
   m_6aae064d8519: Refresh this page after the service returns. A database reset returns to initial setup.
   m_6ace4f550995: Vector storage
   m_6af81ae0148f: No entries match these filters
+  m_6b41d2de3ec0: Related Issue linking
   m_6bbbd92b5627: Tasks
   m_6bd3bbc03b00: Verify it's you
   m_6bffc8750304: Agent workspaces
+  m_6c03159a9410: Manage MCP servers, lifecycle hooks and read-only or workspace-write permission profiles.
   m_6c4e92e855ae: Status
   m_6ca176d494c4: Failed
   m_6ca6d8b64f63: Repository
@@ -3000,6 +3241,9 @@ webui_v2:
   m_6d7b9597e333: Reject
   m_6dfaec888f7a: Administrator GitHub username
   m_6e12a0d13028: No summary available.
+  m_6e25ad434b1f: 'Length: {0}–{1}'
+  m_6ea0d7e8cfd7: Control sales entry points and configure Stripe, Paddle, Alipay, NOWPayments and TRON.
+  m_6ec168f251c4: Search setting names, descriptions, keys or keywords…
   m_6ed7c1c95e0f: All severities
   m_6ee0fb7d1b2b: Generate new recovery codes
   m_6ee84489eb8d: All orders
@@ -3007,8 +3251,12 @@ webui_v2:
   m_6f2f8e350331: Host Updater
   m_6f4d5f1c7328: Date
   m_6f5611800192: SMTP username
+  m_6f7df93de4de: Request failed; retry when ready.
+  m_6f93e4b985f4: Review changes
   m_6f9798549837: Search members
+  m_6fa3b433580c: AI provider accounts
   m_6fe3baac2fe2: Batch name
+  m_70512ea00b26: Confirm and save
   m_70530a78f5fb: Review queue
   m_70a9668db793: Repository status
   m_70abb21f80f0: Management
@@ -3017,6 +3265,7 @@ webui_v2:
   m_712da14e1299: Showing the latest 100 sessions you can access.
   m_7161bc9b15d6: Select plan {0}
   m_716fc9ccde94: Plans & pricing
+  m_719761aca7bb: Approval & blocking policy
   m_71cf81dc997a: JSON file, up to
   m_72030606ccba: Describe what you would like the Agent to adjust…
   m_7266fee0533a: Discard unsaved changes for this model?
@@ -3031,19 +3280,28 @@ webui_v2:
   m_7362dd47ed49: Actual model usage
   m_73c98e4d9e2a: Delete preference {0}
   m_73f82b6ed917: Disabled
+  m_740a51b29653: The selected model's account is disabled or unavailable.
+  m_744c1f2e2991: (empty string)
   m_745a837aee45: Unverified
   m_74a6a386d7c4: Per-user business execution limit
+  m_74aa4a86161a: 'Max: {0}'
+  m_74bc21e0c4b7: Configure search provider, API key, result count and timeout.
   m_7501c36a43be: Relevant code
   m_75223a4886f9: Join repository community?
   m_7563a1f9785a: Pull request
   m_759b479cb1f0: Show more
+  m_759e95c19db7: Export & restore backups
   m_75b1416a35ea: Adjust this balance?
   m_76056378570e: Telegram ID (blank to unbind)
   m_76178e327d7f: Extract knowledge
+  m_7657a18c40b9: Notifications
   m_765ef60e13e4: Leave settings?
+  m_767dbfd7363f: Active
   m_77002ea6ee6a: Verify
   m_771388c1fc61: Loading models…
+  m_774ee1b6725c: Configure GitHub OAuth credentials and redirect URLs for user sign-in.
   m_7763e1a2e8e6: Balance alert updated
+  m_7787667847b0: '{0} lines · {1} chars ({2}…)'
   m_778bc94ad04a: Check the user ID and amount (Credits allow up to six decimal places).
   m_77bee6301e1c: Account security
   m_78298e5f96fd: Repository name
@@ -3054,6 +3312,7 @@ webui_v2:
   m_7944d36ea16b: Maintenance
   m_79db5ab8907a: Clear search
   m_79f048036fb6: Available versions
+  m_7a5a65649a64: Configure SMTP connection, encryption, credentials and sender address.
   m_7a9dea9c2f9d: Plugins & runtime permissions
   m_7ad3f05ca994: Credit transactions
   m_7af529b02a7f: No matching settings
@@ -3061,6 +3320,7 @@ webui_v2:
   m_7bd9b5a8bab2: Search repositories…
   m_7bef21343a36: Search community projects
   m_7c24b43c3577: Check failed; keeping the last successful result
+  m_7c328c4265e9: Repository scan prompt
   m_7c3c0ba74f68: Create order
   m_7c7db4304e8c: Continue payment
   m_7c822f53ae9e: Plugin configuration saved
@@ -3074,9 +3334,11 @@ webui_v2:
   m_7dad0bc8578e: No announcements
   m_7db93b761c14: Super administrator access required
   m_7e4e168279ba: Scan settings
+  m_7e4fa4ed7839: Automatic label recommendations, GitHub label definitions and repository scans
   m_7e61a885a65e: Refund request
   m_7e886613664f: Manage billing
   m_7eee80e776ad: Next check
+  m_7eef2252cbb0: Database & Redis connections
   m_7eff4efac768: Enable {0}
   m_7f0c6bb8bc3b: Generate codes
   m_7f5d15fe637d: Discard changes
@@ -3088,11 +3350,13 @@ webui_v2:
   m_801410fafe94: Content (Markdown)
   m_8073cbccceb0: New tasks will use the saved tools, hooks and permission configuration.
   m_8074ed055d37: Messages
+  m_809193551843: Requires channel credentials
   m_809542dc43c8: Could not save. Check service IDs, addresses, permissions and credential references; environment credentials must use SAKURA_MCP_*.
   m_809fa044a64b: Submit reconciliation evidence
   m_80b1cce01127: Binding link created
   m_80e1fdb9c2bf: You are all caught up
   m_810699cc9113: Save selection
+  m_811cd21d353d: Configure Approve / Request Changes thresholds, repo overrides and templates.
   m_8125de9f2065: Recent quota usage
   m_812c103556ab: The plugin configuration changed on the server. Reload before editing to avoid overwriting changes.
   m_813a23f51b04: Unavailable channel
@@ -3115,7 +3379,9 @@ webui_v2:
   m_83554ef6b87d: Could not confirm the reset outcome. Check service status before trying again.
   m_8369b221ac61: Version view
   m_836ae5716d11: Cache read / million tokens (optional)
+  m_83dd274bceb9: Configure TOTP authenticator apps, recovery codes and WebAuthn passkeys.
   m_83e0b025008a: 'Type the following confirmation:'
+  m_84782e1984b7: Inspect running version, documentation and legal terms
   m_84799702ecf5: Code files
   m_849822ed75b1: Test notification queued
   m_854e8701f20d: Scan statistics are unavailable. The list remains available independently.
@@ -3137,10 +3403,13 @@ webui_v2:
   m_86fe4b67ae6f: Models updated
   m_8727bc13f0e1: Could not delete the workspace. Check that its tasks have finished.
   m_87936ade9a32: Could not confirm the restore outcome. Refresh and inspect current settings before retrying.
+  m_87b5b1cc8349: Saved {0} change(s)
   m_87bd696d4277: Quota updated
+  m_87e3bf867d2b: Configure Agent allowlists, sandbox/network policy, test execution and Draft PR review.
   m_87e6d28d183a: Destination
   m_87ec7884ad93: Could not check for updates. Please try again.
   m_880dfdedd8eb: Image digest
+  m_8822cda1e4ae: Persisted; takes effect after restarting the application.
   m_885a77c73324: Role
   m_88632e66cfa1: Add account
   m_887904c730e5: The index will be updated in the background using the current configuration. This may take a few minutes.
@@ -3148,6 +3417,7 @@ webui_v2:
   m_889c15b3269c: This starts a new scan execution with quota and billing admission.
   m_88de49b9f8be: Notification preferences
   m_88e1e7b9bdf4: Sign-in OAuth Client Secret
+  m_88e43b583283: 'Default: {0}'
   m_89008ab5317f: Reviews will appear here when your GitHub App receives a pull request.
   m_891db4eff48c: Choose a valid JSON backup exported by Sakura AI.
   m_8958a5748a0c: Use for new version
@@ -3179,6 +3449,8 @@ webui_v2:
   m_8d5bb76cc554: Authenticator
   m_8d8c535b9227: Embedding endpoint
   m_8dcb633ca982: All repositories
+  m_8de7072edbc7: List ({0} items)
+  m_8e6611ce7dc0: Default language & output
   m_8e6db71bdf64: Pick up where you left off with your reviews, issues and Agent tasks.
   m_8eaf4ef3f83f: This change takes effect immediately for this user.
   m_8ecf894b5201: Review details
@@ -3189,7 +3461,9 @@ webui_v2:
   m_8ff2a3e14649: Could not start a scan. Check repository access, cooldowns and scan settings.
   m_902452e587c0: Delete
   m_902ec401475f: All
+  m_904e8b91c6b1: Saving {0}/{1}…
   m_904f86d32648: Candidate score
+  m_9088b3e98098: Control scheduled repository scans, cooldowns and Issue creation severity.
   m_909af76c789f: Context operations
   m_90a0a392915b: Settled
   m_90b3c7a2d17b: Cleanup did not complete. Refresh the list and check task status.
@@ -3201,6 +3475,7 @@ webui_v2:
   m_921160999ed6: Retry this scan?
   m_922aa9e6d222: Search members…
   m_925538222947: The requester will see this decision.
+  m_926c334d2657: Configure mutually exclusive label groups.
   m_926e26a15b07: Administrator Telegram ID (optional)
   m_92925c1224bf: decimal places
   m_92a5cd1a9f8b: Language
@@ -3209,6 +3484,7 @@ webui_v2:
   m_936810909e34: This category does not exist or your account cannot access it.
   m_936ef0edb262: Replace signing secret (leave blank to keep)
   m_93742227be67: OAuth callback URL
+  m_93909bce4d60: Restart required
   m_93935476e49c: Rerank model
   m_94688a3a4cec: Hide from order list
   m_9471013d85b2: Task conversation
@@ -3230,18 +3506,23 @@ webui_v2:
   m_96c6ee79ee6e: Start a new full scan of this repository.
   m_96cbd19e3765: This creates a new analysis task using the current quota and billing policy.
   m_96e8551e6ac4: No matching users
-  m_96f7c3548af9: Application, authentication and service configuration
   m_97450793e2bc: Implementation
   m_976c8ba94741: Account unavailable
   m_979c39a688a5: JSON is incomplete. Correct it before saving.
+  m_97a1d546d0bf: Context tools & repository memory
   m_97b40f6249ca: In progress
+  m_97d44bc52c21: Export configuration backup & import restore
   m_97f334dd9041: You do not have permission to view this content.
+  m_97fba9d228a3: GitHub label definitions
+  m_983e15563fba: File filter rules
   m_9855e963248b: Critical only
   m_9857aabae342: Download backup
   m_986421599659: Reviews
   m_9869e722767d: Duration in days
   m_987cf24bb210: Worktrees · {0}
+  m_989269d3823e: Control automatic Pull Request summary generation.
   m_98d4f497ae0a: Created {0} · Updated {1} · Removed {2} · Unchanged {3}
+  m_99023d6c6c4a: PR change summary
   m_997a12bf5a9a: Current quota benefits
   m_998286e93513: Runtime permissions
   m_9989753b65f3: Provider currency
@@ -3249,6 +3530,7 @@ webui_v2:
   m_99efa9d0c3de: Scans use the current AI configuration, quotas and charging policy.
   m_99fb3e894170: This deletes all local copies and worktrees for {0}. The remote repository is unaffected.
   m_9a11ab757c04: Sign in with your device fingerprint, face recognition, or security key.
+  m_9a11febac58e: Connect AI accounts, assign task models & fallbacks, and tune request policy
   m_9a2e6bad7bad: Check the source URL or skill package format.
   m_9a3dbc0f25d4: PR reviews per month
   m_9a46ea7816ef: Priority {0}
@@ -3256,6 +3538,7 @@ webui_v2:
   m_9a634dad2a65: Search repositories
   m_9a8916c2c50c: Preflight passed
   m_9ad62a468cb1: Feedback was not submitted. Check the task status and try again.
+  m_9b204c60495f: Web search
   m_9b475aed382b: Other images
   m_9b4ac8e5a707: Close navigation
   m_9b7299260186: Manage indexes and follow review activity across your connected repositories.
@@ -3270,6 +3553,7 @@ webui_v2:
   m_9c4dbf86047f: Cache read
   m_9c6b6c636247: Discovering…
   m_9c738307eaea: Updated
+  m_9c81fe520af0: Locate
   m_9c9e29487861: Backup generated. Check your browser downloads.
   m_9caf7c199c17: No matching versions
   m_9ccc99b874a6: Discover saved account models
@@ -3284,9 +3568,11 @@ webui_v2:
   m_9e9051a09aa4: Start scans
   m_9e940281a66e: Operation did not complete. Check the settings and operational logs before retrying.
   m_9ea3c47cec32: Indexing
+  m_9ec4367bd178: Empty list (0 items)
   m_9ee63a595610: Markup multiplier
   m_9ef3ff8d89d4: Results and feedback by file
   m_9f05ac92e9cb: Connections
+  m_9f124acac318: Primary GitHub App
   m_9f3741e2a68a: findings
   m_9f41cb5755c3: Number of codes
   m_9f49c76cda6b: Connected, refresh
@@ -3296,9 +3582,11 @@ webui_v2:
   m_9f75f3907d4d: The announcement will be published and delivered according to user preferences.
   m_9f81a10385a7: Loading settings
   m_9fa37bbd482e: Submission preview
+  m_9fba667f204b: Failed {0}
   m_9fbac189773f: Automatic checks
   m_9fd74418a53a: Review note
   m_9ff92dd84e64: Comment
+  m_a01d95c3015c: Personal
   m_a01d96e16b7a: No matching reviews
   m_a04f5000f7d6: Application restarting
   m_a0603e6d31ab: Copied
@@ -3312,24 +3600,31 @@ webui_v2:
   m_a26c047b8dea: Redeem
   m_a290d5147baf: This removes local worktrees not used by active tasks, including uncommitted files.
   m_a2d3e6ea626d: Authenticator disabled
+  m_a2e626bae524: Primary {0}/{1} · Fallback [{2}]
   m_a33b2db3c941: This changes the account verification methods and records a security audit event.
   m_a344d59dfba9: Operation ID
   m_a368773302f4: Context update
   m_a36b8ce26adf: Users & security
+  m_a38f8a6b1074: Restart required
   m_a3c6290e2312: Issue analysis
   m_a3c62fc054b8: Exhausted
   m_a3e3416f7de8: Mark all read
   m_a3f34ea9d99c: Balance
   m_a406baec40f8: Notes
+  m_a419209f8ce3: Customize prompts used when generating dependency graphs in AI mode.
   m_a4616f886214: PR reviews
+  m_a4680af1e270: Saved {0} item(s) ({1} pending runtime sync)
   m_a4817887f916: Tool results
   m_a4d1179d3d59: Reserved Credits
+  m_a5272ab60378: Download scoped JSON backups or upload a backup file to restore configuration and users.
+  m_a52747668624: Retrieval-augmented generation (RAG)
   m_a53cd7e87214: Choose a configuration backup. Existing deployment connection settings are preserved.
   m_a543b977fca0: Sender address
   m_a59fd504e163: Confirm creation
   m_a5d002294b72: The action did not complete. Refresh the queue and try again.
   m_a6598d012d65: Signing secret
   m_a65ef6d11a21: Organization
+  m_a6727b7613d6: Saved {0} item(s) ({1} require application restart)
   m_a6a59ac138aa: Save plan
   m_a704adad1edb: Arguments
   m_a717906cbfa6: Call kind
@@ -3339,15 +3634,18 @@ webui_v2:
   m_a7f5c0e6f13c: Analysis submitted
   m_a7f8e61799e8: Could not load these model settings. Check the model ID.
   m_a7fcc561364b: No matching candidates
+  m_a81a63c3a078: Conflict
   m_a81b58b245d5: Compacted history
   m_a82fed991f69: Account name
   m_a83515106e98: Locked
   m_a86575877bb7: All scans
   m_a8726f601875: Changed
+  m_a88768377925: Control automatic labeling, confidence threshold and auto-creation.
   m_a895fc626257: Install Agent skill
   m_a89e25b646cf: Analysis summary
   m_a8a9fe034a79: This removes indexed content in {0}.
   m_a8b198e0e8a3: Potential duplicate of
+  m_a8d7ea10882f: Code chunk indexing
   m_a927cea4e134: Rerank endpoint
   m_a94a1384d44a: Refresh summary
   m_a951fafd38e4: Passkey added
@@ -3363,11 +3661,13 @@ webui_v2:
   m_aad81a4f78bc: Delete AI account?
   m_ab0356a68ebf: Subscription
   m_ab037fd09a6e: Credits granted
+  m_ab1b8754bab9: Retry unsaved items ({0})
   m_ab1e668d0407: Pending pricing
   m_ab6256bbf179: Use a different account
   m_ab91c1bf0713: Personal settings
   m_ab9bc2fd38b2: Recovery codes
   m_abbd63820a65: Sign-in OAuth Client ID
+  m_abe31334a3d1: chars
   m_ac2360cb2370: Search repository or number…
   m_ac64340e6b7a: The file exceeds the size limit.
   m_ac9552fa58a3: Device name
@@ -3380,6 +3680,7 @@ webui_v2:
   m_adc04e3440c3: Queue updated
   m_addce7efe157: Submitted {0} repository scans
   m_ae522b5b46c8: No matching skills
+  m_ae52342a2436: Security
   m_ae5519560e68: Delete skill?
   m_ae82259d8d71: Select all visible rows
   m_af1c7eeb45e1: Issued plan
@@ -3393,9 +3694,12 @@ webui_v2:
   m_b09513d63a09: Triggered by
   m_b0b6963ec1b0: Two-step verification
   m_b0f2efb4b14c: Check result
+  m_b0f5cc0b4c9f: MCP servers, hooks & runtime permission profile
   m_b102991b6ca0: Suggested assignees
   m_b131ac1e184b: Search title, repository or author
   m_b13bac2c7bb8: Skipped
+  m_b18559b80a89: seconds
+  m_b19bba8a86eb: Set UI language, color theme, page size and personal review output language.
   m_b19e8572b94b: Switch model?
   m_b2239eb15dbf: Full access
   m_b248fc2d6f93: Publication starts delivery to eligible subscribers.
@@ -3407,6 +3711,7 @@ webui_v2:
   m_b2f0208b9680: Select model
   m_b2f2956f387b: Create user
   m_b32f4b968d74: Clear failed records
+  m_b3582d90a32f: Email notifications (SMTP)
   m_b39ad495a579: days
   m_b3c1d962097d: Rejected
   m_b3d72e8f930a: New thread
@@ -3418,44 +3723,56 @@ webui_v2:
   m_b4ed2ae2aaae: Update available
   m_b514bf896866: Apply “{1}” to {0} selected items?
   m_b53efee332c8: Sign in with your fingerprint, face or device PIN.
+  m_b546f066cd11: < {0}
   m_b580f9cc9924: Repositories
   m_b5879e7f5b62: Search pages or settings
   m_b58dd024f4f0: Invocation
   m_b58fa1271338: Enabled
+  m_b641c0aef9ee: Section match
   m_b644c72d62eb: Reload
   m_b653be6075e1: Manage access
   m_b66312de82fd: Action required
-  m_b6679b4b6015: Showing the first 80 results. Refine your search for more.
   m_b66c6b1983b4: Reviewing
   m_b6a08d758238: Users with financial records will be disabled while their records are retained. Other users will be deleted.
   m_b6c48a7addcb: Clear collection?
+  m_b6cc28749ec6: Deployment read-only
   m_b72f992913e5: Protocol
   m_b78650777d9a: Verify the amounts, currencies and payment source. This may complete a payment or refund.
   m_b78727c01cca: Order history
+  m_b7950209d7e7: Daily stars
   m_b7a969e429e8: Low balance alert
   m_b7eedc82b89f: No linked task
+  m_b806c732a73b: Banned
+  m_b807f56b5db3: Set instance default UI language and global AI output language.
   m_b82e96f12e30: Source revision
   m_b8bc5e95d108: No plans available
   m_b8eaccdde98f: Close unavailable job record?
+  m_b8f2bafceb0c: Inline diff comments
+  m_b90ea9540f83: 3. Per-model capabilities & parameters
+  m_b94c0e029ccb: Initial user & admin quotas
   m_b98693a362d0: Agent tasks
   m_b9b0d48a7bfe: Could not create this task. Check issue access and configuration.
   m_b9e540e269ef: Price per unit
   m_b9f7e39d9894: Save to repository?
+  m_b9ffb1b01b6d: View deployment-owned database and Redis connections; probe them in System maintenance below.
   m_ba0916a9ac4b: Updates
   m_ba340104a257: Start
+  m_ba36f21a005c: On this page
   m_ba489ffa895e: First deployment
   m_ba74d3bd5baa: Your feedback
   m_ba85595a3266: This instance will briefly stop serving requests. Save your changes first.
   m_baadb96f42f1: Working…
   m_babe142e148a: Unnamed version
   m_bad85bee2685: Close
-  m_bb0ac7ce40bb: Appearance, language and your experience
   m_bb3c6aa16182: Refactor
   m_bb592def8e88: Could not load settings.
   m_bb7bddf3312f: Submit evidence
   m_bbc0d2bbb472: Update requirements are not met
+  m_bbc7228fda18: hours
   m_bbd7ff70a013: To
   m_bc19ed365dd7: Check again
+  m_bc1f2fe7d353: Save changes
+  m_bc3b2a185363: Configure dependency graph generation mode and node/file limits.
   m_bc4f5ca95cf5: Reveal
   m_bc662c08e369: No reason provided
   m_bca3d4a94a8c: Paid
@@ -3463,17 +3780,24 @@ webui_v2:
   m_bcf85d1ac434: Deployment status checked?
   m_bd103c2be075: Connected
   m_bd270c72228e: Pushing
-  m_be1877c8a04f: Label definitions, recommendations and repository scans
+  m_be15428ae6b5: Billing sales & payment gateways
   m_be1bdaf3b998: Saving configuration and initializing data. The application will restart automatically — please keep this page open…
+  m_be7012c8976a: Unsaved changes bar
   m_be8886f09463: Refresh status
+  m_bea8ddb28168: Description match
   m_beee9b52d339: No audit records
   m_bf014482c474: Monthly
+  m_bf5b57d440f0: Application listener & runtime
   m_bfe4773ceecc: Input / output tokens
+  m_c0280eac7684: Match quick, standard, deep and large review tiers by PR size and customize prompts.
   m_c055e632b1b6: Expiry (with timezone; blank for no expiry)
   m_c07de6e60255: Recorded token usage
   m_c0820929048e: Moderation note
   m_c08a56d6be8b: Settlement currency
+  m_c09852f4f2cb: Object ({0} entries)
+  m_c0cc39e830a9: Define Issue categories, priority rules and bilingual comment templates.
   m_c0ce9858bf3e: Expand summary
+  m_c12f18bf2f18: Self-registration quota multiplier
   m_c140b96d11df: Start deployment update?
   m_c155b062d6e8: Backup type
   m_c183c458b48f: Search releases…
@@ -3488,7 +3812,6 @@ webui_v2:
   m_c36afb3403e2: Diagnostics
   m_c37483f04163: Not running
   m_c39688cc15ff: This content cannot be read right now.
-  m_c3bae2867635: Export configuration or restore a backup
   m_c3bc65946d8c: Choose a backup file
   m_c3d06e89eb38: Describe the goal; leave blank to use the default.
   m_c461cafecb64: Suggested milestone
@@ -3496,6 +3819,7 @@ webui_v2:
   m_c46383b3b381: Error and above
   m_c4aaf8e3f8f3: Task status is temporarily unavailable
   m_c4c126084872: Require enrollment
+  m_c4e10d39f473: Saved {0}
   m_c50149813655: Sync GitHub repositories
   m_c5805d4949d6: Notification preference
   m_c5a946f69369: Model list (one per line)
@@ -3504,9 +3828,13 @@ webui_v2:
   m_c67d82626c17: Reload the plugin and permission configuration saved on the server.
   m_c68dbd98c8e2: Users
   m_c6aea3fc9d28: Enter an account name and check the credential format.
+  m_c6ff1383e89b: Add, test, edit or disable OpenAI, Anthropic, Gemini and custom AI accounts.
+  m_c710125c157b: GitHub OAuth sign-in
+  m_c72a3f0261b5: Label conflict rules
   m_c7359f084879: Cache write / million tokens (optional)
   m_c747a7596c5d: Critical
   m_c79302e0431f: Plan
+  m_c7ac567714f6: Review pending edits by category. Each setting is validated and persisted with its own version; unsaved items stay in your draft.
   m_c7bf287c23e6: Application port
   m_c804c0d4931a: All types
   m_c80bf265972c: View record
@@ -3522,6 +3850,7 @@ webui_v2:
   m_ca508dd3844d: Order
   m_ca7018465b00: Update target
   m_ca97a036b892: Passkeys
+  m_cb267ed2509a: '> {0}'
   m_cb31737a72c9: Historical balance alerts
   m_cb55478c491e: Language, appearance and notifications
   m_cb71de60ba3c: Skill installed
@@ -3541,6 +3870,7 @@ webui_v2:
   m_cd1c72871657: Each preference links an event to one destination. Sensitive notifications use verified private destinations only.
   m_cd4dd922b140: Discovery failed; saved models remain available
   m_cd5a39b55907: Action submitted
+  m_cd6be42fb89e: Confirm sensitive updates?
   m_cdbe94f00dd9: This updates the repository community state.
   m_ce38d9f6be09: Branch and execution options
   m_ce6cb799a805: Target
@@ -3549,8 +3879,10 @@ webui_v2:
   m_ceccd72fb60d: All queue records
   m_ced4a6c0425b: Install the GitHub App for your account or organization, then refresh this page.
   m_cf1f93877d34: Check database connection
+  m_cf46de558e9d: Labels & scans
   m_cf6f93797fbb: Toggle enabled
   m_cf738610b335: Not provided
+  m_cf9573730598: '{0} unsaved'
   m_cf9a8aee5803: View order
   m_cfa67756244a: Remaining legacy benefits
   m_cff6ba5e1b83: Update channel
@@ -3565,6 +3897,7 @@ webui_v2:
   m_d0b1943d5772: Unread only
   m_d0e946a21212: Page not found
   m_d1516c39157e: Consumption
+  m_d164a9b68706: Select a model from an enabled account to override context limits, capabilities and reasoning.
   m_d172e103335f: Confirm update target
   m_d18c499c2c2c: Announcements
   m_d1cebd81f67c: '{0} selected'
@@ -3577,15 +3910,19 @@ webui_v2:
   m_d221dcc0a573: Editing
   m_d22e33e20bee: Your changes have not been saved.
   m_d24789b0643b: Reviews and feedback
-  m_d2be13afd3f4: Review strategies, context and output rules
   m_d2de8275a18b: User ID
   m_d314cc991966: Settled Credits
   m_d332f9374510: '{0} reviews need attention'
   m_d33a88af425f: No plans yet
+  m_d3654fc05d6e: PR dependency graph
   m_d380333e180f: Add passkey
   m_d3a470679f41: Search by owner or repository name
+  m_d3abdef5194d: Return to category
   m_d3bd838e45c4: Default
+  m_d41767f4baed: This save will replace {0} sensitive credential(s) ({1}) and may affect running services. Continue?
+  m_d4498e08cc6f: Feature panel
   m_d44aa977abf2: Low
+  m_d4654751052a: Per-model context window, capabilities & reasoning
   m_d465584b46b0: Cancel this scan?
   m_d46dbe6e0da7: Future calls use the new version. Existing calls and historical bills keep their frozen prices.
   m_d47442d32ce3: Detailed content was not captured
@@ -3596,12 +3933,16 @@ webui_v2:
   m_d4c7df05c5fe: Connected to GitHub
   m_d4d9fc7072ff: Restore from backup
   m_d4ffd45302c5: Delete selected
+  m_d501d8c27412: Discard all unsaved setting changes?
+  m_d50f636d1dc0: Listener runtime, GitHub access, notification channels, billing quotas and maintenance
   m_d5725bbf4ad4: Review summary
   m_d573d023e310: Resume from checkpoint
+  m_d5abd6db3e8c: No credential → Will set new credential (hidden)
   m_d611074485e1: Issue analyses per month
   m_d6142dbcc032: Choose the repository to manage.
   m_d68736a683b6: No matching repositories
   m_d6e45500970e: No transactions
+  m_d6fd2605966b: Assign primary models and ordered fallback chains for reviews, summaries and Agents.
   m_d7234fe8fcc1: Waiting for service recovery. Do not submit another restart.
   m_d738574e0527: Tools
   m_d764b4d2641c: Your balance, spending and order history in one place.
@@ -3612,16 +3953,17 @@ webui_v2:
   m_d80deadf38e0: Refresh the code index to locate relevant implementations.
   m_d8331898204c: Security
   m_d837f52f7ffa: Requirements
+  m_d8391a90c21e: Key
   m_d84d47082e7c: Score
   m_d8c0e383d3c2: Review results
   m_d8eda41b6541: Save
-  m_d9097c3f93bb: Task execution, tools and search
   m_d923bfb0d34e: Unban
   m_d93d72dcb832: Migration
   m_d95212cab7d2: Base branch
   m_d96a3f2dce64: Changes requested
   m_d9773b808f51: Install reusable workflows and tool instructions for your Agents.
   m_d99d8e5add59: Notification pages
+  m_d9a1c233e3e2: Displayed
   m_d9c65043d62d: Latest version on the current channel
   m_d9cb0f16083f: Confirm
   m_d9f4c553096a: General settings
@@ -3630,6 +3972,7 @@ webui_v2:
   m_dabecf4652b4: Update diagnostic logs
   m_db0a4c75d56f: Network status
   m_db0ec63cc027: Member sort
+  m_db60fe9bb890: URL fetching
   m_db62bee76c63: Open navigation
   m_db76a849ed60: Remove delivery channel?
   m_dbba1b5b86fc: AI selection criteria (optional)
@@ -3643,21 +3986,30 @@ webui_v2:
   m_dca8c3930eff: Star community
   m_dce63ce1a2da: Cancel
   m_dcf3abd2d14c: Low balance
+  m_dd1b11e69186: Pending sync {0}
   m_dd7c4a1b6c74: Order updated
   m_dda2ccb423f1: Candidate tasks
+  m_ddbfb6c437b5: Configured credential → Will update (hidden)
+  m_dddecc0176a5: Manage notification concurrency, retry backoff, Webhook policy and verification limits.
   m_ddf41461379d: Check your connection and try again. If this continues, check your account permissions.
   m_de1510069bb9: Find the credential in the .setup-token file inside the configuration directory.
   m_de4eef18ce09: Analyze again
   m_de5e2ffdbb74: Review
   m_de7483414e04: Grant
+  m_de9bd952de98: Reauthorization required
   m_deb952deb7c8: Members
   m_debbf078e7e5: GitHub App access
   m_debe15c715ca: Joined
   m_dedadf342ad8: The default notification rules will apply to this event.
   m_def0763956e8: Copy
+  m_df299a373736: Control whether findings are published directly on PR diff lines.
+  m_df4bc97e3b1e: Configure the embedding model and endpoint used for vector indexing.
   m_df859a7d97fa: The system will save configuration, create the administrator and restart the application.
   m_df87b28e3cd7: Check again
   m_dfa6b16b199a: View pricing
+  m_dfaaf950a641: minutes
+  m_dfe2123ed0ac: Dismiss search banner
+  m_e00201add187: Star community global policy
   m_e032d507a97e: No worktrees
   m_e042ea14dbf6: PRs today
   m_e04ea2ceccd7: Purchase
@@ -3667,18 +4019,20 @@ webui_v2:
   m_e12fab4b4c95: Waiting for the Agent to start.
   m_e17cdb6bf2d6: Action type
   m_e18c9dff6573: Enter API key
+  m_e1ba019a0566: Review tiers & prompts
   m_e1c0144f7b69: Current version
   m_e1d05ee56b79: Select
   m_e2212f458dc8: Refunded
   m_e22b63a7b496: Account security
   m_e22bd72f0b4b: Operation completed
+  m_e258596ea9ff: Changed on the server; review the server value before saving.
   m_e2bffcfe5ea6: Type
   m_e2d3d402c2c1: Execution rounds
   m_e359157e73bd: Maximum upload size
-  m_e36122f2c596: Choose a model from a configured account. Capability overrides are shared by accounts using the same provider and model.
   m_e389a3905d50: Allowed tools
   m_e3f5ec711cfa: Region
   m_e3f9a4f371e2: Medium
+  m_e4002ed85285: Two-factor authentication & Passkeys
   m_e42dd5e1f731: Some settings require an application restart.
   m_e438e92a7d48: Finish setup
   m_e4498fee5623: Preview content
@@ -3690,6 +4044,8 @@ webui_v2:
   m_e499afaeb3c4: Daily review counts for the last 30 days. Detailed data is available in the table below.
   m_e4c169a04955: Verify
   m_e4cdac946be7: Edit, publish and manage announcement delivery.
+  m_e5150ff2688d: System maintenance & diagnostics
+  m_e51672283f3c: Configure timeouts, retries, fallback candidate limits, compression and activity capture.
   m_e5846d3da70d: Audit logs
   m_e59c73274325: Sign out
   m_e5b47096a07b: 'Last used: '
@@ -3715,6 +4071,7 @@ webui_v2:
   m_eaae875b61be: Jump to latest
   m_eac34c8e1818: Stop the current scan execution.
   m_eb0a02631bba: Notification center
+  m_eb113a5f77c8: Repository scanning
   m_eb39d25f5c79: System
   m_eb9005291d5d: Save shared repositories?
   m_eb943af0cd67: Documents
@@ -3740,6 +4097,7 @@ webui_v2:
   m_ef1195d46d5b: Details
   m_efc016afbf49: Grant this plan?
   m_efcab8534ad5: Reported usage meter
+  m_f058f39b0f9c: Must be ≤ max interval
   m_f07cfbf0dd72: Plan
   m_f0844827ffa2: Manage the accounts and repositories Sakura AI can access.
   m_f0e8068d8670: Database reset confirmation
@@ -3748,21 +4106,28 @@ webui_v2:
   m_f111b3aabf7b: Show all
   m_f114589dc985: Submit reconciliation evidence?
   m_f1259a613419: Output tokens
+  m_f14ae97686ad: Choose a model from an enabled account. Capability overrides are stored by provider + model ID and shared across matching accounts.
   m_f1531b1eaeb6: Could not preview this issue. Check the reference and access.
+  m_f1764bac98e1: Read-only
   m_f17b418bd665: Could not delete. Remove role bindings and check billing configuration first.
   m_f18c1911d114: New price from version {0}
+  m_f1b72c45450f: Restart required {0}
   m_f1db6ad31828: The server preserves codes linked to redemption history.
+  m_f26ca26e2ac5: Alias / bilingual match
+  m_f27217101c50: Telegram notification bot
   m_f2934f35a54f: Historical orders and purchased benefits are retained. Referenced plans cannot be permanently deleted.
   m_f2977891e300: GitHub authorization
   m_f2f30981c396: No refund requests
   m_f3171248b548: Title (optional)
   m_f31db8e475fb: Choose repository
+  m_f37e8dc8a9b1: Override context window, max output tokens, tool/vision capabilities and thinking mode per model.
   m_f3952207f6d6: Application timezone (blank uses system)
   m_f3bfa9ee2012: Edit plan
   m_f3d3eb5ef99a: Saving…
   m_f3da338521ab: Issue analyses per day
   m_f4838009bb37: Input tokens
   m_f48ede8cbacb: Updated
+  m_f4bafe36d89a: There are no unsaved setting changes.
   m_f4d509b48cb8: Connect GitHub
   m_f4e28a6a12a3: Refund policy
   m_f538dce8806c: No matching queue records
@@ -3772,6 +4137,7 @@ webui_v2:
   m_f65f6e1e6009: Amounts and IDs must be positive integers.
   m_f6684186983a: Apply
   m_f68f1c3a1eb2: Settings unavailable
+  m_f70e5eb0a78e: Needs attention
   m_f728949e790e: Read announcement
   m_f733ce5bcab7: Code index
   m_f759f8a7faf8: Clean inactive worktrees?
@@ -3791,6 +4157,7 @@ webui_v2:
   m_f8da7b70ea93: Disable {0}
   m_f8f467e66879: These codes are shown only once. Save them somewhere safe. Each code can be used once.
   m_f90563d06210: '{0} waiting'
+  m_f90817b66da9: Task runtime, sandbox & network policy, web tools and plugin permissions
   m_f9092eb5690e: Setup complete
   m_f917a29c1f6b: The task status could not be confirmed. Check before trying again.
   m_f93e5d0d5476: Start analysis
@@ -3804,13 +4171,16 @@ webui_v2:
   m_faa5b37a0615: Use multiple providers, accounts and ordered fallback models.
   m_fad9d8279690: Secure your account
   m_faf42acc16ab: Pagination
+  m_fb3e52a2364e: Discard your draft and load the current server value?
   m_fbc31281df67: 'For example: email me when an Agent task needs attention.'
   m_fc6871eeffad: Install from
   m_fc8e644fc752: Administration
   m_fca5b6d1f87e: Customized
+  m_fcc3456bcb9c: 1. Connect AI accounts
   m_fcc5f1bdeee7: Changed lines
   m_fced7be4bc2a: Verify receiver
   m_fd32702a490a: Find candidates
+  m_fd4ca7c358a8: Triggers, concurrency & Check Runs
   m_fd560b7e2a76: Advanced JSON editor
   m_fd583de610b9: Cancel
   m_fd78d0dc9a94: Usage & billing

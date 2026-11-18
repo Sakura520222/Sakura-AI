@@ -51,22 +51,24 @@ test('scan reports preserve a zero score and queue retry changes the real record
   await expect(row.getByText('等待中', { exact: true })).toBeVisible();
 });
 
-test('virtual passkey registration and sign-in use real browser assertions', async ({ page, context }) => {
+test('virtual passkey registration and sign-in use real browser assertions', async ({ page, context, baseURL }) => {
+  const origin = new URL(baseURL!);
+  origin.hostname = 'localhost';
   const cdp = await context.newCDPSession(page);
   await cdp.send('WebAuthn.enable');
   const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', { options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } });
   try {
-    await page.goto('http://localhost:8768/app/settings/personal?tab=security');
+    await page.goto(new URL('/app/settings/personal?tab=security', origin).href);
     await page.getByLabel('设备名称', { exact: true }).fill('Browser test passkey');
     await page.getByRole('button', { name: '添加通行密钥', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Browser test passkey', exact: true })).toBeVisible();
     await context.clearCookies();
-    await page.goto('http://localhost:8768/app/login');
+    await page.goto(new URL('/app/login', origin).href);
     await expect(page.getByRole('heading', { name: /登录你的.*工作空间/ })).toBeVisible();
     const response = page.waitForResponse(value => value.url().endsWith('/api/v1/webui/auth/passkeys/verify'));
     await page.getByRole('button', { name: '使用通行密钥', exact: true }).click();
     expect((await response).ok()).toBeTruthy();
-    await expect(page).toHaveURL('http://localhost:8768/app/');
+    await expect(page).toHaveURL(new URL('/app/', origin).href);
     const state = await page.evaluate(async () => (await fetch('/api/v1/webui/auth/state')).json());
     expect(state.authenticated).toBe(true);
   } finally {

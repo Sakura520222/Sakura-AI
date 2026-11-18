@@ -1,4 +1,4 @@
-import type { ConfigField, Json, Schema } from "./types";
+import type { Category, ConfigField, Json, Schema } from "./types";
 
 export function same(a: Json, b: Json): boolean {
   const canonical = (value: Json): string =>
@@ -188,14 +188,247 @@ export interface Entry {
     | "pending"
     | "restart_required";
 }
+
 export const isDirty = (entry: Entry): boolean =>
   !same(entry.draft, entry.field.value);
+
+function changedBaseline(previous: ConfigField, current: ConfigField): boolean {
+  return (
+    previous.source !== current.source ||
+    !same(previous.value, current.value) ||
+    (previous.sensitive && previous.version !== current.version)
+  );
+}
+
+export type BatchOutcomeStatus =
+  "saved" | "pending" | "restart_required" | "failed" | "conflict" | "skipped";
+
+export interface BatchItemOutcome {
+  id: string;
+  category: Category;
+  group: string;
+  label: string;
+  sensitive: boolean;
+  status: BatchOutcomeStatus;
+  reason?: string;
+}
+
+export interface BatchSaveReport {
+  completedAt: number;
+  outcomes: BatchItemOutcome[];
+  counts: {
+    saved: number;
+    pending: number;
+    restartRequired: number;
+    failed: number;
+    conflict: number;
+    skipped: number;
+  };
+}
+
+export interface BatchSnapshotItem {
+  id: string;
+  field: ConfigField;
+  draft: Json;
+  generation: number;
+}
+
+const CROSS_FIELD_PAIRS: readonly [string, string][] = [
+  ["star_aid_min_interval_minutes", "star_aid_max_interval_minutes"],
+  ["code_chunk_overlap", "code_chunk_size"],
+  [
+    "pr_issue_related_confidence_threshold",
+    "pr_issue_closing_confidence_threshold",
+  ],
+];
+
+export function fieldRefreshScope(field: ConfigField): string {
+  if (field.id.startsWith("model/")) {
+    const parts = field.id.split("/");
+    if (parts.length >= 3)
+      return `model:${parts[1]}:${decodeURIComponent(parts[2])}`;
+  }
+  return `category:${field.category}`;
+}
+
+function writePriority(item: BatchSnapshotItem): number {
+  const key = item.field.key;
+  if (
+    item.field.type === "boolean" &&
+    (key.endsWith("_enabled") || key.startsWith("enable_")) &&
+    item.draft === false
+  )
+    return 0;
+  if (item.field.sensitive) return 1;
+  if (
+    item.field.type === "boolean" &&
+    (key.endsWith("_enabled") || key.startsWith("enable_")) &&
+    item.draft === true
+  )
+    return 3;
+  return 2;
+}
+
+export function planBatchExecution(
+  snapshots: BatchSnapshotItem[],
+  entries: ReadonlyMap<string, Entry>,
+  unavailablePrefixes: ReadonlySet<string>,
+): {
+  executable: BatchSnapshotItem[];
+  immediate: BatchItemOutcome[];
+} {
+  const immediate: BatchItemOutcome[] = [];
+  const candidates: BatchSnapshotItem[] = [];
+
+  const wholeSectionKeys = new Set(
+    snapshots
+      .filter(
+        (item) =>
+          item.field.id.startsWith("section/") && item.field.path.length === 0,
+      )
+      .map((item) => item.field.key),
+  );
+
+  for (const item of snapshots) {
+    const entry = entries.get(item.id);
+    if (!entry) continue;
+    if (!entry.field.writable) {
+      immediate.push({
+        id: item.id,
+        category: item.field.category,
+        group: item.field.group,
+        label: item.field.label,
+        sensitive: item.field.sensitive,
+        status: "skipped",
+        reason: "deployment_owned",
+      });
+      continue;
+    }
+    if ([...unavailablePrefixes].some((prefix) => item.id.startsWith(prefix))) {
+      immediate.push({
+        id: item.id,
+        category: item.field.category,
+        group: item.field.group,
+        label: item.field.label,
+        sensitive: item.field.sensitive,
+        status: "skipped",
+        reason: "model_unavailable",
+      });
+      continue;
+    }
+    if (entry.conflict) {
+      immediate.push({
+        id: item.id,
+        category: item.field.category,
+        group: item.field.group,
+        label: item.field.label,
+        sensitive: item.field.sensitive,
+        status: "conflict",
+        reason: "conflict",
+      });
+      continue;
+    }
+    const invalid = validateValue(entry.field, item.draft);
+    if (invalid) {
+      entry.error = invalid;
+      entry.state = "failed";
+      immediate.push({
+        id: item.id,
+        category: item.field.category,
+        group: item.field.group,
+        label: item.field.label,
+        sensitive: item.field.sensitive,
+        status: "failed",
+        reason: invalid,
+      });
+      continue;
+    }
+    if (
+      item.field.id.startsWith("section/") &&
+      item.field.path.length > 0 &&
+      wholeSectionKeys.has(item.field.key)
+    ) {
+      immediate.push({
+        id: item.id,
+        category: item.field.category,
+        group: item.field.group,
+        label: item.field.label,
+        sensitive: item.field.sensitive,
+        status: "skipped",
+        reason: "section_overlap",
+      });
+      continue;
+    }
+    candidates.push(item);
+  }
+
+  const ordered = [...candidates].sort((a, b) => {
+    const scopeCompare = fieldRefreshScope(a.field).localeCompare(
+      fieldRefreshScope(b.field),
+    );
+    if (scopeCompare !== 0) return scopeCompare;
+    const priorityDiff = writePriority(a) - writePriority(b);
+    if (priorityDiff !== 0) return priorityDiff;
+    return a.field.key.localeCompare(b.field.key);
+  });
+
+  // Enforce safe ordering for bounded (lower <= upper) cross-field pairs.
+  for (const [lowerKey, upperKey] of CROSS_FIELD_PAIRS) {
+    const lowerIdx = ordered.findIndex((item) => item.field.key === lowerKey);
+    const upperIdx = ordered.findIndex((item) => item.field.key === upperKey);
+    if (lowerIdx === -1 || upperIdx === -1) continue;
+    const lowerItem = ordered[lowerIdx];
+    const upperEntry = entries.get(ordered[upperIdx].id);
+    const currentUpper =
+      typeof upperEntry?.field.value === "number"
+        ? upperEntry.field.value
+        : Infinity;
+    const desiredLower =
+      typeof lowerItem.draft === "number" ? lowerItem.draft : 0;
+    const lowerShouldGoFirst = desiredLower <= currentUpper;
+    if (lowerShouldGoFirst && lowerIdx > upperIdx) {
+      const [moved] = ordered.splice(lowerIdx, 1);
+      ordered.splice(upperIdx, 0, moved);
+    } else if (!lowerShouldGoFirst && upperIdx > lowerIdx) {
+      const [moved] = ordered.splice(upperIdx, 1);
+      ordered.splice(lowerIdx, 0, moved);
+    }
+  }
+
+  return { executable: ordered, immediate };
+}
+
+function buildReport(outcomes: BatchItemOutcome[]): BatchSaveReport {
+  return {
+    completedAt: Date.now(),
+    outcomes,
+    counts: {
+      saved: outcomes.filter((item) => item.status === "saved").length,
+      pending: outcomes.filter((item) => item.status === "pending").length,
+      restartRequired: outcomes.filter(
+        (item) => item.status === "restart_required",
+      ).length,
+      failed: outcomes.filter((item) => item.status === "failed").length,
+      conflict: outcomes.filter((item) => item.status === "conflict").length,
+      skipped: outcomes.filter((item) => item.status === "skipped").length,
+    },
+  };
+}
+
 export class SettingsStore {
   entries = new Map<string, Entry>();
+  groups = new Map<string, string>();
+  messages = new Map<string, string>();
+  batchSaving = false;
+  batchProgress: { completed: number; total: number } | null = null;
+  lastBatchReport: BatchSaveReport | null = null;
   private listeners = new Set<() => void>();
   private revision = 0;
+  private sessionEpoch = 0;
   private queue: Promise<unknown> = Promise.resolve();
   private externalDirty = new Set<string>();
+  private unavailablePrefixes = new Set<string>();
+
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
@@ -209,6 +442,7 @@ export class SettingsStore {
   }
   get dirty() {
     return (
+      this.batchSaving ||
       this.externalDirty.size > 0 ||
       [...this.entries.values()].some((entry) => isDirty(entry) || entry.saving)
     );
@@ -216,15 +450,88 @@ export class SettingsStore {
   get dirtyCount() {
     return [...this.entries.values()].filter(isDirty).length;
   }
+  get dirtyEntries(): Entry[] {
+    return [...this.entries.values()].filter(isDirty);
+  }
+  get retryableIds(): Set<string> {
+    const failed = new Set(
+      this.lastBatchReport?.outcomes
+        .filter(({ status }) => status === "failed" || status === "skipped")
+        .map(({ id }) => id),
+    );
+    return new Set(
+      this.dirtyEntries
+        .filter(
+          ({ field, conflict }) =>
+            failed.has(field.id) &&
+            field.writable &&
+            !conflict &&
+            !this.isFieldUnavailable(field.id),
+        )
+        .map(({ field }) => field.id),
+    );
+  }
+  get savingAny() {
+    return (
+      this.batchSaving ||
+      [...this.entries.values()].some((entry) => entry.saving)
+    );
+  }
+  recordCatalogMetadata(
+    groups?: Record<string, string>,
+    messages?: Record<string, string>,
+  ) {
+    if (groups) {
+      for (const [key, value] of Object.entries(groups))
+        this.groups.set(key, value);
+    }
+    if (messages) {
+      for (const [key, value] of Object.entries(messages))
+        this.messages.set(key, value);
+    }
+  }
+  message(code: string): string {
+    return this.messages.get(code) ?? code;
+  }
   setExternalDirty(key: string, dirty: boolean) {
     if (this.externalDirty.has(key) === dirty) return;
     if (dirty) this.externalDirty.add(key);
     else this.externalDirty.delete(key);
     this.emit();
   }
+  setPrefixUnavailable(prefix: string, unavailable: boolean) {
+    if (this.unavailablePrefixes.has(prefix) === unavailable) return;
+    if (unavailable) this.unavailablePrefixes.add(prefix);
+    else this.unavailablePrefixes.delete(prefix);
+    this.emit();
+  }
+  isFieldUnavailable(id: string): boolean {
+    for (const prefix of this.unavailablePrefixes) {
+      if (id.startsWith(prefix)) return true;
+    }
+    return false;
+  }
+  clearBatchReport() {
+    if (!this.lastBatchReport) return;
+    this.lastBatchReport = null;
+    this.emit();
+  }
   forget(prefix: string) {
     for (const key of this.entries.keys())
       if (key.startsWith(prefix)) this.entries.delete(key);
+    this.unavailablePrefixes.delete(prefix);
+    this.emit();
+  }
+  clearAll() {
+    this.sessionEpoch++;
+    this.entries.clear();
+    this.groups.clear();
+    this.messages.clear();
+    this.externalDirty.clear();
+    this.unavailablePrefixes.clear();
+    this.batchSaving = false;
+    this.batchProgress = null;
+    this.lastBatchReport = null;
     this.emit();
   }
 
@@ -241,7 +548,7 @@ export class SettingsStore {
           state: field.effect === "live" ? "unchanged" : field.effect,
         });
       } else if (!entry.saving) {
-        if (isDirty(entry) && !same(entry.field.value, field.value)) {
+        if (isDirty(entry) && changedBaseline(entry.field, field)) {
           entry.conflict = true;
           entry.error = "conflict";
           entry.state = "failed";
@@ -255,7 +562,7 @@ export class SettingsStore {
             else if (entry.state === "pending") entry.state = "saved";
           }
         }
-      } else if (same(entry.field.value, field.value)) {
+      } else if (!changedBaseline(entry.field, field)) {
         entry.field = { ...entry.field, version: field.version };
       }
     }
@@ -272,7 +579,21 @@ export class SettingsStore {
       ? "failed"
       : isDirty(entry)
         ? "unsaved"
-        : "unchanged";
+        : entry.field.effect === "live"
+          ? "unchanged"
+          : entry.field.effect;
+    this.emit();
+  }
+
+  revert(id: string) {
+    const entry = this.entries.get(id);
+    if (!entry || entry.saving) return;
+    entry.draft = entry.field.value;
+    entry.generation++;
+    entry.error = undefined;
+    entry.conflict = false;
+    entry.state =
+      entry.field.effect === "live" ? "unchanged" : entry.field.effect;
     this.emit();
   }
 
@@ -284,7 +605,7 @@ export class SettingsStore {
       generation: (entry?.generation ?? 0) + 1,
       saving: false,
       conflict: false,
-      state: "unchanged",
+      state: field.effect === "live" ? "unchanged" : field.effect,
     });
     this.emit();
   }
@@ -296,8 +617,10 @@ export class SettingsStore {
       entry.generation++;
       entry.error = undefined;
       entry.conflict = false;
-      entry.state = "unchanged";
+      entry.state =
+        entry.field.effect === "live" ? "unchanged" : entry.field.effect;
     }
+    this.lastBatchReport = null;
     this.emit();
   }
 
@@ -315,6 +638,7 @@ export class SettingsStore {
     if (
       !entry ||
       entry.saving ||
+      this.batchSaving ||
       entry.conflict ||
       !entry.field.writable ||
       (!reset && !isDirty(entry))
@@ -327,17 +651,21 @@ export class SettingsStore {
       this.emit();
       return;
     }
+    const epoch = this.sessionEpoch;
+    const generation = entry.generation;
+    const draft = structuredClone(entry.draft);
     entry.saving = true;
     entry.state = "saving";
     entry.error = undefined;
     this.emit();
     const run = async () => {
-      const generation = entry.generation;
+      if (this.sessionEpoch !== epoch) return;
       try {
         // An earlier queued mutation may have changed this field, e.g. a whole-map reset.
         if (entry.conflict)
           throw { status: 409, body: { error: { code: "conflict" } } };
-        const response = await mutation(entry.field, entry.draft, reset);
+        const response = await mutation(entry.field, draft, reset);
+        if (this.sessionEpoch !== epoch) return;
         entry.field = response;
         if (entry.generation === generation) entry.draft = response.value;
         entry.state = isDirty(entry)
@@ -349,11 +677,13 @@ export class SettingsStore {
         this.emit();
         // The committed write is successful even if this refresh fails. Never replay it.
         try {
-          this.reconcile(await refresh());
+          const fresh = await refresh();
+          if (this.sessionEpoch === epoch) this.reconcile(fresh);
         } catch {
           /* Next focus/retry refreshes versions. */
         }
       } catch (error) {
+        if (this.sessionEpoch !== epoch) return;
         const failure = error as {
           status?: number;
           body?: { error?: { code?: string } };
@@ -364,12 +694,190 @@ export class SettingsStore {
           (entry.conflict ? "conflict" : "network");
         entry.state = "failed";
       } finally {
-        entry.saving = false;
-        this.emit();
+        if (this.sessionEpoch === epoch) {
+          entry.saving = false;
+          this.emit();
+        }
       }
     };
     const result = this.queue.then(run, run);
     this.queue = result.catch(() => undefined);
     await result;
+  }
+
+  captureBatch(onlyIds?: ReadonlySet<string>): BatchSnapshotItem[] {
+    return this.dirtyEntries
+      .filter(
+        (entry) => !entry.saving && (!onlyIds || onlyIds.has(entry.field.id)),
+      )
+      .map((entry) => ({
+        id: entry.field.id,
+        field: entry.field,
+        draft: structuredClone(entry.draft),
+        generation: entry.generation,
+      }));
+  }
+
+  async saveBatch({
+    snapshots = this.captureBatch(),
+    mutateField,
+    refreshScope,
+  }: {
+    snapshots?: BatchSnapshotItem[];
+    mutateField: (field: ConfigField, value: Json) => Promise<ConfigField>;
+    refreshScope: (scope: string) => Promise<ConfigField[]>;
+  }): Promise<BatchSaveReport | null> {
+    if (this.savingAny || !snapshots.length) return null;
+
+    const epoch = this.sessionEpoch;
+    const { executable, immediate } = planBatchExecution(
+      snapshots,
+      this.entries,
+      this.unavailablePrefixes,
+    );
+    const outcomes: BatchItemOutcome[] = [...immediate];
+
+    if (!executable.length) {
+      const report = buildReport(outcomes);
+      this.lastBatchReport = report;
+      this.emit();
+      return report;
+    }
+
+    this.batchSaving = true;
+    this.batchProgress = { completed: 0, total: executable.length };
+    this.lastBatchReport = null;
+    this.emit();
+
+    const run = async (): Promise<BatchSaveReport | null> => {
+      if (this.sessionEpoch !== epoch) return null;
+      const mutatedScopes = new Set<string>();
+      const needsRebaseBeforeNext = new Set<string>();
+
+      for (let index = 0; index < executable.length; index++) {
+        if (this.sessionEpoch !== epoch) return null;
+        const snap = executable[index];
+        const entry = this.entries.get(snap.id);
+        if (!entry) continue;
+        const scope = fieldRefreshScope(entry.field);
+
+        if (needsRebaseBeforeNext.has(scope)) {
+          try {
+            const rebased = await refreshScope(scope);
+            if (this.sessionEpoch !== epoch) return null;
+            this.reconcile(rebased);
+            needsRebaseBeforeNext.delete(scope);
+          } catch {
+            /* Proceed with best known version; server 409 protects against stale overwrite. */
+          }
+        }
+
+        const unavailable = this.isFieldUnavailable(snap.id);
+        const conflict =
+          entry.conflict || changedBaseline(snap.field, entry.field);
+        if (conflict || !entry.field.writable || unavailable) {
+          outcomes.push({
+            id: snap.id,
+            category: entry.field.category,
+            group: entry.field.group,
+            label: entry.field.label,
+            sensitive: entry.field.sensitive,
+            status: conflict ? "conflict" : "skipped",
+            reason: conflict
+              ? "conflict"
+              : unavailable
+                ? "model_unavailable"
+                : "deployment_owned",
+          });
+          this.batchProgress = {
+            completed: index + 1,
+            total: executable.length,
+          };
+          this.emit();
+          continue;
+        }
+
+        entry.saving = true;
+        entry.state = "saving";
+        entry.error = undefined;
+        this.emit();
+
+        try {
+          const response = await mutateField(entry.field, snap.draft);
+          if (this.sessionEpoch !== epoch) return null;
+          entry.field = response;
+          if (entry.generation === snap.generation)
+            entry.draft = response.value;
+          entry.saving = false;
+          entry.state = isDirty(entry)
+            ? "unsaved"
+            : response.effect === "live"
+              ? "saved"
+              : response.effect;
+          mutatedScopes.add(scope);
+          needsRebaseBeforeNext.add(scope);
+          outcomes.push({
+            id: snap.id,
+            category: response.category,
+            group: response.group,
+            label: response.label,
+            sensitive: response.sensitive,
+            status:
+              response.effect === "pending"
+                ? "pending"
+                : response.effect === "restart_required"
+                  ? "restart_required"
+                  : "saved",
+          });
+        } catch (error) {
+          if (this.sessionEpoch !== epoch) return null;
+          const failure = error as {
+            status?: number;
+            body?: { error?: { code?: string } };
+          };
+          entry.saving = false;
+          entry.conflict = failure.status === 409;
+          const code =
+            failure.body?.error?.code ??
+            (entry.conflict ? "conflict" : "network");
+          entry.error = code;
+          entry.state = "failed";
+          outcomes.push({
+            id: snap.id,
+            category: entry.field.category,
+            group: entry.field.group,
+            label: entry.field.label,
+            sensitive: entry.field.sensitive,
+            status: entry.conflict ? "conflict" : "failed",
+            reason: code,
+          });
+        }
+
+        this.batchProgress = { completed: index + 1, total: executable.length };
+        this.emit();
+      }
+
+      for (const scope of mutatedScopes) {
+        if (this.sessionEpoch !== epoch) return null;
+        try {
+          const fresh = await refreshScope(scope);
+          if (this.sessionEpoch === epoch) this.reconcile(fresh);
+        } catch {
+          /* Individual commits already succeeded; next focus/retry refreshes versions. */
+        }
+      }
+
+      if (this.sessionEpoch !== epoch) return null;
+      const report = buildReport(outcomes);
+      this.batchSaving = false;
+      this.batchProgress = null;
+      this.lastBatchReport = report;
+      this.emit();
+      return report;
+    };
+
+    const pending = this.queue.then(run, run);
+    this.queue = pending.catch(() => null);
+    return pending;
   }
 }

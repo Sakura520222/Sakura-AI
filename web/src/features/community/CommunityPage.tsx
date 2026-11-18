@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Star, RefreshCw } from "lucide-react";
@@ -408,10 +408,17 @@ export default function CommunityPage() {
           >
             <div className="wf-actions">
               <input
+                key={`member_q:${params.get("member_q") || ""}`}
                 aria-label={t("搜索成员", "Search members")}
                 placeholder={t("搜索成员…", "Search members…")}
                 defaultValue={params.get("member_q") || ""}
                 onBlur={(event) => parameter("member_q", event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    parameter("member_q", event.currentTarget.value);
+                  }
+                }}
               />
               <select
                 aria-label={t("成员状态", "Member status")}
@@ -420,11 +427,13 @@ export default function CommunityPage() {
                   parameter("member_status", event.target.value)
                 }
               >
-                {["all", "active", "paused", "banned", "reauth_required"].map(
-                  (value) => (
-                    <option key={value}>{value}</option>
-                  ),
-                )}
+                <option value="all">{t("全部状态", "All statuses")}</option>
+                <option value="active">{t("活跃", "Active")}</option>
+                <option value="paused">{t("已暂停", "Paused")}</option>
+                <option value="banned">{t("已封禁", "Banned")}</option>
+                <option value="reauth_required">
+                  {t("需重新授权", "Reauthorization required")}
+                </option>
               </select>
             </div>
             <div className="wf-actions">
@@ -452,6 +461,14 @@ export default function CommunityPage() {
             </div>
             <div className="wf-table-wrap">
               <table className="wf-table">
+                <thead>
+                  <tr>
+                    <th>{t("成员", "Member")}</th>
+                    <th>{t("状态", "Status")}</th>
+                    <th>{t("今日互助", "Daily stars")}</th>
+                    <th>{t("操作", "Actions")}</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {data.admin_members?.map((member) => (
                     <tr key={member.user_id}>
@@ -460,7 +477,8 @@ export default function CommunityPage() {
                         <StatusBadge value={member.status} />
                       </td>
                       <td>
-                        {member.daily_star_used} / {member.daily_star_limit}
+                        {member.daily_star_used ?? 0} /{" "}
+                        {member.daily_star_limit ?? 0}
                       </td>
                       <td>
                         <button
@@ -501,21 +519,29 @@ export default function CommunityPage() {
           >
             <div className="wf-actions">
               <input
+                key={`q:${params.get("q") || ""}`}
                 aria-label={t("搜索管理仓库", "Search managed repositories")}
                 placeholder={t("搜索仓库…", "Search repositories…")}
                 defaultValue={params.get("q") || ""}
                 onBlur={(event) => parameter("q", event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    parameter("q", event.currentTarget.value);
+                  }
+                }}
               />
               <select
                 aria-label={t("仓库状态", "Repository status")}
                 value={params.get("status") || "all"}
                 onChange={(event) => parameter("status", event.target.value)}
               >
-                {["all", "displayed", "not_displayed", "disabled"].map(
-                  (value) => (
-                    <option key={value}>{value}</option>
-                  ),
-                )}
+                <option value="all">{t("全部状态", "All statuses")}</option>
+                <option value="displayed">{t("展示中", "Displayed")}</option>
+                <option value="not_displayed">
+                  {t("未展示", "Not displayed")}
+                </option>
+                <option value="disabled">{t("已停用", "Disabled")}</option>
               </select>
               <select
                 aria-label={t("排序方式", "Sort by")}
@@ -538,6 +564,14 @@ export default function CommunityPage() {
             </div>
             <div className="wf-table-wrap">
               <table className="wf-table">
+                <thead>
+                  <tr>
+                    <th>{t("仓库", "Repository")}</th>
+                    <th>{t("Star 数", "Stars")}</th>
+                    <th>{t("AI 摘要", "AI summary")}</th>
+                    <th>{t("操作", "Actions")}</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {data.admin_repositories?.map((repo) => (
                     <tr key={repo.id}>
@@ -641,20 +675,41 @@ function CommunityPagination({
 function RepositorySummary({ summary }: { summary: string }) {
   const { t } = useLocale();
   const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node || expanded) return;
+    const measure = () =>
+      setOverflowing(node.scrollHeight > node.clientHeight + 2);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [summary, expanded]);
+  const canExpand =
+    expanded ||
+    overflowing ||
+    summary.length > 120 ||
+    summary.split("\n").length > 3;
   return (
     <div>
       <div
+        ref={containerRef}
         className={expanded ? "community-summary" : "community-summary clamped"}
       >
         <Markdown>{summary}</Markdown>
       </div>
-      <button
-        className="button"
-        aria-expanded={expanded}
-        onClick={() => setExpanded(!expanded)}
-      >
-        {expanded ? t("收起", "Collapse") : t("展开摘要", "Expand summary")}
-      </button>
+      {canExpand && (
+        <button
+          className="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? t("收起", "Collapse") : t("展开摘要", "Expand summary")}
+        </button>
+      )}
     </div>
   );
 }

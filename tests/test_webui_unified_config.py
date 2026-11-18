@@ -52,6 +52,9 @@ def _entrypoints_client() -> TestClient:
     [
         ("/config", "/app/settings/review"),
         ("/config/", "/app/settings/review"),
+        ("/config/general", "/app/settings/review"),
+        ("/config/strategies", "/app/settings/review"),
+        ("/config/labels", "/app/settings/labels"),
         ("/config/ai", "/app/settings/ai"),
         ("/config/backup", "/app/settings/backup"),
         ("/settings-center/review", "/app/settings/review"),

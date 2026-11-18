@@ -14,11 +14,16 @@ import SettingsPage from "./SettingsPage";
 import type { ConfigField, SettingsResponse } from "./types";
 
 const confirm = vi.hoisted(() => vi.fn());
+const currentUser = vi.hoisted(() => ({
+  id: 1,
+  username: "admin",
+  role: "super_admin",
+}));
 vi.mock("../../components/ui/ConfirmProvider", () => ({
   useConfirm: () => confirm,
 }));
 vi.mock("../../app/auth", () => ({
-  useAuth: () => ({ user: { role: "super_admin" } }),
+  useAuth: () => ({ user: currentUser }),
 }));
 vi.mock("./AccountsPanel", () => ({ AccountsPanel: () => null }));
 vi.mock("../../api/client", async (original) => ({
@@ -99,13 +104,16 @@ const accounts = [
   },
 ];
 
-function mount() {
+function mount(initialEntry = "/settings/ai") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const router = createMemoryRouter(
-    [{ path: "/settings/:category", element: <SettingsPage /> }],
-    { initialEntries: ["/settings/ai"] },
+    [
+      { path: "/settings/:category", element: <SettingsPage /> },
+      { path: "/reviews", element: <div>Reviews page</div> },
+    ],
+    { initialEntries: [initialEntry] },
   );
   render(
     <QueryClientProvider client={client}>
@@ -114,10 +122,15 @@ function mount() {
       </LocaleProvider>
     </QueryClientProvider>,
   );
-  return client;
+  return { client, router };
 }
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
+  currentUser.id = 1;
+  currentUser.username = "admin";
+  currentUser.role = "super_admin";
+  confirm.mockReset();
   confirm.mockResolvedValue(true);
   vi.mocked(api).mockImplementation(async (path) => {
     if (path === "/api/v1/config/ai/accounts") return { data: { accounts } };
@@ -154,6 +167,7 @@ it("selects configured account models and reads capabilities by provider identit
   await screen.findByRole("spinbutton", { name: /model\/provider-one/ });
   expect(api).toHaveBeenCalledWith(
     expect.stringContaining("provider=provider-one&model=same-model"),
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
   expect(
     screen.getByRole("option", { name: /One.*provider-one/ }),
@@ -166,7 +180,7 @@ it("selects configured account models and reads capabilities by provider identit
 });
 
 it("keeps unsaved model changes when switching is declined and handles account removal", async () => {
-  const client = mount();
+  const { client } = mount();
   const account = await screen.findByRole("combobox", { name: "AI account" });
   fireEvent.change(account, { target: { value: "acct-one" } });
   const input = await screen.findByRole("spinbutton", {
@@ -193,4 +207,189 @@ it("keeps unsaved model changes when switching is declined and handles account r
   expect(
     screen.queryByRole("spinbutton", { name: /model\/provider-one/ }),
   ).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Discard model changes" }),
+  );
+  expect(screen.queryByText(/unsaved/i)).toBeNull();
+});
+
+it("preserves drafts across categories and global search while guarding leaving settings", async () => {
+  const aiField: ConfigField = {
+    ...field("global/ai_api_max_retries", "ai_strategy"),
+    key: "ai_api_max_retries",
+    category: "ai",
+    label: "Max API retries",
+    description: "Maximum retries per candidate before switching fallback.",
+    searchText: "ai_api_max_retries Max API retries fallback retries",
+  };
+  const reviewField: ConfigField = {
+    ...field("global/max_concurrent_reviews", "review"),
+    key: "max_concurrent_reviews",
+    category: "review",
+    label: "Max concurrent reviews",
+    description: "Number of pull requests reviewed simultaneously.",
+    searchText: "max_concurrent_reviews Max concurrent reviews concurrency",
+  };
+  vi.mocked(api).mockImplementation(async (path) => {
+    if (path === "/api/v1/config/ai/accounts") return { data: { accounts } };
+    if (path === "/api/v1/config/ai/catalog")
+      return { data: { providers: [] } };
+    if (path.includes("search=true")) return response([aiField, reviewField]);
+    if (path.includes("category=review")) return response([reviewField]);
+    return response([aiField]);
+  });
+
+  const { router } = mount("/settings/ai");
+  const retriesInput = await screen.findByRole("spinbutton", {
+    name: "Max API retries",
+  });
+  expect(
+    screen.getByText(
+      "Maximum retries per candidate before switching fallback.",
+    ),
+  ).toBeVisible();
+
+  fireEvent.change(retriesInput, { target: { value: "5" } });
+  expect(screen.getByText(/1 unsaved/)).toBeVisible();
+  expect(confirm).not.toHaveBeenCalled();
+
+  // Navigate to Review category inside Settings: no confirmation prompt, draft preserved!
+  fireEvent.click(screen.getByRole("link", { name: "Code review" }));
+  const reviewInput = await screen.findByRole("spinbutton", {
+    name: "Max concurrent reviews",
+  });
+  expect(confirm).not.toHaveBeenCalled();
+  expect(screen.getByText(/1 unsaved/)).toBeVisible();
+
+  fireEvent.change(reviewInput, { target: { value: "8" } });
+  expect(screen.getByText(/2 unsaved/)).toBeVisible();
+
+  // Search globally, inspect breadcrumb + match badge, jump to AI field, and keep both drafts!
+  const searchBox = screen.getByRole("textbox", {
+    name: "Search all settings",
+  });
+  fireEvent.change(searchBox, { target: { value: "ai_api_max_retries" } });
+  expect(await screen.findByText(/AI & models ›/)).toBeVisible();
+  expect(screen.getByText("Key: ai_api_max_retries")).toBeVisible();
+  fireEvent.click(screen.getByRole("link", { name: /Max API retries/i }));
+
+  const jumpedInput = await screen.findByRole("spinbutton", {
+    name: "Max API retries",
+  });
+  expect(jumpedInput).toHaveValue(5);
+  expect(
+    screen.getByRole("button", {
+      name: /Back to results for “ai_api_max_retries”/,
+    }),
+  ).toBeVisible();
+
+  // Attempting to leave /settings/* triggers the blocker confirmation
+  confirm.mockResolvedValueOnce(false);
+  await act(async () => {
+    void router.navigate("/reviews");
+  });
+  await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+  expect(screen.queryByText("Reviews page")).toBeNull();
+  expect(screen.getByText(/2 unsaved/)).toBeVisible();
+});
+
+it("reviews pending diffs, masks secret drafts without storage leaks, reverts single items, and confirms sensitive batch saves", async () => {
+  const normalField: ConfigField = {
+    ...field("global/max_concurrent_reviews", "review"),
+    key: "max_concurrent_reviews",
+    category: "review",
+    label: "Max concurrent reviews",
+    description: "Concurrent PR review workers.",
+    requiresRestart: true,
+    effect: "restart_required",
+  };
+  const secretField: ConfigField = {
+    ...field("global/webhook_secret", "security"),
+    key: "webhook_secret",
+    category: "review",
+    type: "string",
+    label: "Webhook signing secret",
+    description: "Verifies GitHub webhook signatures.",
+    sensitive: true,
+    constraints: {},
+    value: "",
+    default: "",
+    inheritedValue: "",
+    hasValue: true,
+  };
+  vi.mocked(api).mockImplementation(async (path, init) => {
+    if (path === "/api/v1/config-center" && init?.method === "PATCH") {
+      const payload = JSON.parse(String(init.body)) as {
+        field: string;
+        value: unknown;
+        confirmed?: boolean;
+      };
+      if (payload.field === secretField.id) {
+        expect(payload.confirmed).toBe(true);
+        return {
+          field: {
+            ...secretField,
+            value: "",
+            hasValue: true,
+            version: "b".repeat(64),
+          },
+        };
+      }
+      return {
+        field: {
+          ...normalField,
+          value: payload.value as number,
+          version: "b".repeat(64),
+        },
+      };
+    }
+    return response([normalField, secretField]);
+  });
+
+  mount("/settings/review");
+  const numInput = await screen.findByRole("spinbutton", {
+    name: "Max concurrent reviews",
+  });
+  const secretInput = screen.getByLabelText("Webhook signing secret", {
+    selector: "input",
+  });
+
+  fireEvent.change(numInput, { target: { value: "6" } });
+  fireEvent.change(secretInput, {
+    target: { value: "super-secret-fixture-token-999" },
+  });
+
+  // Never persist secrets or drafts into localStorage or sessionStorage
+  expect(JSON.stringify(localStorage)).not.toContain(
+    "super-secret-fixture-token-999",
+  );
+  expect(JSON.stringify(sessionStorage)).not.toContain(
+    "super-secret-fixture-token-999",
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Pending changes & save results",
+  });
+  expect(dialog).toHaveTextContent(
+    "Configured credential → Will update (hidden)",
+  );
+  expect(dialog).not.toHaveTextContent("super-secret-fixture-token-999");
+
+  // Revert normalField from inside ChangesDialog, leaving only secretField dirty
+  fireEvent.click(
+    screen.getByRole("button", { name: "Revert: Max concurrent reviews" }),
+  );
+  expect(numInput).toHaveValue(2);
+
+  // Saving batch with sensitive credential requires confirmation
+  confirm.mockResolvedValueOnce(true);
+  fireEvent.click(screen.getByRole("button", { name: "Save changes (1)" }));
+  await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+  await waitFor(() =>
+    expect(api).toHaveBeenCalledWith(
+      "/api/v1/config-center",
+      expect.objectContaining({ method: "PATCH" }),
+    ),
+  );
 });

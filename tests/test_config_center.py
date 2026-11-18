@@ -1346,3 +1346,74 @@ async def test_saved_fallback_order_and_account_state_reach_the_next_call(
         assert await call() == ("second", ["second"])
     finally:
         await client._get_unified_client().aclose()
+
+
+@pytest.mark.asyncio
+async def test_config_center_descriptions_disambiguated_labels_and_value_free_search_index(
+    config_db,
+):
+    service = ConfigCenterService()
+    async with config_db() as db:
+        await service.save_app_updates(
+            db,
+            {
+                "github_webhook_secret": "do-not-index-webhook-secret",
+                "max_concurrent_reviews": 17,
+            },
+        )
+        for lang in ("zh-CN", "en"):
+            all_fields = await service.describe(db, ADMIN, lang=lang)
+            assert all_fields
+            missing_desc = [
+                item["id"]
+                for item in all_fields
+                if not str(item.get("description") or "").strip()
+            ]
+            assert missing_desc == []
+
+            model_fields = await service.describe(
+                db, ADMIN, category="ai", lang=lang, model=("openai", "gpt-4.1")
+            )
+            model_only = [
+                item for item in model_fields if item["id"].startswith("model/")
+            ]
+            assert model_only
+            assert [
+                item["id"]
+                for item in model_only
+                if not str(item.get("description") or "").strip()
+            ] == []
+
+            search_fields = await service.describe(
+                db, ADMIN, search=True, lang=lang
+            )
+            by_id = {item["id"]: item for item in search_fields}
+            assert "冲突规则" not in by_id[
+                "section/label.definitions/documentation/color"
+            ]["label"]
+            assert (
+                "conflict rule"
+                not in by_id["section/label.definitions/documentation/color"][
+                    "label"
+                ].lower()
+            )
+            assert any(
+                token
+                in by_id["section/label.conflict_rules/documentation"][
+                    "label"
+                ].lower()
+                for token in ("互斥", "冲突", "exclusive", "conflict")
+            )
+            assert "fallback" in by_id["global/ai_fallback_max_candidates"][
+                "searchText"
+            ].lower()
+            assert "回退" in by_id["global/ai_fallback_max_candidates"]["searchText"]
+
+            for item in search_fields:
+                assert "value" not in item or item["value"] is None
+                assert "do-not-index-webhook-secret" not in (
+                    item.get("searchText") or ""
+                )
+                assert "17" not in (
+                    by_id["global/max_concurrent_reviews"].get("searchText") or ""
+                )
